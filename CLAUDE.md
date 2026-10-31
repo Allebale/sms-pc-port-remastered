@@ -121,13 +121,18 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 
 ## Planned features
 
+- ** No AO Near Grass**: exclude Ambient Occlusion from the ground among and around 3D grass, while keeping AO on Mario, NPCs and enemies standing in or near the grass. This needs reliable per-pixel character identification; it is not implemented and must not be exposed as a setting until that works.
 - **3D Ladders**: add 3D ladder geometry to replace or enhance the flat ladder visuals.
-- **Puddles Around Fountains**: add puddles around fountains.
 - **Code Quality Review**: review the codebase for correctness, maintainability, performance issues, and unnecessary complexity; fix issues where appropriate.
 - **Faster Game Start**: investigate and reduce game startup time without changing gameplay or introducing regressions.
+- **Puddles Around Fountains**: add puddles around fountains.
+- **Shine Sprites Global Illumination**: use light from Shine Sprites to illuminate the surrounding environment.
+- **Frame generation and Upscaling** FSR/DLSS/Other.
+- **Disalbe Double World Rendering is the graphic optinon "Reflect the Level" is Off**
+- **No goop on grass** Goop takes priority.
 
 ## Ideas tried and dropped (do not bring back unasked)
 
-God Rays, Cloud Shadows, Moving Clouds, Moving Cloth, Swaying Hanging Things, Grass Stains (and Grass Stain
+God Rays, Cloud Shadows, Moving Clouds, Moving Cloth, Swaying Hanging Things, Grass Stains
 Duration; removed on request), Grass Thinned Far Away,
 the Realistic Soft Shadow Edges option, and Softer and Very Soft Shadow Edges.
