@@ -3395,7 +3395,11 @@ extern "C" void GXPC_LightsView(const float view[3][4]) {
 // something in front of is darker (gx_shader.cpp), from the near map where it reaches, else the
 // far one. Two textures, one drawn each frame while the other, last frame's, is read: the view's
 // pixels need the whole map before any of them is drawn.
-static const int kShadowSize = 4096;  // each cascade's, square; the texture is two wide
+// Each cascade's, square (the texture is two wide): Shadow Size, 4096 (High, as it was), 2048 or 1024
+// (GXPC_ShadowMapSize); smaller is quicker to draw and takes less video memory, but blurrier
+static int s_shadowSize = 4096;
+static int s_shadowWant = 4096;
+extern "C" void GXPC_ShadowMapSize(int px) { s_shadowWant = px >= 4096 ? 4096 : px >= 2048 ? 2048 : 1024; }
 static GLuint s_shadowTex[2], s_shadowFbo[2];
 static int s_shadowWrite = 0;
 static bool s_shadowFilled[2];
@@ -3404,13 +3408,17 @@ static float s_shadowLightVP[2][2][16];  // [texture][cascade]: world to the cas
 static float s_shadowWriteRows[2][12];   // this frame's, view space to each cascade (3 rows)
 
 static void shadowMake() {
-    if (s_shadowFbo[0]) return;
-    glGenTextures(2, s_shadowTex);
-    glGenFramebuffers(2, s_shadowFbo);
+    if (s_shadowFbo[0] && s_shadowSize == s_shadowWant) return;
+    s_shadowSize = s_shadowWant;
+    if (!s_shadowFbo[0]) {
+        glGenTextures(2, s_shadowTex);
+        glGenFramebuffers(2, s_shadowFbo);
+    }
+    s_shadowFilled[0] = s_shadowFilled[1] = false;  // made again: nothing drawn in them yet
     glActiveTexture(GL_TEXTURE0 + kShadowUnit);
     for (int i = 0; i < 2; i++) {
         glBindTexture(GL_TEXTURE_2D, s_shadowTex[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 2 * kShadowSize, kShadowSize, 0, GL_DEPTH_COMPONENT,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 2 * s_shadowSize, s_shadowSize, 0, GL_DEPTH_COMPONENT,
                      GL_UNSIGNED_INT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // each tap compares 4 texels
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -3428,7 +3436,7 @@ static void shadowMake() {
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     g_glc.fbo = s_efbFbo;
     g_glc.activeUnit = -1;  // unit kShadowUnit is active: the cache sets its own again
-    logmsg("shadows: two %dx%d shadow maps made, two cascades each", kShadowSize, kShadowSize);
+    logmsg("shadows: two %dx%d shadow maps made, two cascades each", s_shadowSize, s_shadowSize);
 }
 
 // out = a * b, 4x4 rows
@@ -3449,7 +3457,7 @@ static void shadowLightVP(const float* sun, const float* focus, float half, floa
     float xl = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
     for (int i = 0; i < 3; i++) x[i] /= xl;
     float y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]};
-    const float texel = 2.0f * half / float(kShadowSize);
+    const float texel = 2.0f * half / float(s_shadowSize);
     float cx = x[0] * focus[0] + x[1] * focus[1] + x[2] * focus[2];
     float cy = y[0] * focus[0] + y[1] * focus[1] + y[2] * focus[2];
     cx = floorf(cx / texel) * texel;
@@ -3539,9 +3547,9 @@ extern "C" void GXPC_ShadowFrame(const float view[3][4], const float sun[3], con
     }
     memcpy(g.shadow + 24, s_shadowWriteRows[0], 12 * sizeof(float));
     g.shadow[36] = s_shadowFilled[read] ? strength : 0.0f;
-    g.shadow[37] = 1.5f * 2.0f * half / float(kShadowSize);  // normal biases: a texel and a half
-    g.shadow[38] = 1.5f * 2.0f * reach / float(kShadowSize);
-    g.shadow[39] = 1.0f / float(kShadowSize);
+    g.shadow[37] = 1.5f * 2.0f * half / float(s_shadowSize);  // normal biases: a texel and a half
+    g.shadow[38] = 1.5f * 2.0f * reach / float(s_shadowSize);
+    g.shadow[39] = 1.0f / float(s_shadowSize);
     g.shadow[47] = s_shadowSoft;
     for (int r = 0; r < 3; r++) g.shadow[40 + r] = view[r][0] * sun[0] + view[r][1] * sun[1] + view[r][2] * sun[2];
     g.shadow[43] = 0.0f;
@@ -3562,11 +3570,11 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
         c.fbo = fbo;
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     }
-    if (c.vp[0] != 0 || c.vp[1] != 0 || c.vp[2] != 2 * kShadowSize || c.vp[3] != kShadowSize) {
+    if (c.vp[0] != 0 || c.vp[1] != 0 || c.vp[2] != 2 * s_shadowSize || c.vp[3] != s_shadowSize) {
         c.vp[0] = c.vp[1] = 0;
-        c.vp[2] = 2 * kShadowSize;
-        c.vp[3] = kShadowSize;
-        glViewport(0, 0, 2 * kShadowSize, kShadowSize);
+        c.vp[2] = 2 * s_shadowSize;
+        c.vp[3] = s_shadowSize;
+        glViewport(0, 0, 2 * s_shadowSize, s_shadowSize);
     }
     glcCap(GL_SCISSOR_TEST, c.scissor, false);
     glcCap(GL_CULL_FACE, c.cull, false);

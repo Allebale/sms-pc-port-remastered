@@ -92,6 +92,7 @@ int s_grassCutHeight = 2, s_grassWildHeight = 2;  // into kGrassHeights
 int s_shadows = 0;        // Real Shadows: 0 off (the game's own), 1 soft, 2 strong
 int s_shadowsRound = 0;   // Round Shadows Under Characters, with Real Shadows: 1 kept (lighter)
 int s_shadowsDistance = 2;  // Shadow Distance: into kShadowDistances
+int s_shadowsMap = 2;       // Shadow Size: 0 low (1024), 1 medium (2048), 2 high (4096, as it was)
 int s_shadowsSoft = 0;      // Soft Shadow Edges: into kShadowSofts (0 off: sharp)
 int s_shadowsOriginal = 0;  // Keep the Original Shadow Direction
 int s_level = 0;          // Reflect the Level: 0 off (as the game has it), 1 the stage itself too
@@ -301,6 +302,8 @@ void load() {
             s_grass = value < 0 ? 0 : value > 3 ? 3 : value;
         } else if (sscanf(line, " characterroundshadows = %d", &value) == 1) {
             s_shadowsRound = value != 0;
+        } else if (sscanf(line, " shadowsize = %d", &value) == 1) {
+            s_shadowsMap = value < 0 ? 0 : value > 2 ? 2 : value;
         } else if (sscanf(line, " shadowsoftedges = %d", &value) == 1) {
             s_shadowsSoft = value < 0 ? 0 : value > 4 ? 4 : value;
         } else if (sscanf(line, " shadowdistance = %d", &value) == 1) {
@@ -425,6 +428,8 @@ void save() {
     fprintf(f, "shadowdistance = %d\n", s_shadowsDistance);
     fprintf(f, "# shadowsoftedges: the shadows' edges: 0 sharp (as before), 1 subtle, 2 mild, 3 light, 4 soft.\n");
     fprintf(f, "shadowsoftedges = %d\n", s_shadowsSoft);
+    fprintf(f, "# shadowsize: the shadow maps' size: 0 low (1024, fastest), 1 medium (2048), 2 high (4096).\n");
+    fprintf(f, "shadowsize = %d\n", s_shadowsMap);
     fprintf(f, "# shadoworiginaldirection: 1 the shadows fall where the game's own did, 0 from the sun in the sky.\n");
     fprintf(f, "shadoworiginaldirection = %d\n", s_shadowsOriginal);
     fprintf(f, "# level: 1 the stage itself (ground, buildings, sky) in puddles and water too, 0 not.\n");
@@ -757,6 +762,22 @@ int shadowDistanceSet(int i) {
     port_log("[shadows] Shadow Distance changed: %s\n", kShadowDistanceNames[i]);
     return 1;
 }
+const char* const kShadowMapNames[] = {"Low", "Medium", "High"};
+const int kShadowMaps[] = {1024, 2048, 4096};
+int shadowMapCount() { return 3; }
+const char* shadowMapName(int i) { return kShadowMapNames[i < 0 || i > 2 ? 2 : i]; }
+int shadowMapGet() {
+    load();
+    return s_shadowsMap;
+}
+int shadowMapSet(int i) {
+    if (i < 0 || i > 2) return 0;
+    load();
+    s_shadowsMap = i;
+    save();
+    port_log("[shadows] Shadow Size changed: %s\n", kShadowMapNames[i]);
+    return 1;
+}
 const char* const kShadowSoftNames[] = {"Off", "Subtle", "Mild", "Light", "Soft"};
 const float kShadowSofts[] = {0.0f, 1.5f, 2.25f, 3.0f, 5.0f};  // the edge's width, in units
 int shadowSoftCount() { return 5; }
@@ -1024,14 +1045,18 @@ struct Preset {
     int show[PORT_REFLECT_KINDS];
     int surface;
     int strength[PORT_PUDDLE_SURFACES];  // tenths of a percent
+    int quality;                         // Reflection Quality: 0 low, 1 medium, 2 high
 };
-const Preset kPresets[2] = {
+const Preset kPresets[3] = {
     // Original
-    {0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {1, 0, 0, 0, 0}, 0, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}},
+    {0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {1, 0, 0, 0, 0}, 0, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 2},
     // Remastered
-    {1, 1, 20, 1, 1, 2, 2, 2, 1, 1, 5, 1, 1, {1, 1, 1, 1, 1}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}},
+    {1, 1, 20, 1, 1, 2, 2, 2, 1, 1, 5, 1, 1, {1, 1, 1, 1, 1}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 2},
+    // Performance (a laptop's RTX 4050 and 13th-gen i5): puddles and the water reflect Mario and the
+    // people, not the whole stage; no blur (seven passes); Reflection Quality Low
+    {1, 1, 8, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, {1, 1, 0, 0, 0}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 0},
 };
-const char* const kPresetNames[] = {"Original", "Remastered", "Custom"};
+const char* const kPresetNames[] = {"Original", "Remastered", "Performance", "Custom"};
 
 int distanceIndexOf(int times4) {  // 4 is 1x
     int i = (times4 * 250 - 500) / kDistanceStep;
@@ -1043,7 +1068,7 @@ bool presetIs(const Preset& p) {
         || s_beatMirrors != p.beatMirrors || s_level != p.level || s_viewAngle != p.viewAngle
         || s_puddleRipples != p.puddleRipples || s_ripples != p.ripples || s_glints != p.glints
         || s_depth != p.depth || s_blur != p.blurQuarters || s_footprints != p.footprints || s_wetMario != p.wetMario
-        || s_surface != p.surface)
+        || s_surface != p.surface || s_reflQuality != p.quality)
         return false;
     for (int i = 0; i < PORT_REFLECT_KINDS; i++)
         if (s_show[i] != p.show[i]) return false;
@@ -1054,14 +1079,16 @@ bool presetIs(const Preset& p) {
 
 bool recommendedNow() { return presetIs(kPresets[1]); }
 
-int presetCount() { return 3; }
-const char* presetName(int i) { return kPresetNames[i < 0 || i > 2 ? 2 : i]; }
+int presetCount() { return 4; }
+const char* presetName(int i) { return kPresetNames[i < 0 || i > 3 ? 3 : i]; }
 int presetGet() {
     load();
-    return presetIs(kPresets[0]) ? 0 : presetIs(kPresets[1]) ? 1 : 2;
+    for (int i = 0; i < 3; i++)
+        if (presetIs(kPresets[i])) return i;
+    return 3;
 }
 int presetSet(int i) {
-    if (i < 0 || i > 1) return 1;  // Custom changes nothing, as on the Graphics page
+    if (i < 0 || i > 2) return 1;  // Custom changes nothing, as on the Graphics page
     load();
     const Preset& p = kPresets[i];
     s_reflections   = p.reflections;
@@ -1078,10 +1105,11 @@ int presetSet(int i) {
     s_footprints    = p.footprints;
     s_wetMario      = p.wetMario;
     s_surface       = p.surface;
+    s_reflQuality   = p.quality;
     for (int k = 0; k < PORT_REFLECT_KINDS; k++) s_show[k] = p.show[k];
     for (int k = 0; k < PORT_PUDDLE_SURFACES; k++) s_strength[k] = p.strength[k];
     save();
-    logSettings(i ? "Reflections set to Remastered" : "Reflections set to Original");
+    logSettings(i == 2 ? "Reflections set to Performance" : i ? "Reflections set to Remastered" : "Reflections set to Original");
     return 1;
 }
 
@@ -1091,41 +1119,44 @@ int presetSet(int i) {
 // off) or Remastered (the fork's own pick). Custom when they are neither. Each row is found by its
 // label and set to the value named, through the menu (so that the launcher keeps the port's own).
 // Resolution, smoothing and the like stay the Graphics Preset's; Depth Buffer View is not in it.
+// The three presets' values, by the row's label: Original (the port as it comes), Remastered (the
+// fork's pick) and Performance (most of the look for less: made for a laptop's RTX 4050 with 6 GB,
+// a 13th-gen i5 and 16 GB; smaller shadow maps, cheaper Ambient Occlusion, no extra passes)
 struct EffectValue {
     const char* row;
-    const char* original;
-    const char* remastered;
+    const char* value[3];  // Original, Remastered, Performance
 };
 const EffectValue kEffects[] = {
-    {"Heat-Wave Effect", "On", "Off"},
-    {"Puddle Lifetime", "Original", "8x"},
-    {"Real Shadows", "Off", "Strong"},
-    {"Round Shadows Under Characters", "Off", "Off"},
-    {"Shadow Distance", "Long", "Very Long"},
-    {"Keep the Original Shadow Direction", "Off", "Off"},
-    {"Soft Shadow Edges", "Off", "Mild"},
-    {"HD Textures", "On", "On"},
-    {"3D Grass", "Off", "By Location"},
-    {"Grass Distance", "High", "Very High"},
-    {"Cut Grass Height", "Normal", "Twice"},
-    {"Wild Grass Height", "Normal", "Twice"},
-    {"Grass Flattening", "High", "Very High"},
-    {"Mario Grass Flattening", "Landings and Slides", "Landings and Slides"},
-    {"Moving Vegetation", "Off", "Windy"},
-    {"Global Illumination", "Off", "On"},
-    {"Fire Light Intensity", "Normal", "Very Far"},
-    {"HD Texture Loading", "Per Stage", "Per Stage"},
-    {"Sandy Mario", "Off", "Heavy"},
-    {"Ambient Occlusion", "Off", "Large Shapes"},
-    {"Ambient Occlusion Strength", "Medium", "High"},
-    {"Ambient Occlusion Distance", "Medium", "Long"},
-    {"Ambient Occlusion Quality", "Medium", "High"},
-    {"Ambient Occlusion Update Rate", "Every Frame", "Every Other Frame"},
-    {"Mario Ambient Occlusion", "None", "Low"},
-    {"Ambient Occlusion Near Grass", "Kept", "Removed"},
-    {"Shader Warm-up", "On", "On"},
+    {"Heat-Wave Effect", {"On", "Off", "Off"}},
+    {"Puddle Lifetime", {"Original", "8x", "4x"}},
+    {"Real Shadows", {"Off", "Strong", "Strong"}},
+    {"Round Shadows Under Characters", {"Off", "Off", "Off"}},
+    {"Shadow Distance", {"Long", "Very Long", "Medium"}},
+    {"Keep the Original Shadow Direction", {"Off", "Off", "Off"}},
+    {"Shadow Size", {"High", "High", "Medium"}},
+    {"Soft Shadow Edges", {"Off", "Mild", "Off"}},
+    {"HD Textures", {"On", "On", "On"}},
+    {"3D Grass", {"Off", "By Location", "By Location"}},
+    {"Grass Distance", {"High", "Very High", "Medium"}},
+    {"Cut Grass Height", {"Normal", "Twice", "Normal"}},
+    {"Wild Grass Height", {"Normal", "Twice", "Normal"}},
+    {"Grass Flattening", {"High", "Very High", "High"}},
+    {"Mario Grass Flattening", {"Landings and Slides", "Landings and Slides", "Landings and Slides"}},
+    {"Moving Vegetation", {"Off", "Windy", "Breezy"}},
+    {"Global Illumination", {"Off", "On", "On"}},
+    {"Fire Light Intensity", {"Normal", "Very Far", "Far"}},
+    {"HD Texture Loading", {"Per Stage", "Per Stage", "Per Stage"}},
+    {"Sandy Mario", {"Off", "Heavy", "Heavy"}},
+    {"Ambient Occlusion", {"Off", "Large Shapes", "Large Shapes"}},
+    {"Ambient Occlusion Strength", {"Medium", "High", "Medium"}},
+    {"Ambient Occlusion Distance", {"Medium", "Long", "Short"}},
+    {"Ambient Occlusion Quality", {"Medium", "High", "Low"}},
+    {"Ambient Occlusion Update Rate", {"Every Frame", "Every Other Frame", "Every Other Frame"}},
+    {"Mario Ambient Occlusion", {"None", "Low", "Low"}},
+    {"Ambient Occlusion Near Grass", {"Kept", "Removed", "Kept"}},
+    {"Shader Warm-up", {"On", "On", "On"}},
 };
-const char* const kEffectPresetNames[] = {"Original", "Remastered", "Custom"};
+const char* const kEffectPresetNames[] = {"Original", "Remastered", "Performance", "Custom"};
 
 // A Graphics page row by its label, shown now (null: not on this machine, as HD Textures without the pack)
 const PortSetting* effectRow(const char* name) {
@@ -1144,20 +1175,24 @@ bool effectsAre(int preset) {
     for (const EffectValue& e : kEffects) {
         const PortSetting* s = effectRow(e.row);
         if (!s) continue;
-        const int want = effectValue(s, preset ? e.remastered : e.original);
+        const int want = effectValue(s, e.value[preset]);
         if (want >= 0 && s->get() != want) return false;
     }
     return true;
 }
-int effectPresetCount() { return 3; }
-const char* effectPresetName(int i) { return kEffectPresetNames[i < 0 || i > 2 ? 2 : i]; }
-int effectPresetGet() { return effectsAre(0) ? 0 : effectsAre(1) ? 1 : 2; }
+int effectPresetCount() { return 4; }
+const char* effectPresetName(int i) { return kEffectPresetNames[i < 0 || i > 3 ? 3 : i]; }
+int effectPresetGet() {
+    for (int i = 0; i < 3; i++)
+        if (effectsAre(i)) return i;
+    return 3;
+}
 int effectPresetSet(int i) {
-    if (i < 0 || i > 1) return 1;  // Custom changes nothing
+    if (i < 0 || i > 2) return 1;  // Custom changes nothing
     for (const EffectValue& e : kEffects) {
         const PortSetting* s = effectRow(e.row);
         if (!s) continue;
-        const int want = effectValue(s, i ? e.remastered : e.original);
+        const int want = effectValue(s, e.value[i]);
         if (want >= 0 && s->get() != want) port_settings_set(s, want);
     }
     port_log("[settings] Effects Preset set to %s\n", kEffectPresetNames[i]);
@@ -1307,14 +1342,17 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Keep the Original Shadow Direction",
      "Real Shadows fall exactly where the game's own did. Off, from the sun in the sky.", 0, nullptr,
      offOnCount, offOnName, originalGet, originalSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Shadow Size",
+     "How detailed Real Shadows are. Lower is faster and uses less video memory.", 0, nullptr,
+     shadowMapCount, shadowMapName, shadowMapGet, shadowMapSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Soft Shadow Edges",
      "Real Shadows' edges blend softly into the light. Off keeps them sharp.", 0, nullptr,
      shadowSoftCount, shadowSoftName, shadowSoftGet, shadowSoftSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 6, "Effects Preset",
-     "Original turns this fork's effects off. Remastered is its recommended look.", 1, nullptr,
+     "Original is off, Remastered the full look, Performance lighter for laptops.", 1, nullptr,
      effectPresetCount, effectPresetName, effectPresetGet, effectPresetSet},
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 0, "Preset",
-     "The original game, or the Remastered look. Some apply from the next area.", 1, nullptr, presetCount,
+     "Original, the Remastered look, or Performance. Some apply from the next area.", 1, nullptr, presetCount,
      presetName, presetGet, presetSet},
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 1, "Puddle Reflections",
      "Characters and objects in FLUDD's puddles too, from the next area.", 1, nullptr, reflectionsCount,
@@ -1516,6 +1554,10 @@ int port_shadows_round(void) {
 float port_shadows_distance(void) {
     load();
     return kShadowDistances[s_shadowsDistance < 0 || s_shadowsDistance > 4 ? 2 : s_shadowsDistance];
+}
+int port_shadows_map_size(void) {
+    load();
+    return kShadowMaps[s_shadowsMap < 0 || s_shadowsMap > 2 ? 2 : s_shadowsMap];
 }
 float port_shadows_softness(void) {
     load();

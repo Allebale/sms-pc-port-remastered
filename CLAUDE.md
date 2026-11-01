@@ -65,9 +65,11 @@ All of the fork's settings are in **`platform/misc/port_puddle_settings.cpp`**: 
 the fork's rows on the Graphics page, saving to `puddles.txt` (beside the memory card, separate from
 saves), and the two presets:
 
-- **Reflections page `Preset`**: Original or Remastered (`kPresets`).
-- **Graphics page `Effects Preset`**: Original or Remastered (`kEffects`: each Graphics row by its label
-  and the value name for each preset). **When you add a Graphics setting, add it to `kEffects`.**
+- **Reflections page `Preset`**: Original, Remastered or Performance (`kPresets`).
+- **Graphics page `Effects Preset`**: Original, Remastered or Performance (`kEffects`: each Graphics row by its
+  label and the value name for each preset). **When you add a Graphics setting, add it to `kEffects`.**
+- **Performance** is made for a player's laptop (RTX 4050 6 GB, i5-13420H, 16 GB): smaller shadow maps
+  (Shadow Size Medium), cheaper Ambient Occlusion, Reflection Quality Low, no Reflect the Level or blur.
 
 Saves are never touched by the fork: no file it changes deals with the memory card or progress.
 
@@ -75,7 +77,7 @@ Saves are never touched by the fork: no file it changes deals with the memory ca
 | --- | --- | --- |
 | Puddle and water reflections, ripples, glints, water depth, wet footprints, Puddle Lifetime | `ext/core/game/port_reflections.cpp`, `port_water_reflections.cpp`, `platform/misc/port_puddle_options.cpp` | `platform/gx/src/gx_render.cpp`, `gx_shader.cpp` |
 | Wet Mario, Sandy Mario (drawn on Mario only) | `port_water_reflections.cpp` (`port_wet_mario_draw`), `port_sandy.cpp` | `gx_shader.cpp`: only compiled into Mario's own program (`depthOnly == 3`, set by `GXPC_ShadowTag`) |
-| Real Shadows, Soft Shadow Edges, Round Shadows Under Characters | `ext/core/game/port_shadows.cpp`, `decomp-patches/zzzzz-ext-31-shadows*.patch` | `gx_render.cpp` (`GXPC_ShadowFrame`, two 4096 cascades, `shadowNoCast`), `gx_shader.cpp` (`shadowLit`) |
+| Real Shadows, Shadow Size (`GXPC_ShadowMapSize`: 4096, 2048, 1024), Soft Shadow Edges, Round Shadows Under Characters | `ext/core/game/port_shadows.cpp`, `decomp-patches/zzzzz-ext-31-shadows*.patch` | `gx_render.cpp` (`GXPC_ShadowFrame`, two 4096 cascades, `shadowNoCast`), `gx_shader.cpp` (`shadowLit`) |
 | Ambient Occlusion (+ Strength, Distance, Quality, Update Rate, Mario Ambient Occlusion, Ambient Occlusion Near Grass), Depth Buffer View | `port_shadows.cpp` calls `GXPC_AOFrame`, `GXPC_AOMario` and `GXPC_AOGrass` | `gx_render.cpp` (`kAoTraceFs`, `kAoApplyFs`, `kAoViewFs`, `aoApply`) |
 | 3D Grass and flattening | `ext/core/game/port_grass.cpp` | `gx_render.cpp` (`GXPC_Grass*`), `gx_shader.cpp` (`kGrassVs`, `kGrassFs`) |
 | Moving Vegetation (Off to Very Windy; palm fronds are solid only while a tree is touched: `port_tree_touched`) | `ext/core/game/port_vegetation.cpp`, `decomp-patches/zzzzz-ext-32-vegetation-trees.patch` | `gx_render.cpp` (`GXPC_SwayRegister`), `gx_fifo.cpp` (`callDisplayList`) |
