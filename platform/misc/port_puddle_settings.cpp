@@ -1119,12 +1119,12 @@ int presetSet(int i) {
 }
 
 // ------------------------------------------------------------------ the Graphics page's preset
-// Effects Preset: the fork's effects on the Graphics page (and the port's own Heat-Wave Effect and
-// HD texture rows beside them) at once: Original (the port as it comes, every one of the fork's
-// off) or Remastered (the fork's own pick). Custom when they are neither. Each row is found by its
-// label and set to the value named, through the menu (so that the launcher keeps the port's own).
-// Resolution, smoothing and the like stay the Graphics Preset's; Depth Buffer View is not in it.
-// The three presets' values, by the row's label: Original (the port as it comes), Remastered (the
+// Effects Preset: the fork's effects on the Graphics page (and the port's own Heat-Wave Effect) at
+// once. Custom when they are none of the presets. Each row is found by its label and set to the value
+// named, through the menu (so that the launcher keeps the port's own). Resolution, smoothing and the
+// like stay the Graphics Preset's; HD Textures, HD Texture Loading and Shader Warm-up stay as the
+// player set them; Depth Buffer View is not in it.
+// The presets' values, by the row's label: Original (the port as it comes), Remastered (the
 // fork's pick) and Performance (most of the look for less: made for a laptop's RTX 4050 with 6 GB,
 // a 13th-gen i5 and 16 GB; smaller shadow maps, cheaper Ambient Occlusion, no extra passes) and
 // Ultra Performance (the least: the smallest shadow maps, no Ambient Occlusion, less grass)
@@ -1141,7 +1141,6 @@ const EffectValue kEffects[] = {
     {"Keep the Original Shadow Direction", {"Off", "Off", "Off", "Off"}},
     {"Shadow Size", {"High", "High", "Medium", "Low"}},
     {"Soft Shadow Edges", {"Off", "Mild", "Off", "Off"}},
-    {"HD Textures", {"On", "On", "On", "On"}},
     {"3D Grass", {"Off", "By Location", "By Location", "By Location"}},
     {"Grass Distance", {"High", "Very High", "Medium", "Low"}},
     {"Cut Grass Height", {"Normal", "Twice", "Twice", "Normal"}},
@@ -1151,7 +1150,6 @@ const EffectValue kEffects[] = {
     {"Moving Vegetation", {"Off", "Very Windy", "Breezy", "Gentle"}},
     {"Global Illumination", {"Off", "On", "On", "On"}},
     {"Fire Light Intensity", {"Normal", "Very Far", "Far", "Normal"}},
-    {"HD Texture Loading", {"Per Stage", "Per Stage", "Per Stage", "Per Stage"}},
     {"Sandy Mario", {"Off", "Heavy", "Heavy", "Heavy"}},
     {"Ambient Occlusion", {"Off", "Large Shapes", "Large Shapes", "Off"}},
     {"Ambient Occlusion Strength", {"Medium", "High", "Medium", "Medium"}},
@@ -1160,7 +1158,6 @@ const EffectValue kEffects[] = {
     {"Ambient Occlusion Update Rate", {"Every Frame", "Every Other Frame", "Every Other Frame", "Every Frame"}},
     {"Mario Ambient Occlusion", {"None", "Low", "Low", "None"}},
     {"Ambient Occlusion Near Grass", {"Kept", "Ground Only", "Kept", "Kept"}},
-    {"Shader Warm-up", {"On", "On", "On", "On"}},
 };
 const char* const kEffectPresetNames[] = {"Original", "Remastered", "Performance", "Ultra Performance", "Custom"};
 
