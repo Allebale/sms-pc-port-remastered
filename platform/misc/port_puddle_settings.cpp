@@ -97,6 +97,7 @@ int s_shadowsRound = 0;   // Round Shadows Under Characters, with Real Shadows: 
 int s_shadowsDistance = 2;  // Shadow Distance: into kShadowDistances
 int s_shadowsMap = 2;       // Shadow Size: 0 low (1024), 1 medium (2048), 2 high (4096, as it was)
 int s_shadowsSoft = 0;      // Soft Shadow Edges: into kShadowSofts (0 off: sharp)
+int s_ladders3D = 0;        // 3D Ladders: flat ladders and climbable fences get depth
 int s_shadowsOriginal = 0;  // Keep the Original Shadow Direction
 int s_level = 0;          // Reflect the Level: 0 off (as the game has it), 1 the stage itself too
 int s_water;       // Water Reflections: 0 none (as the game has it), 1 in the stage's water and wet ground
@@ -307,6 +308,8 @@ void load() {
             s_shadowsRound = value != 0;
         } else if (sscanf(line, " shadowsize = %d", &value) == 1) {
             s_shadowsMap = value < 0 ? 0 : value > 2 ? 2 : value;
+        } else if (sscanf(line, " ladders3d = %d", &value) == 1) {
+            s_ladders3D = value != 0;
         } else if (sscanf(line, " shadowsoftedges = %d", &value) == 1) {
             s_shadowsSoft = value < 0 ? 0 : value > 4 ? 4 : value;
         } else if (sscanf(line, " shadowdistance = %d", &value) == 1) {
@@ -443,6 +446,8 @@ void save() {
     fprintf(f, "shadowdistance = %d\n", s_shadowsDistance);
     fprintf(f, "# shadowsoftedges: the shadows' edges: 0 sharp (as before), 1 subtle, 2 mild, 3 light, 4 soft.\n");
     fprintf(f, "shadowsoftedges = %d\n", s_shadowsSoft);
+    fprintf(f, "# ladders3d: 1 flat ladders and climbable fences get depth (rails and rungs with sides), 0 flat as before.\n");
+    fprintf(f, "ladders3d = %d\n", s_ladders3D);
     fprintf(f, "# shadowsize: the shadow maps' size: 0 low (1024, fastest), 1 medium (2048), 2 high (4096).\n");
     fprintf(f, "shadowsize = %d\n", s_shadowsMap);
     fprintf(f, "# shadoworiginaldirection: 1 the shadows fall where the game's own did, 0 from the sun in the sky.\n");
@@ -807,6 +812,18 @@ int shadowSoftSet(int i) {
     s_shadowsSoft = i;
     save();
     port_log("[shadows] Soft Shadow Edges changed: %s\n", kShadowSoftNames[i]);
+    return 1;
+}
+int ladders3DGet() {
+    load();
+    return s_ladders3D;
+}
+int ladders3DSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_ladders3D = i;
+    save();
+    port_log("[ladders] 3D Ladders changed: %s\n", i ? "on" : "off");
     return 1;
 }
 int originalGet() {
@@ -1183,6 +1200,7 @@ const EffectValue kEffects[] = {
     {"Keep the Original Shadow Direction", {"Off", "Off", "Off", "Off"}},
     {"Shadow Size", {"High", "High", "Medium", "Low"}},
     {"Soft Shadow Edges", {"Off", "Mild", "Off", "Off"}},
+    {"3D Ladders", {"Off", "On", "On", "On"}},
     {"3D Grass", {"Off", "By Location", "By Location", "By Location"}},
     {"Grass Distance", {"High", "Very High", "Medium", "Low"}},
     {"Cut Grass Height", {"Normal", "Twice", "Twice", "Normal"}},
@@ -1390,6 +1408,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Shadow Size",
      "How detailed Real Shadows are. Lower is faster and uses less video memory.", 0, nullptr,
      shadowMapCount, shadowMapName, shadowMapGet, shadowMapSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "3D Ladders",
+     "Flat ladders and climbable fences get depth, their rails and rungs with sides.", 0, nullptr,
+     offOnCount, offOnName, ladders3DGet, ladders3DSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Soft Shadow Edges",
      "Real Shadows' edges blend softly into the light. Off keeps them sharp.", 0, nullptr,
      shadowSoftCount, shadowSoftName, shadowSoftGet, shadowSoftSet},
@@ -1624,6 +1645,10 @@ float port_shadows_distance(void) {
 int port_shadows_map_size(void) {
     load();
     return kShadowMaps[s_shadowsMap < 0 || s_shadowsMap > 2 ? 2 : s_shadowsMap];
+}
+int port_ladders_3d(void) {
+    load();
+    return s_ladders3D;
 }
 float port_shadows_softness(void) {
     load();

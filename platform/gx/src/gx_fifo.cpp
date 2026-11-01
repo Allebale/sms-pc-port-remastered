@@ -1257,6 +1257,30 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
         g.charDraw     = false;
         return;
     }
+    // 3D Ladders: a ladder's or fence's card drawn again behind itself, layer by layer (u_shell), a
+    // little darker each, the deepest first and the card itself last (on top, even if it blends):
+    // its rails and rungs get sides
+    float back[3];
+    if (g.ladders3D && data && !s_dlRec && ladderLookup(data, size, back)) {
+        flushBatch();
+        static const int kLayers = 10;
+        static const float kDepth = 9.0f;  // units
+        g.shellOn = true;
+        for (int i = kLayers; i >= 1; i--) {
+            const float t = float(i) / float(kLayers);
+            g.shell[0] = back[0];
+            g.shell[1] = back[1];
+            g.shell[2] = back[2];
+            g.shell[3] = kDepth * t;
+            g.shell[4] = 1.0f - 0.35f * t;
+            callDisplayListInner(data, size);
+            flushBatch();
+        }
+        g.shellOn = false;
+        callDisplayListInner(data, size);
+        flushBatch();
+        return;
+    }
     if (g.swayOn && data && !s_dlRec && swayLookup(data, size, &minY, &maxY)) {
         flushBatch();
         g.swayDraw     = true;

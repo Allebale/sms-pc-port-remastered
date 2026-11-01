@@ -1931,6 +1931,9 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     UNI(uUserClip, uclip, uclip, glUniform4fv(sp->uUserClip, 1, uclip));
     float wet[8] = {g.wet, g.wetLook[0], g.wetLook[1], 0.0f, g.wetLine[0], g.wetLine[1], g.wetLine[2], g.wetLine[3]};
     UNI(uWet, wet, wet, glUniform4fv(sp->uWet, 2, wet));
+    if (sp->uShell >= 0) {  // only a ladder layer's program has it
+        UNI(uShell, shell, g.shell, glUniform4fv(sp->uShell, 2, g.shell));
+    }
     if (sp->uWetc >= 0) {  // only a wet character's program has it
         UNI(uWetc, wetc, g.wetChars, glUniform4fv(sp->uWetc, 18, g.wetChars));
     }
@@ -3447,6 +3450,35 @@ extern "C" void GXPC_ShadowRound(int on) {
     flushBatch();
     g.shadowRound = on != 0;
 }
+// 3D Ladders (ext/core/game/port_ladders.cpp): the ladders' and fences' cards, each with the way to
+// the wall behind it (model space), drawn again behind themselves while on (gx_fifo.cpp)
+struct LadderList {
+    uint32_t size, check;
+    float back[3];
+};
+static std::unordered_map<const void*, LadderList> s_ladderLists;
+extern "C" void GXPC_LadderRegister(const void* list, unsigned size, float nx, float ny, float nz) {
+    if (!list || !size) return;
+    LadderList& l = s_ladderLists[list];
+    l.size    = size;
+    l.check   = swayCheck(static_cast<const uint8_t*>(list), size);
+    l.back[0] = nx;
+    l.back[1] = ny;
+    l.back[2] = nz;
+}
+extern "C" void GXPC_LadderClear(void) { s_ladderLists.clear(); }
+extern "C" void GXPC_Ladders3D(int on) { g.ladders3D = on != 0; }
+bool ladderLookup(const void* list, uint32_t size, float back[3]) {
+    if (s_ladderLists.empty()) return false;
+    auto it = s_ladderLists.find(list);
+    if (it == s_ladderLists.end()) return false;
+    if (it->second.size != size || it->second.check != swayCheck(static_cast<const uint8_t*>(list), size)) {
+        s_ladderLists.erase(it);
+        return false;
+    }
+    memcpy(back, it->second.back, sizeof it->second.back);
+    return true;
+}
 bool characterLookup(const void* list, uint32_t size) {
     if (s_charLists.empty()) return false;
     auto it = s_charLists.find(list);
@@ -4063,8 +4095,8 @@ void flushBatch() {
             i = j;
         }
     }
-    if (g.charMask && s_bclass == PRIM_TRIS) charCast(ranges, mode, sp);
-    if (g.shadowArmed && s_bclass == PRIM_TRIS) {
+    if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn) charCast(ranges, mode, sp);
+    if (g.shadowArmed && s_bclass == PRIM_TRIS && !g.shellOn) {  // a ladder's layers: its card casts once
         const char* why = g.shadowMain ? shadowNoCast() : "not the main camera's view";
         if (!why) shadowCast(ranges, mode, sp, texW, texH);
         // the log: Mario's batches that cast no shadow, and why (the first few)

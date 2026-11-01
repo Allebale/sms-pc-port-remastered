@@ -116,6 +116,8 @@ uniform vec4 u_shadow[12];
 // and highest y (model space), amount, flutter; [3..8] pushers (view, radius); [10] their count,
 // push strength
 uniform vec4 u_sway[11];
+// 3D Ladders (gx_fifo.cpp): [0] the way back (model space) and how far, [1].x how dark
+uniform vec4 u_shell[2];
 in vec3 a_pos; in vec3 a_nrm; in vec3 a_bin; in vec3 a_tan;
 in vec4 a_clr0; in vec4 a_clr1;
 in vec2 a_tex0; in vec2 a_tex1; in vec2 a_tex2; in vec2 a_tex3;
@@ -211,8 +213,10 @@ static std::string genVS(const ShaderKey& k) {
     char buf[1024];
     s += "void main() {\n"
          "  int pm = int(a_mtx.x & 255u);\n"
-         "  vec4 p = vec4(a_pos, 1.0);\n"
-         "  vec3 vpos = vec3(dot(R4(pm * 4), p), dot(R4(pm * 4 + 4), p), dot(R4(pm * 4 + 8), p));\n"
+         "  vec4 p = vec4(a_pos, 1.0);\n";
+    // 3D Ladders: a layer of a ladder's card, moved back toward the wall behind it
+    if (k.depthOnly == 5) s += "  p.xyz += u_shell[0].xyz * u_shell[0].w;\n";
+    s += "  vec3 vpos = vec3(dot(R4(pm * 4), p), dot(R4(pm * 4 + 4), p), dot(R4(pm * 4 + 8), p));\n"
          "  if (u_sway[0].w > 0.5) vpos = sway(vpos, a_pos, a_nrm);\n"
          "  int nm = 256 + pm * 3;\n"
          "  vec3 N = vec3(dot(R3(nm), a_nrm), dot(R3(nm + 3), a_nrm), dot(R3(nm + 6), a_nrm));\n"
@@ -361,6 +365,7 @@ uniform vec4 u_wet[2];
 // Wet Characters (gx_api.cpp GXPC_SetWetCharacters): [0] count, darkness, shine; [1] the view's up;
 // then per wet one (up to 8), its sphere (centre, radius) and (wetness, waterline d)
 uniform vec4 u_wetc[18];
+uniform vec4 u_shell[2];
 uniform vec4 u_shadow[12];
 uniform sampler2DShadow u_shadowMap;
 uniform vec4 u_plight[17];
@@ -714,6 +719,7 @@ static std::string genFS(const ShaderKey& k) {
          "  }\n"
          "";
     if (k.depthOnly == 3) s += mario;
+    if (k.depthOnly == 5) s += "  color.rgb *= u_shell[1].x;\n";  // 3D Ladders: a layer behind, darker
     // Wet Characters (depthOnly 4: a registered character's draw while some are wet): wet inside
     // the sphere of a wet one (fading over its outer fifth), below its waterline, as Wet Mario is
     if (k.depthOnly == 4)
@@ -887,6 +893,7 @@ static void setupProgram(GLuint p, ShaderProgram& sp, bool aside = false) {
     sp.uUserClip = glGetUniformLocation(p, "u_uclip");
     sp.uWet = glGetUniformLocation(p, "u_wet");
     sp.uWetc = glGetUniformLocation(p, "u_wetc");
+    sp.uShell = glGetUniformLocation(p, "u_shell");
     sp.uDstAlpha = -1;
     if (aside) glUseProgram(GLuint(bound));
 }
@@ -1405,6 +1412,7 @@ const ShaderProgram* shaderForCurrentState(int depthOnly, bool lines) {
     if (depthOnly == 0 && g.shadowTag) k.depthOnly = 3;  // Mario's own draw: his wet, sand
     // a character's draw (not a mirror's copy) while some are wet: Wet Characters
     else if (depthOnly == 0 && g.charDraw && g.wetChars[0] > 0.0f && !g.userClipOn) k.depthOnly = 4;
+    else if (depthOnly == 0 && g.shellOn) k.depthOnly = 5;  // 3D Ladders: a layer of a ladder's card
     if (depthOnly == 2) k.earlyZ = 0;  // a shadow caster: its alpha test discards before depth
     key.indScale[0] = k.numInd ? g.bp[BP_RAS1_SS0] : 0;
     key.indScale[1] = k.numInd ? g.bp[BP_RAS1_SS0 + 1] : 0;

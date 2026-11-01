@@ -132,6 +132,11 @@ struct State {
     // sphere (centre, radius) and (wetness, waterline's d)); characters' draws are wet inside them
     float wetChars[72];
     bool charDraw;  // a registered character's display list is being drawn (gx_fifo.cpp)
+    // 3D Ladders (GXPC_Ladders3D, GXPC_LadderRegister): on; and while a ladder's card is drawn again
+    // behind itself, u_shell: [0] the way back (model space) and how far, [1] how dark (1 none)
+    bool ladders3D;
+    bool shellOn;
+    float shell[8];
     // Moving Vegetation (GXPC_SwayFrame, GXPC_SwayRegister; gx_render.cpp): the wind and what
     // pushes plants aside, in the world (set each tick) and in the view they were last taken
     // into (u_sway: up, wind and time, the plant's shape, six pushers, their count); a plant's
@@ -420,12 +425,13 @@ struct UniformCache {
     float sway[44];
     float sand[12];
     float wetc[72];
+    float shell[8];
 };
 struct ShaderProgram {
     unsigned prog;
     int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
-        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc;
+        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc, uShell;
     mutable UniformCache uc;
 };
 bool shaderHasEarlyFragmentTests();
@@ -449,6 +455,7 @@ const ShaderProgram* shaderForCurrentState(int depthOnly = 0, bool lines = false
 void aoApply();
 bool swayLookup(const void* list, uint32_t size, float* minY, float* maxY);
 bool characterLookup(const void* list, uint32_t size);  // Round Shadows Under Characters
+bool ladderLookup(const void* list, uint32_t size, float back[3]);  // 3D Ladders
 // The texture unit the sun's shadow map is bound on (gx_render.cpp), past the game's eight.
 const int kShadowUnit = 10;
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)

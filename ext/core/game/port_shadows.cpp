@@ -166,12 +166,15 @@ struct Register {
 
 } // namespace
 
+extern "C" void GXPC_Ladders3D(int on);
+
 void port_shadows_main_view(void* camera, float (*view)[4])
 {
 	if (camera != (void*)gpCamera || !view)
 		return;
 	port_lights_view(view);  // Fire Lights, seen from the main camera
 	port_wet_characters_view(view);  // Wet Characters: the wet ones, in this view
+	GXPC_Ladders3D(port_ladders_3d());  // 3D Ladders (port_ladders.cpp)
 	GXPC_AOFrame(port_ao(), port_ao_strength(), port_ao_distance(), port_depth_view(), port_ao_quality(), port_ao_half_rate());  // Ambient Occlusion
 	// Ambient Occlusion: how much Mario (and FLUDD on his back) shades round him and himself (Mario
 	// Ambient Occlusion: none at first, no halo): where he stands, from his feet to over his cap,
