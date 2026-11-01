@@ -1051,7 +1051,7 @@ const Preset kPresets[4] = {
     // Original
     {0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {1, 0, 0, 0, 0}, 0, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 2},
     // Remastered
-    {1, 1, 20, 1, 1, 2, 2, 2, 1, 1, 5, 1, 1, {1, 1, 1, 1, 1}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 2},
+    {1, 1, 10, 1, 1, 2, 2, 2, 1, 1, 5, 1, 1, {1, 1, 1, 1, 1}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 2},
     // Performance (a laptop's RTX 4050 and 13th-gen i5): puddles and the water reflect Mario, the
     // people and the stage; no blur (seven passes); Reflection Quality Low
     {1, 1, 8, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, {1, 1, 0, 0, 0}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 0},
@@ -1148,7 +1148,7 @@ const EffectValue kEffects[] = {
     {"Wild Grass Height", {"Normal", "Twice", "Twice", "Normal"}},
     {"Grass Flattening", {"High", "Very High", "High", "Medium"}},
     {"Mario Grass Flattening", {"Landings and Slides", "Landings and Slides", "Landings and Slides", "Landings and Slides"}},
-    {"Moving Vegetation", {"Off", "Windy", "Breezy", "Gentle"}},
+    {"Moving Vegetation", {"Off", "Very Windy", "Breezy", "Gentle"}},
     {"Global Illumination", {"Off", "On", "On", "On"}},
     {"Fire Light Intensity", {"Normal", "Very Far", "Far", "Normal"}},
     {"HD Texture Loading", {"Per Stage", "Per Stage", "Per Stage", "Per Stage"}},
