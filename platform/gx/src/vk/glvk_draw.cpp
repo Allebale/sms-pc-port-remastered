@@ -217,11 +217,13 @@ const VertexLayout* vertexLayout(const Program* p) {
             continue;
         }
         const uint32_t stride = a.stride ? uint32_t(a.stride) : uint32_t(std::max(1, int(a.size))) * typeBytes(a.type);
+        // glVertexAttribDivisor: an attribute per instance (only a divisor of 1 is used)
+        const VkVertexInputRate rate = a.divisor ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
         uint32_t b = 0;
         for (; b < L->narray; b++)
-            if (L->bufs[b] == a.buffer && L->binds[b].stride == stride) break;
+            if (L->bufs[b] == a.buffer && L->binds[b].stride == stride && L->binds[b].inputRate == rate) break;
         if (b == L->narray) {
-            L->binds[b] = VkVertexInputBindingDescription{b, stride, VK_VERTEX_INPUT_RATE_VERTEX};
+            L->binds[b] = VkVertexInputBindingDescription{b, stride, rate};
             L->bufs[b] = a.buffer;
             L->offs[b] = VkDeviceSize(a.offset);  // the lowest offset of the binding's attributes
             L->narray++;
@@ -233,8 +235,9 @@ const VertexLayout* vertexLayout(const Program* p) {
         if (!(p->inputMask & (1u << loc)) || (L->constMask & (1u << loc))) continue;
         const VertexAttrib& a = va->attribs[loc];
         const uint32_t stride = a.stride ? uint32_t(a.stride) : uint32_t(std::max(1, int(a.size))) * typeBytes(a.type);
+        const VkVertexInputRate rate = a.divisor ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
         uint32_t b = 0;
-        while (b < L->narray && !(L->bufs[b] == a.buffer && L->binds[b].stride == stride)) b++;
+        while (b < L->narray && !(L->bufs[b] == a.buffer && L->binds[b].stride == stride && L->binds[b].inputRate == rate)) b++;
         L->attrs[L->nattr++] = VkVertexInputAttributeDescription{loc, b, attribFormat(a), uint32_t(VkDeviceSize(a.offset) - L->offs[b])};
     }
     if (L->constMask) {
@@ -1339,6 +1342,12 @@ void attribArray(GLuint i, bool on) {
     va->version++;
 }
 GLAPI_FN(void, x_glEnableVertexAttribArray)(GLuint i) { attribArray(i, true); }
+GLAPI_FN(void, x_glVertexAttribDivisor)(GLuint i, GLuint divisor) {
+    VertexArray* va = g_vertexArrays.get(S.vao);
+    if (!va || i >= kMaxAttribs || va->attribs[i].divisor == divisor) return;
+    va->attribs[i].divisor = divisor;
+    va->version++;
+}
 GLAPI_FN(void, x_glDisableVertexAttribArray)(GLuint i) { attribArray(i, false); }
 GLAPI_FN(void, x_glVertexAttrib4f)(GLuint i, GLfloat x, GLfloat y, GLfloat z, GLfloat w) {
     if (i >= kMaxAttribs) return;
@@ -1363,6 +1372,16 @@ GLAPI_FN(void, x_glDrawArrays)(GLenum mode, GLint first, GLsizei count) {
     vkCmdDraw(cb, uint32_t(count), 1, uint32_t(first), 0);
     drawRecorded();
 }
+GLAPI_FN(void, x_glDrawArraysInstanced)(GLenum mode, GLint first, GLsizei count, GLsizei instances) {
+    if (count <= 0 || instances <= 0) return;
+    VkCommandBuffer cb;
+    if (!prepareDraw(mode, &cb)) return;
+    vkCmdDraw(cb, uint32_t(count), uint32_t(instances), uint32_t(first), 0);
+    drawRecorded();
+}
+// A framebuffer with no colour (a depth map) is drawn and read the same either way here
+GLAPI_FN(void, x_glDrawBuffer)(GLenum) {}
+GLAPI_FN(void, x_glReadBuffer)(GLenum) {}
 GLAPI_FN(void, x_glDrawElements)(GLenum mode, GLsizei count, GLenum type, const void* indices) {
     drawElements(mode, count, type, indices, 0);
 }
@@ -1655,6 +1674,7 @@ const ProcEntry kProcs[] = {
     P(glBufferStorage), P(glBufferSubData), P(glBindBufferBase), P(glBindBufferRange), P(glMapBufferRange), P(glUnmapBuffer),
     P(glGenVertexArrays), P(glBindVertexArray), P(glDeleteVertexArrays), P(glVertexAttribPointer), P(glVertexAttribIPointer),
     P(glEnableVertexAttribArray), P(glDisableVertexAttribArray), P(glVertexAttrib4f), P(glVertexAttribI4ui), P(glDrawArrays),
+    P(glDrawArraysInstanced), P(glVertexAttribDivisor), P(glDrawBuffer), P(glReadBuffer),
     P(glDrawElements), P(glDrawElementsBaseVertex), P(glMultiDrawElementsBaseVertex), P(glCreateShader), P(glShaderSource),
     P(glCompileShader), P(glGetShaderiv), P(glGetShaderInfoLog), P(glDeleteShader), P(glCreateProgram), P(glAttachShader),
     P(glLinkProgram), P(glGetProgramiv), P(glGetProgramInfoLog), P(glUseProgram), P(glDeleteProgram), P(glBindAttribLocation),

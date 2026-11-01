@@ -185,6 +185,8 @@ static VkFormat textureFormat(GLint ifmt) {
     case GL_RGBA8: case GL_RGBA: return VK_FORMAT_R8G8B8A8_UNORM;
     case GL_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
     case GL_R8: case GL_RED: return VK_FORMAT_R8_UNORM;
+    case 0x822D: return VK_FORMAT_R16_SFLOAT;  // GL_R16F
+    case 0x822E: return VK_FORMAT_R32_SFLOAT;  // GL_R32F
     case GL_RG8: case GL_RG: return VK_FORMAT_R8G8_UNORM;
     case GL_DEPTH_COMPONENT24: case GL_DEPTH_COMPONENT: case GL_DEPTH_COMPONENT32F: case GL_DEPTH_COMPONENT32:
     case GL_DEPTH_COMPONENT16:
@@ -202,7 +204,7 @@ static uint32_t texelBytes(VkFormat f) {
     switch (f) {
     case VK_FORMAT_R32G32B32A32_SFLOAT: return 16;
     case VK_FORMAT_R8_UNORM: return 1;
-    case VK_FORMAT_R8G8_UNORM: return 2;
+    case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R16_SFLOAT: return 2;
     default: return 4;
     }
 }
@@ -426,6 +428,8 @@ void texParameter(GLenum pname, GLint i, float f, bool isFloat) {
     case GL_TEXTURE_MAX_LOD: t->maxLod = fv; break;
     case GL_TEXTURE_LOD_BIAS: t->lodBias = fv; break;
     case 0x84FE: t->anisotropy = fv; break;  // GL_TEXTURE_MAX_ANISOTROPY
+    case 0x884C: t->compareMode = v; break;  // GL_TEXTURE_COMPARE_MODE
+    case 0x884D: t->compareFunc = v; break;  // GL_TEXTURE_COMPARE_FUNC
     default: return;
     }
     t->version++;
@@ -536,6 +540,7 @@ struct SamplerKey {
     VkSamplerMipmapMode mip;
     VkSamplerAddressMode u, v;
     float minLod, maxLod, bias, aniso;
+    VkCompareOp compare;  // VK_COMPARE_OP_MAX_ENUM: no compare
     bool operator==(const SamplerKey& o) const { return memcmp(this, &o, sizeof(*this)) == 0; }
 };
 struct SamplerKeyHash {
@@ -559,9 +564,25 @@ VkSamplerAddressMode wrapMode(GLint w) {
 bool mipFilter(GLint f) { return f != GL_NEAREST && f != GL_LINEAR; }
 }  // namespace
 
-static VkSampler vkSampler(GLint minF, GLint magF, GLint wrapS, GLint wrapT, float minLod, float maxLod, float bias, float aniso) {
+static VkCompareOp samplerCompare(GLint mode, GLint func) {
+    if (mode != 0x884E) return VK_COMPARE_OP_MAX_ENUM;  // GL_COMPARE_REF_TO_TEXTURE
+    switch (func) {
+    case GL_NEVER: return VK_COMPARE_OP_NEVER;
+    case GL_LESS: return VK_COMPARE_OP_LESS;
+    case GL_EQUAL: return VK_COMPARE_OP_EQUAL;
+    case GL_GREATER: return VK_COMPARE_OP_GREATER;
+    case GL_NOTEQUAL: return VK_COMPARE_OP_NOT_EQUAL;
+    case GL_GEQUAL: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    case GL_ALWAYS: return VK_COMPARE_OP_ALWAYS;
+    default: return VK_COMPARE_OP_LESS_OR_EQUAL;
+    }
+}
+
+static VkSampler vkSampler(GLint minF, GLint magF, GLint wrapS, GLint wrapT, float minLod, float maxLod, float bias, float aniso,
+                           VkCompareOp compare = VK_COMPARE_OP_MAX_ENUM) {
     SamplerKey k;
     memset(&k, 0, sizeof k);
+    k.compare = compare;
     k.mag = magF == GL_NEAREST ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
     k.min = (minF == GL_NEAREST || minF == GL_NEAREST_MIPMAP_NEAREST || minF == GL_NEAREST_MIPMAP_LINEAR) ? VK_FILTER_NEAREST
                                                                                                           : VK_FILTER_LINEAR;
@@ -591,6 +612,10 @@ static VkSampler vkSampler(GLint minF, GLint magF, GLint wrapS, GLint wrapT, flo
     ci.minLod = k.minLod;
     ci.maxLod = k.maxLod;
     ci.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    if (k.compare != VK_COMPARE_OP_MAX_ENUM) {
+        ci.compareEnable = VK_TRUE;
+        ci.compareOp = k.compare;
+    }
     VkSampler s = VK_NULL_HANDLE;
     vkCreateSampler(D.dev, &ci, nullptr, &s);
     s_vkSamplers[k] = s;
@@ -641,9 +666,9 @@ VkDescriptorImageInfo textureDescriptor(GLuint n, GLuint sn) {
         if (complete) {
             t->cacheView = imageView(t->img, base, top - base + 1);
             t->cacheVkSampler = so ? vkSampler(so->minFilter, so->magFilter, so->wrapS, so->wrapT, so->minLod, so->maxLod,
-                                               so->lodBias, so->anisotropy)
+                                               so->lodBias, so->anisotropy, samplerCompare(so->compareMode, so->compareFunc))
                                    : vkSampler(t->minFilter, t->magFilter, t->wrapS, t->wrapT, t->minLod, t->maxLod,
-                                               t->lodBias, t->anisotropy);
+                                               t->lodBias, t->anisotropy, samplerCompare(t->compareMode, t->compareFunc));
         }
         t->cacheVersion = t->version;
         t->cacheSampler = so;
@@ -669,6 +694,8 @@ void samplerParameter(GLuint n, GLenum pname, GLint i, float f, bool isFloat) {
     case GL_TEXTURE_MAX_LOD: s->maxLod = fv; break;
     case GL_TEXTURE_LOD_BIAS: s->lodBias = fv; break;
     case 0x84FE: s->anisotropy = fv; break;
+    case 0x884C: s->compareMode = v; break;  // GL_TEXTURE_COMPARE_MODE
+    case 0x884D: s->compareFunc = v; break;  // GL_TEXTURE_COMPARE_FUNC
     default: return;
     }
     s->version++;

@@ -3738,8 +3738,6 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
         memcpy(c.cmask, off, sizeof off);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     }
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(1.5f, 4.0f);
     for (int cascade = 0; cascade < 2; cascade++) {
         memcpy(g.shadow + 24, s_shadowWriteRows[cascade], 12 * sizeof(float));
         g.shadow[44] = float(cascade);
@@ -3749,7 +3747,6 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
             glDrawElementsBaseVertex(mode, r.count, GL_UNSIGNED_INT, reinterpret_cast<const void*>(r.iOff), r.base);
         }
     }
-    glDisable(GL_POLYGON_OFFSET_FILL);
     s_shadowFilled[s_shadowWrite] = true;
     glcUseProgram(sp->prog);
     applyGlState();

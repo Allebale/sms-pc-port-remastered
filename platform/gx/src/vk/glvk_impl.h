@@ -223,6 +223,8 @@ struct Texture {
     GLint wrapS = GL_REPEAT, wrapT = GL_REPEAT;
     GLint baseLevel = 0, maxLevel = 1000;
     float minLod = -1000.0f, maxLod = 1000.0f, lodBias = 0.0f, anisotropy = 1.0f;
+    // GL_TEXTURE_COMPARE_MODE / FUNC (a shadow map sampled by a sampler2DShadow)
+    GLint compareMode = GL_NONE, compareFunc = GL_LEQUAL;
     // the image (made at the first use: levels known by then)
     Image* img = nullptr;
     struct Pending {
@@ -260,6 +262,7 @@ struct SamplerObj {
     GLint minFilter = GL_NEAREST_MIPMAP_LINEAR, magFilter = GL_LINEAR;
     GLint wrapS = GL_REPEAT, wrapT = GL_REPEAT;
     float minLod = -1000.0f, maxLod = 1000.0f, lodBias = 0.0f, anisotropy = 1.0f;
+    GLint compareMode = GL_NONE, compareFunc = GL_LEQUAL;
     uint32_t version = 1;
 };
 
@@ -272,6 +275,7 @@ struct VertexAttrib {
     GLsizei stride = 0;
     size_t offset = 0;
     GLuint buffer = 0;
+    GLuint divisor = 0;  // glVertexAttribDivisor: 0 per vertex, else per instance
 };
 struct VertexArray {
     VertexAttrib attribs[kMaxAttribs];

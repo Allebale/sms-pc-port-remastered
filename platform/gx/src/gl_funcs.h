@@ -19,7 +19,7 @@
     X(PFNGLCLEARDEPTHPROC, glClearDepth) X(PFNGLCLEARPROC, glClear)                 \
     X(PFNGLDRAWARRAYSINSTANCEDPROC, glDrawArraysInstanced)                          \
     X(PFNGLVERTEXATTRIBDIVISORPROC, glVertexAttribDivisor)                          \
-    X(PFNGLPOLYGONOFFSETPROC, glPolygonOffset) X(PFNGLDRAWBUFFERPROC, glDrawBuffer) \
+    X(PFNGLDRAWBUFFERPROC, glDrawBuffer)                                            \
     X(PFNGLREADBUFFERPROC, glReadBuffer)                                            \
     X(PFNGLDEPTHRANGEPROC, glDepthRange) X(PFNGLLINEWIDTHPROC, glLineWidth)         \
     X(PFNGLPOINTSIZEPROC, glPointSize) X(PFNGLFINISHPROC, glFinish)                 \
@@ -132,7 +132,6 @@ SMS_GX_GL_OPTIONAL_FUNCS(SMS_GX_ALIAS)
 #define glClear gx_glClear
 #define glDrawArraysInstanced gx_glDrawArraysInstanced
 #define glVertexAttribDivisor gx_glVertexAttribDivisor
-#define glPolygonOffset gx_glPolygonOffset
 #define glDrawBuffer gx_glDrawBuffer
 #define glReadBuffer gx_glReadBuffer
 #define glDepthRange gx_glDepthRange

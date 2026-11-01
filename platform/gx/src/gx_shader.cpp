@@ -654,7 +654,13 @@ static std::string genFS(const ShaderKey& k) {
     s += "  vec4 color = vec4(outc) / 255.0;\n";
     // Shadows: a blended draw's see-through parts (water's surface) cast no shadow into the sun's
     // map; a caster needs nothing more (its colour is not kept), so its program stays small
-    if (k.depthOnly == 2) return s + "  if (u_shadow[11].y > 0.5 && color.a < 0.9) discard;\n  o_color = color;\n}\n";
+    // The caster's depth pushed back a little (as glPolygonOffset(1.5, 4) did: 1.5 times its slope and
+    // 4 steps), in the shader, so that the Vulkan backend (glvk: no polygon offset) draws the same
+    if (k.depthOnly == 2)
+        return s + "  float glvkSlope = max(abs(dFdx(gl_FragCoord.z)), abs(dFdy(gl_FragCoord.z)));\n"
+                   "  if (u_shadow[11].y > 0.5 && color.a < 0.9) discard;\n"
+                   "  gl_FragDepth = gl_FragCoord.z + 1.5 * glvkSlope + 4.0 / 16777216.0;\n"
+                   "  o_color = color;\n}\n";
     // Mario's own draw only (depthOnly 3: GXPC_ShadowTag): Wet Mario, Sandy Mario.
     // Every other program goes without them: smaller, quicker to compile (fewer stutters)
     std::string mario = ""
