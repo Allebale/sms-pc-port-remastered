@@ -105,6 +105,8 @@ f32 wallAlong(const f32* c, const f32* n)
 	return sqrtf(x * x + y * y + z * z);
 }
 
+int s_boxes, s_told;  // the log's lines this stage
+
 int registerModel(J3DModel* model)
 {
 	J3DModelData* data = model ? model->getModelData() : 0;
@@ -118,15 +120,24 @@ int registerModel(J3DModel* model)
 			continue;
 		const ShapeHead* h = reinterpret_cast<const ShapeHead*>(shape);
 		const f32 lo[3] = {h->lo.x, h->lo.y, h->lo.z}, hi[3] = {h->hi.x, h->hi.y, h->hi.z};
+		if (s_boxes++ < 6)  // a few shapes' boxes, for the log (their units, against the fences')
+			fprintf(stderr, "[ladders] material %d's box: (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)\n", i, lo[0], lo[1], lo[2],
+			        hi[0], hi[1], hi[2]);
 		f32 thinnest = 1e30f;
 		for (int k = 0; k < 3; k++)
 			if (hi[k] - lo[k] < thinnest)
 				thinnest = hi[k] - lo[k];
-		if (!(thinnest >= 0.0f && thinnest < kThin))
-			continue;
 		const Fence* f = fenceOf(lo, hi);
 		if (!f)
 			continue;
+		if (!(thinnest >= 0.0f && thinnest < kThin)) {
+			// near a fence but not flat: for the log (finding why a ladder is missed)
+			if (s_told++ < 24)
+				fprintf(stderr, "[ladders] material %d near a fence is not flat: %.0f x %.0f x %.0f at (%.0f, %.0f, %.0f)\n", i,
+				        hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 0.5f * (lo[0] + hi[0]), 0.5f * (lo[1] + hi[1]),
+				        0.5f * (lo[2] + hi[2]));
+			continue;
+		}
 		// back: the way to the wall behind it (the side with the nearer wall; the fence's back if none)
 		const f32 c[3] = {0.5f * (lo[0] + hi[0]), 0.5f * (lo[1] + hi[1]), 0.5f * (lo[2] + hi[2])};
 		const f32 back[3] = {-f->n[0], -f->n[1], -f->n[2]};
@@ -148,6 +159,7 @@ int registerModel(J3DModel* model)
 void stageSetup()
 {
 	GXPC_LadderClear();
+	s_boxes = s_told = 0;
 	collectFences();
 	int found = 0;
 	if (s_fenceCount && gpMap && gpMap->getModelManager()) {
@@ -157,6 +169,10 @@ void stageSetup()
 				found += registerModel(joint->getModel());
 	}
 	fprintf(stderr, "[ladders] %d climbable fence triangles, %d ladder and fence shapes found\n", s_fenceCount, found);
+	for (int i = 0; i < s_fenceCount && i < 6; i++)  // where the fences are, for the log
+		fprintf(stderr, "[ladders] a fence triangle: (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f), facing (%.2f, %.2f, %.2f)\n",
+		        s_fences[i].lo[0], s_fences[i].lo[1], s_fences[i].lo[2], s_fences[i].hi[0], s_fences[i].hi[1],
+		        s_fences[i].hi[2], s_fences[i].n[0], s_fences[i].n[1], s_fences[i].n[2]);
 }
 
 PortExtension s_extension;

@@ -4,9 +4,12 @@
 // down, a few drops a second while Mario is near. They land as FLUDD's do and make its puddles,
 // with their reflections, ripples, lifetime and all.
 //
-// The drops are FLUDD's particles (TModelWaterManager), made as its emitRequest makes them, low over
-// the ground so that they land at once, with no attack. They take at most a third of its particles,
-// so that FLUDD always has the rest.
+// The drops are FLUDD's particles (TModelWaterManager), made already lying on the ground (state 2,
+// a puddle), as its own become when they land: never flying, so they hit no one (only flying ones
+// are checked against actors: TObjHitCheck::checkWater), and only on ground no actor owns (a puddle
+// sprays what owns its ground) and away from goop (a puddle cleans what it lies on). A fountain's
+// puddles once sprayed a Pokey's head in Bianco Hills and crashed the game. They take at most a third
+// of FLUDD's particles, so that FLUDD always has the rest.
 #include "port_ext.h"
 #include "port_puddles.h"
 
@@ -14,6 +17,7 @@
 #include <Enemy/EffectObj.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
+#include <Map/PollutionManager.hpp>
 #include <Player/Mario.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Player/ModelWaterManager.hpp>
@@ -74,18 +78,28 @@ void drop(TModelWaterManager* w, f32 x, f32 y, f32 z)
 	if (!gpMap)
 		return;
 	const TBGCheckData* floor = 0;
-	const f32 g = gpMap->checkGround(x, y + 200.0f, z, &floor);
-	if (!floor || floor->isWaterSurface() || g < y - 300.0f || g > y + 200.0f)
-		return;  // no ground there near the fountain's height (a drop, a wall) or water
+	const f32 g = gpMap->checkGroundIgnoreWaterThrough(x, y + 200.0f, z, &floor);
+	if (!floor || !floor->isLegal() || floor->isWaterSurface() || floor->isPool() || floor->mActor
+	    || floor->getNormal().y < 0.7f || g < y - 300.0f || g > y + 200.0f)
+		return;  // no flat ground of the stage's own there near the fountain's height, or water
+	TWaterParticleType* type = w->mWaterParticleTypes[0];
+	const f32 clean = type ? type->mCleanSize.get() * 32.0f : 64.0f;
+	if (gpPollution) {  // no goop where it would clean it
+		static const f32 kAround[5][2] = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+		for (int k = 0; k < 5; k++)
+			if (gpPollution->isPolluted(x + kAround[k][0] * clean, g, z + kAround[k][1] * clean))
+				return;
+	}
 	const int i = w->mParticleCount;
-	w->mParticleLifetimeSOA[i] = 255.0f;  // as emitRequest's default (Puddle Lifetime scales it)
-	w->mParticleFlagSOA[i]     = 1;       // flying
+	w->mParticleLifetimeSOA[i] = 255.0f;  // as emitRequest's default (Puddle Lifetime scales its drying)
+	w->mParticleFlagSOA[i]     = 2;       // a puddle on the ground, as a landed drop
 	w->mParticleAttackSOA[i]   = 0;       // harms nothing
-	w->mParticlePositionSOA[i].set(x, g + 12.0f, z);
-	w->mParticleVelocitySOA[i].set((rand01() - 0.5f) * 2.0f, -6.0f, (rand01() - 0.5f) * 2.0f);
-	w->mParticleSizeSOA[i] = 17.0f + 8.0f * rand01();
+	w->mParticlePositionSOA[i].set(x, g, z);
+	w->mParticleVelocitySOA[i].set(0.0f, 0.0f, 0.0f);
+	// as large as a landed drop (a landing grows it by its type's magnify)
+	w->mParticleSizeSOA[i] = (17.0f + 8.0f * rand01()) * (type ? type->mMagnify.get() : 1.0f);
 	w->mParticleTypeSOA[i] = 0;
-	w->unk2914[i]          = 0;
+	w->unk2914[i]          = floor;
 	w->unk2514[i]          = 0;
 	w->mParticleCount++;
 }
