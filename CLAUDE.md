@@ -65,11 +65,12 @@ All of the fork's settings are in **`platform/misc/port_puddle_settings.cpp`**: 
 the fork's rows on the Graphics page, saving to `puddles.txt` (beside the memory card, separate from
 saves), and the two presets:
 
-- **Reflections page `Preset`**: Original, Remastered or Performance (`kPresets`).
-- **Graphics page `Effects Preset`**: Original, Remastered or Performance (`kEffects`: each Graphics row by its
+- **Reflections page `Preset`**: Original, Remastered, Performance or Ultra Performance (`kPresets`).
+- **Graphics page `Effects Preset`**: Original, Remastered, Performance or Ultra Performance (`kEffects`: each Graphics row by its
   label and the value name for each preset). **When you add a Graphics setting, add it to `kEffects`.**
 - **Performance** is made for a player's laptop (RTX 4050 6 GB, i5-13420H, 16 GB): smaller shadow maps
-  (Shadow Size Medium), cheaper Ambient Occlusion, Reflection Quality Low, no Reflect the Level or blur.
+  (Shadow Size Medium), cheaper Ambient Occlusion, Reflection Quality Low, no blur; Reflect the Level kept.
+  **Ultra Performance**: Shadow Size Low, no Ambient Occlusion, less grass, Mario-only reflections, no Reflect the Level.
 
 Saves are never touched by the fork: no file it changes deals with the memory card or progress.
 
