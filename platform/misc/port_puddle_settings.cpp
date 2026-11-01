@@ -72,6 +72,7 @@ int s_footprints = 0;     // Wet Footprints
 int s_wetMario = 0;       // Wet Mario: on or off (the reflection option, the presets')
 int s_wetDark = 2;        // Wet Mario's darkness, while on: 1 light, 2 normal, 3 heavy
 int s_wetShine = 2;       // Wet Mario Shine: 0 off, 1 light, 2 normal, 3 strong
+int s_fountainPuddles = 0;  // Puddles Around Fountains: the arched fountains wet the ground round them
 int s_wetChars = 1;       // Wet Characters: the people and enemies get wet too (on unless set off)
 int s_wetCharsDark = 1;   // their darkness, while on: 1 light (the default), 2 normal, 3 heavy (as Wet Mario's)
 int s_wetCharsShine = 3;  // Wet Characters Shine: 0 off, 1 light, 2 normal, 3 strong (the default)
@@ -325,6 +326,8 @@ void load() {
             s_wetDark = value < 1 ? 1 : value > 3 ? 3 : value;
         } else if (sscanf(line, " wetmarioshine = %d", &value) == 1) {
             s_wetShine = value < 0 ? 0 : value > 3 ? 3 : value;
+        } else if (sscanf(line, " fountainpuddles = %d", &value) == 1) {
+            s_fountainPuddles = value != 0;
         } else if (sscanf(line, " wetcharacters = %d", &value) == 1) {
             s_wetChars = value != 0;
         } else if (sscanf(line, " wetcharactersdarkness = %d", &value) == 1) {
@@ -399,6 +402,8 @@ void save() {
     fprintf(f, "wetmariodarkness = %d\n", s_wetDark);
     fprintf(f, "# wetmarioshine: how much wet Mario shines: 0 off, 1 light, 2 normal, 3 strong.\n");
     fprintf(f, "wetmarioshine = %d\n", s_wetShine);
+    fprintf(f, "# fountainpuddles: 1 the arched fountains leave FLUDD's puddles round them, 0 not.\n");
+    fprintf(f, "fountainpuddles = %d\n", s_fountainPuddles);
     fprintf(f, "# wetcharacters: 1 the people and enemies get wet too (sprayed, or in water), 0 not.\n");
     fprintf(f, "wetcharacters = %d\n", s_wetChars);
     fprintf(f, "# wetcharactersdarkness: how much darker wet people and enemies are: 1 light, 2 normal, 3 heavy.\n");
@@ -983,6 +988,18 @@ int wetShineSet(int i) {
     port_log("[puddles] Wet Mario Shine changed: %s\n", kWetShineNames[i]);
     return 1;
 }
+int fountainGet() {
+    load();
+    return s_fountainPuddles;
+}
+int fountainSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_fountainPuddles = i;
+    save();
+    port_log("[puddles] Puddles Around Fountains changed: %s\n", i ? "on" : "off");
+    return 1;
+}
 // Wet Characters: Off, or on and how dark, as Wet Mario's row
 int wetCharsGet() {
     load();
@@ -1166,6 +1183,7 @@ int presetSet(int i) {
     s_footprints    = p.footprints;
     s_wetMario      = p.wetMario;
     s_wetChars      = i != 0;  // Wet Characters: off in Original (not part of telling the preset)
+    s_fountainPuddles = i != 0;  // Puddles Around Fountains: the same
     s_surface       = p.surface;
     s_reflQuality   = p.quality;
     for (int k = 0; k < PORT_REFLECT_KINDS; k++) s_show[k] = p.show[k];
@@ -1438,6 +1456,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 11, "Puddle Ripples",
      "New puddles and Mario's steps ripple the reflection, calming over 2 seconds.", 0, nullptr, ripplesCount,
      ripplesName, puddleRipplesGet, puddleRipplesSet},
+    {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 17, "Puddles Around Fountains",
+     "Arched fountains leave puddles where their jets come down.", 0, nullptr, offOnCount, offOnName,
+     fountainGet, fountainSet},
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 17, "Wet Footprints",
      "After a puddle, Mario's steps leave damp prints that dry away.", 0, nullptr, offOnCount, offOnName,
      footprintsGet, footprintsSet},
@@ -1538,6 +1559,10 @@ float port_wet_mario_darkness(void) {
     static const float kDark[] = {1.0f, 0.5f, 1.0f, 1.6f};
     load();
     return kDark[s_wetDark < 0 || s_wetDark > 3 ? 2 : s_wetDark];
+}
+int port_fountain_puddles(void) {
+    load();
+    return s_fountainPuddles;
 }
 int port_wet_characters(void) {
     load();
