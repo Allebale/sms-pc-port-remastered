@@ -128,6 +128,8 @@ void drawRecorded();
 struct Stats {
     uint32_t submits = 0, draws = 0, pipelines = 0, renderPasses = 0, frames = 0;
     uint32_t dropped = 0;  // frames not presented: no drawable free without waiting (vsync off, MoltenVK)
+    // draws into glvkDeferTarget framebuffers: in the side lane, in main (sealed, or a texture not ready), seals
+    uint32_t sideDraws = 0, deferMainDraws = 0, seals = 0;
     double waitSeconds = 0, submitSeconds = 0;
     double pipelineSeconds = 0;  // making pipelines
 };

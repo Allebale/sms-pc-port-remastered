@@ -820,6 +820,8 @@ bool prepareDraw(GLenum mode, VkCommandBuffer* outCb) {
     VkPipeline pipe = pipelineFor(p, vl, topology(mode));
     if (!pipe) return false;
     VkCommandBuffer cb = laneCmd();
+    if (sideLane()) g_stats.sideDraws++;
+    else if (s_deferFbos.count(S.drawFbo)) g_stats.deferMainDraws++;
     if (!applyDynamicState(cb)) return false;
     if (s_cc.pipeline != pipe) {
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
@@ -1070,7 +1072,10 @@ void endRendering() { endLane(s_mainLane); }
 
 bool renderingActive() { return s_mainLane.rendering; }
 
-void sealSide() { s_sideSealed = true; }
+void sealSide() {
+    if (!s_sideSealed) g_stats.seals++;
+    s_sideSealed = true;
+}
 
 void onSegmentStart() {
     s_mainLane.rendering = s_sideLane.rendering = false;

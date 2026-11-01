@@ -45,10 +45,12 @@ static double nowSeconds() { return monoSeconds(); }
 // loader) run with SMS_GX_STATS or SMS_GX_HITCH_MS or while the overlay is
 // open (GXPC_SetDetailedTimers). Otherwise only the overall sms_gx time is
 // measured; the others cost a clock read per texture bind and per primitive.
-static bool statsEnv() {
+// remastered-test-vulkan: the stats are on by default (every 600 frames), for the fps reports
+static int statsEvery() {
     const char* e = getenv("SMS_GX_STATS");
-    return (e && atoi(e) > 0) || getenv("SMS_GX_HITCH_MS");
+    return e ? atoi(e) : 600;
 }
+static bool statsEnv() { return statsEvery() > 0 || getenv("SMS_GX_HITCH_MS"); }
 bool g_gxStats = statsEnv();
 struct GxTimer {
     double* acc;
@@ -1996,8 +1998,7 @@ static void statsFrame() {
     static uint32_t frames = 0, draws = 0, verts = 0, compiles0 = 0, uploads0 = 0, sync0 = 0;
     static double t0 = 0, gx0 = 0, tex0 = 0, draw0 = 0, copy0 = 0, peek0 = 0, wait0 = 0;
     if (every < 0) {
-        const char* e = getenv("SMS_GX_STATS");
-        every = e ? atoi(e) : 0;
+        every = statsEvery();
         t0 = nowSeconds();
     }
     if (every <= 0) return;

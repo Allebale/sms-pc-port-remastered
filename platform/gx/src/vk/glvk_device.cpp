@@ -486,7 +486,7 @@ static void statsFrame() {
     static int every = -1;
     if (every < 0) {
         const char* e = getenv("SMS_GX_STATS");
-        every = e ? atoi(e) : 0;
+        every = e ? atoi(e) : 600;  // remastered-test-vulkan: on by default, for the fps reports
     }
     if (every <= 0 || ++g_stats.frames < uint32_t(every)) return;
     const double f = g_stats.frames;
@@ -498,6 +498,8 @@ static void statsFrame() {
         const QueryUsage q = queryUsage();
         logmsg("Vulkan queries: %u held, %u retired, %u pools of 4096", q.held, q.retired, q.pools);
     }
+    logmsg("Vulkan side lane: %.0f draws/frame there, %.0f/frame into its maps in main, %.2f seals/frame",
+           g_stats.sideDraws / f, g_stats.deferMainDraws / f, g_stats.seals / f);
     if (g_stats.dropped) logmsg("Vulkan stats: %u of %u frames not presented (no drawable free)", g_stats.dropped, g_stats.frames);
     {
         VmaBudget budgets[VK_MAX_MEMORY_HEAPS];
