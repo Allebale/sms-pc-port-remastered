@@ -73,6 +73,8 @@ int s_wetMario = 0;       // Wet Mario: on or off (the reflection option, the pr
 int s_wetDark = 2;        // Wet Mario's darkness, while on: 1 light, 2 normal, 3 heavy
 int s_wetShine = 2;       // Wet Mario Shine: 0 off, 1 light, 2 normal, 3 strong
 int s_wetChars = 1;       // Wet Characters: the people and enemies get wet too (on unless set off)
+int s_wetCharsDark = 2;   // their darkness, while on: 1 light, 2 normal, 3 heavy (as Wet Mario's)
+int s_wetCharsShine = 2;  // Wet Characters Shine: 0 off, 1 light, 2 normal, 3 strong
 int s_grass = 0;          // 3D Grass: 0 off, 1 by location, 2 always cut, 3 always wild
 int s_grassDistance = 2;  // Grass Distance: into kGrassDistances
 int s_grassFlatten = 2;   // Grass Flattening: 0 low .. 4 insane
@@ -322,6 +324,10 @@ void load() {
             s_wetShine = value < 0 ? 0 : value > 3 ? 3 : value;
         } else if (sscanf(line, " wetcharacters = %d", &value) == 1) {
             s_wetChars = value != 0;
+        } else if (sscanf(line, " wetcharactersdarkness = %d", &value) == 1) {
+            s_wetCharsDark = value < 1 ? 1 : value > 3 ? 3 : value;
+        } else if (sscanf(line, " wetcharactersshine = %d", &value) == 1) {
+            s_wetCharsShine = value < 0 ? 0 : value > 3 ? 3 : value;
         } else if (sscanf(line, " level = %d", &value) == 1) {
             s_level = value != 0;
         } else if (sscanf(line, " beatmirrors = %d", &value) == 1) {
@@ -392,6 +398,10 @@ void save() {
     fprintf(f, "wetmarioshine = %d\n", s_wetShine);
     fprintf(f, "# wetcharacters: 1 the people and enemies get wet too (sprayed, or in water), 0 not.\n");
     fprintf(f, "wetcharacters = %d\n", s_wetChars);
+    fprintf(f, "# wetcharactersdarkness: how much darker wet people and enemies are: 1 light, 2 normal, 3 heavy.\n");
+    fprintf(f, "wetcharactersdarkness = %d\n", s_wetCharsDark);
+    fprintf(f, "# wetcharactersshine: how much wet people and enemies shine: 0 off, 1 light, 2 normal, 3 strong.\n");
+    fprintf(f, "wetcharactersshine = %d\n", s_wetCharsShine);
     fprintf(f, "# grassblades: blades of grass on the grass: 0 off, 1 by location, 2 always cut, 3 always wild.\n");
     fprintf(f, "grassblades = %d\n", s_grass);
     fprintf(f, "# grassdistance: how far the blades go: 0 low, 1 medium, 2 high, 3 very high, 4 max.\n");
@@ -956,16 +966,30 @@ int wetShineSet(int i) {
     port_log("[puddles] Wet Mario Shine changed: %s\n", kWetShineNames[i]);
     return 1;
 }
+// Wet Characters: Off, or on and how dark, as Wet Mario's row
 int wetCharsGet() {
     load();
-    return s_wetChars;
+    return s_wetChars ? s_wetCharsDark : 0;
 }
 int wetCharsSet(int i) {
-    if (i < 0 || i > 1) return 0;
+    if (i < 0 || i > 3) return 0;
     load();
-    s_wetChars = i;
+    s_wetChars = i != 0;
+    if (i) s_wetCharsDark = i;
     save();
-    port_log("[puddles] Wet Characters changed: %s\n", i ? "on" : "off");
+    port_log("[puddles] Wet Characters changed: %s\n", kWetDarkNames[i]);
+    return 1;
+}
+int wetCharsShineGet() {
+    load();
+    return s_wetCharsShine;
+}
+int wetCharsShineSet(int i) {
+    if (i < 0 || i > 3) return 0;
+    load();
+    s_wetCharsShine = i;
+    save();
+    port_log("[puddles] Wet Characters Shine changed: %s\n", kWetShineNames[i]);
     return 1;
 }
 int levelGet() {
@@ -1403,8 +1427,11 @@ const PortSetting kPuddleSettings[] = {
      "How much wet Mario shines, with Wet Mario on.", 0, nullptr, wetShineCount, wetShineName,
      wetShineGet, wetShineSet},
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 19, "Wet Characters",
-     "People and enemies get wet too when sprayed or in water, as Mario looks.", 0, nullptr, offOnCount,
-     offOnName, wetCharsGet, wetCharsSet},
+     "People and enemies get wet when sprayed or in water. How much darker they get.", 0, nullptr,
+     wetMarioCount, wetMarioName, wetCharsGet, wetCharsSet},
+    {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 19, "Wet Characters Shine",
+     "How much wet people and enemies shine, with Wet Characters on.", 0, nullptr, wetShineCount,
+     wetShineName, wetCharsShineGet, wetCharsShineSet},
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 5, "Reflect the Level",
      "Buildings, trees and the sky in puddles and water too. From the next area.", 1, nullptr, offOnCount,
      offOnName, levelGet, levelSet},
@@ -1494,6 +1521,17 @@ float port_wet_mario_darkness(void) {
 int port_wet_characters(void) {
     load();
     return s_wetChars;
+}
+// Wet Characters' look, as Wet Mario's (its own darkness and shine)
+float port_wet_characters_darkness(void) {
+    static const float kDark[] = {1.0f, 0.5f, 1.0f, 1.6f};
+    load();
+    return kDark[s_wetCharsDark < 0 || s_wetCharsDark > 3 ? 2 : s_wetCharsDark];
+}
+float port_wet_characters_shine(void) {
+    static const float kShine[] = {0.0f, 0.5f, 1.0f, 2.2f};
+    load();
+    return kShine[s_wetCharsShine < 0 || s_wetCharsShine > 3 ? 2 : s_wetCharsShine];
 }
 float port_wet_mario_shine(void) {
     static const float kShine[] = {0.0f, 0.5f, 1.0f, 2.2f};

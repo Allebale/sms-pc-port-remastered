@@ -130,6 +130,9 @@ void port_wet_mario_draw(int begin, float (*view)[4]);
 // Wet Characters: 1 when the people and enemies get wet too, with Wet Mario's look (sprayed by
 // FLUDD: all over; in water: up to where it reaches), drying as he does.
 int port_wet_characters(void);
+// Their look, from the menu (Wet Characters, Wet Characters Shine): how dark, how shiny (1 each: Normal).
+float port_wet_characters_darkness(void);
+float port_wet_characters_shine(void);
 // Once a frame, from the main camera's view (port_shadows_main_view): the wet ones to the renderer.
 void port_wet_characters_view(float (*view)[4]);
 

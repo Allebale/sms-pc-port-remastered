@@ -1,5 +1,5 @@
-// Wet Characters (port_puddles.h): the people and enemies get wet as Mario does (Wet Mario's look,
-// darker and shiny), all over when FLUDD's water hits them (the hit's objectHitDone, as each
+// Wet Characters (port_puddles.h): the people and enemies get wet as Mario does, with a look of their
+// own (the menu's Wet Characters and Wet Characters Shine), all over when FLUDD's water hits them (the hit's objectHitDone, as each
 // water particle's HIT_MESSAGE_SPRAYED_BY_WATER reaches them), or up to where the water reaches
 // when they stand or swim in it; drying over 45 seconds as he does.
 //
@@ -246,5 +246,5 @@ void port_wet_characters_view(float (*view)[4])
 		count++;
 	}
 	const float up[3] = {view[0][1], view[1][1], view[2][1]};
-	GXPC_SetWetCharacters(count, data, port_wet_mario_darkness(), port_wet_mario_shine(), up);
+	GXPC_SetWetCharacters(count, data, port_wet_characters_darkness(), port_wet_characters_shine(), up);
 }
