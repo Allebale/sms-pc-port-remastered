@@ -101,6 +101,11 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   root, writing the ground's view z into a map of the picture (unit 8). The AO trace leaves a pixel alone whose depth is
   that ground's (within 18 units and 1%); anything standing on it (Mario, characters, walls) is nearer the camera and keeps
   its shade. An earlier try that guessed "ground" from the picture's shape was slow and unreliable and was replaced.
+  Its third choice, **All But Characters**, instead draws the blades from above into a 1024 map (6144 units round
+  Mario, each texel the ground's height within 70 units of a blade: `grassTop`), and Mario's (`g.shadowTag`) and the
+  registered characters' draws again into a depth map of their own (`charCast`, `g.charMask`). The AO trace takes each
+  pixel back to the world (`u_inv`): no shade near that ground (fading out 70 to 180 units above it, so wall feet and
+  trunks clear too), unless the pixel is a character's. Units 6 and 7 hold those two maps during the AO pass only.
 - Reflections: the mirror's copies (characters' and, with Reflect the Level, the whole stage's) are drawn only while
   a puddle lies within the Reflection Distance of Mario (`port_puddles_near`) or the water reflects. Reflection Quality
   (Reflections page) sets the reflection web's density (48x96, 30x60, 18x36) and Reflection Blur's taps (7 or 4).

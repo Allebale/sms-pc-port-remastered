@@ -174,7 +174,7 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 	// Ambient Occlusion: how much Mario (and FLUDD on his back) shades round him and himself (Mario
 	// Ambient Occlusion: none at first, no halo): where he stands, from his feet to over his cap,
 	// in the camera's view
-	GXPC_AOGrass(port_ao_grass());  // AO Near Grass
+	GXPC_AOGrass(port_ao_grass(), view);  // Ambient Occlusion Near Grass
 	const float keep = port_ao_mario();
 	TMario* m = keep < 1.0f ? gpMarioOriginal : 0;
 	if (m) {

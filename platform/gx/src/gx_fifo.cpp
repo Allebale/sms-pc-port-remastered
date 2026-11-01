@@ -1246,7 +1246,7 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size);
 void callDisplayList(const uint8_t* data, uint32_t size) {
     float minY, maxY;
     // Round Shadows Under Characters: a character's list on its own, casting no sun shadow
-    if (g.shadowRound && data && !s_dlRec && characterLookup(data, size)) {
+    if ((g.shadowRound || g.charMask) && data && !s_dlRec && characterLookup(data, size)) {
         flushBatch();
         g.shadowNoCast = true;
         callDisplayListInner(data, size);

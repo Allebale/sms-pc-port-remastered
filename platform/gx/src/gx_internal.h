@@ -119,6 +119,9 @@ struct State {
     // Round Shadows Under Characters (GXPC_ShadowRound): Mario and the characters cast none;
     // shadowNoCast: a character's display list is drawn now
     bool shadowRound, shadowNoCast;
+    // Ambient Occlusion Near Grass's All But Characters: Mario's and the characters' draws are drawn
+    // again into a depth map of their own (charCast), so the shade knows them
+    bool charMask;
     // Ambient Occlusion (gx_render.cpp aoApply): armed for the main camera's projection each frame
     float aoProj[7];
     bool aoArmed;
@@ -423,7 +426,7 @@ bool shaderHasEarlyFragmentTests();
 bool earlyZWritesRejected();
 // 3D Grass (gx_shader.cpp, gx_render.cpp): its program, and its own uniforms' locations.
 struct GrassUniforms {
-    int view, params, press, strength, tile, flatArea;
+    int view, params, press, strength, tile, flatArea, top;
 };
 const ShaderProgram* grassProgram(GrassUniforms* u);
 // Its copies of the ground drawn so far (colour, depth), on these texture units.

@@ -83,7 +83,7 @@ int s_aoStrength = 1;     // Ambient Occlusion Strength: into kAoStrengths
 int s_aoDistance = 1;     // Ambient Occlusion Distance: into kAoDistances
 int s_aoQuality = 1;      // Ambient Occlusion Quality: 0 low, 1 medium, 2 high
 int s_aoMario = 0;        // Mario Ambient Occlusion: into kAoMarios (0 none at first: no halo)
-int s_aoGrass = 0;        // AO Near Grass: 0 kept (as it was), 1 removed among and around 3D Grass
+int s_aoGrass = 0;        // Ambient Occlusion Near Grass: 0 kept (as it was), 1 off the grassy ground, 2 off all round it but characters
 int s_aoHalfRate = 0;     // Ambient Occlusion Update Rate: 0 every frame, 1 every other frame
 int s_depthView = 0;      // Depth Buffer View: 0 off, 1 depth, 2 faces, 3 both, 4 the shade alone
 int s_vegetation = 0;     // Moving Vegetation: 0 off through 4 very windy
@@ -281,7 +281,7 @@ void load() {
         } else if (sscanf(line, " ambientocclusionmario = %d", &value) == 1) {
             s_aoMario = value < 0 ? 0 : value > 3 ? 3 : value;
         } else if (sscanf(line, " ambientocclusiongrass = %d", &value) == 1) {
-            s_aoGrass = value != 0;
+            s_aoGrass = value < 0 ? 0 : value > 2 ? 2 : value;
         } else if (sscanf(line, " ambientocclusionrate = %d", &value) == 1) {
             s_aoHalfRate = value != 0;
         } else if (sscanf(line, " ambientocclusionquality = %d", &value) == 1) {
@@ -411,7 +411,7 @@ void save() {
     fprintf(f, "ambientocclusionrate = %d\n", s_aoHalfRate);
     fprintf(f, "# ambientocclusionmario: how much Mario shades round him: 0 none (no halo), 1 low, 2 medium, 3 full.\n");
     fprintf(f, "ambientocclusionmario = %d\n", s_aoMario);
-    fprintf(f, "# ambientocclusiongrass: the shade on the ground among and around 3D Grass: 0 kept, 1 removed (characters keep theirs).\n");
+    fprintf(f, "# ambientocclusiongrass: the shade near 3D Grass: 0 kept, 1 off the grassy ground, 2 off everything near it but characters.\n");
     fprintf(f, "ambientocclusiongrass = %d\n", s_aoGrass);
     fprintf(f, "# vegetation: plants sway, bend from Mario and FLUDD's water: 0 off through 4 very windy.\n");
     fprintf(f, "vegetation = %d\n", s_vegetation);
@@ -628,15 +628,15 @@ int aoMarioSet(int i) {
     port_log("[ao] Mario Ambient Occlusion changed: %s\n", kAoMarioNames[i]);
     return 1;
 }
-const char* const kAoGrassNames[] = {"Kept", "Removed"};
-int aoGrassCount() { return 2; }
-const char* aoGrassName(int i) { return kAoGrassNames[i < 0 || i > 1 ? 0 : i]; }
+const char* const kAoGrassNames[] = {"Kept", "Ground Only", "All But Characters"};
+int aoGrassCount() { return 3; }
+const char* aoGrassName(int i) { return kAoGrassNames[i < 0 || i > 2 ? 0 : i]; }
 int aoGrassGet() {
     load();
     return s_aoGrass;
 }
 int aoGrassSet(int i) {
-    if (i < 0 || i > 1) return 0;
+    if (i < 0 || i > 2) return 0;
     load();
     s_aoGrass = i;
     save();
@@ -1159,7 +1159,7 @@ const EffectValue kEffects[] = {
     {"Ambient Occlusion Quality", {"Medium", "High", "Low", "Medium"}},
     {"Ambient Occlusion Update Rate", {"Every Frame", "Every Other Frame", "Every Other Frame", "Every Frame"}},
     {"Mario Ambient Occlusion", {"None", "Low", "Low", "None"}},
-    {"Ambient Occlusion Near Grass", {"Kept", "Removed", "Kept", "Kept"}},
+    {"Ambient Occlusion Near Grass", {"Kept", "Ground Only", "Kept", "Kept"}},
     {"Shader Warm-up", {"On", "On", "On", "On"}},
 };
 const char* const kEffectPresetNames[] = {"Original", "Remastered", "Performance", "Ultra Performance", "Custom"};
@@ -1331,7 +1331,7 @@ const PortSetting kPuddleSettings[] = {
      "How much shade Mario makes round him and on himself. None has no dark ring. Others keep their own.", 0, nullptr,
      aoMarioCount, aoMarioName, aoMarioGet, aoMarioSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 118, "Ambient Occlusion Near Grass",
-     "Removed takes the shade off the ground round 3D Grass. Characters keep theirs.", 0, nullptr,
+     "No shade on the grassy ground, or on all near it but characters (walls too).", 0, nullptr,
      aoGrassCount, aoGrassName, aoGrassGet, aoGrassSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 119, "Depth Buffer View",
      "For troubleshooting, as ReShade's DisplayDepth. Shows the depth, the normals, or the shade alone (grass in green).", 0,

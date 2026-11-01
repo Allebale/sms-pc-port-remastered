@@ -1434,7 +1434,8 @@ uniform vec4 u_gview[3];   // world to view, rows
 uniform vec4 u_g[6];       // see GXPC_GrassBegin
 uniform vec4 u_gp[64];     // what presses: x, y, z, radius
 uniform vec4 u_gs[16];     // their strengths, four a vec4
-uniform vec4 u_gtile;      // x: presses reach this tile; y: segments (1 or 2)
+uniform vec4 u_gtile;      // x: presses reach this tile; y: segments (1 or 2); z: 1, 2 the AO maps (w across)
+uniform vec4 u_gtop;       // the AO map from above: its corner (x, z), 1 / its span
 uniform vec4 u_uclip;      // the port's clip plane (a puddle's surface while its reflection is drawn)
 uniform sampler2D u_gcolor; // the ground drawn so far: its colour (with mipmaps)...
 uniform sampler2D u_gdepth; // ...and its depth
@@ -1546,6 +1547,17 @@ void main() {
     const vec2 kQ[6] = vec2[6](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
                                vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
     vec2 q = kQ[gl_VertexID % 6];
+    // 2: from above (All But Characters): where round the blades, and the ground's height there
+    // (the highest wins)
+    if (u_gtile.z > 1.5) {
+      vec2 m = (bp.xz + q * u_gtile.w - u_gtop.xy) * u_gtop.z;
+      gl_Position = vec4(m * 2.0 - 1.0, clamp(-bp.y / 60000.0, -1.0, 1.0), 1.0);
+      gl_ClipDistance[0] = 1.0;
+      gl_ClipDistance[1] = 1.0;
+      gl_ClipDistance[2] = 1.0;
+      v_col = vec3(q, bp.y);
+      return;
+    }
     gl_Position = place(bp + vec3(q.x * u_gtile.w, 1.0, q.y * u_gtile.w));
     gl_ClipDistance[0] = s_gx.x;
     gl_ClipDistance[1] = s_gx.y;
@@ -1686,6 +1698,7 @@ const ShaderProgram* grassProgram(GrassUniforms* u) {
             s_grassUniforms.strength = glGetUniformLocation(p, "u_gs");
             s_grassUniforms.tile = glGetUniformLocation(p, "u_gtile");
             s_grassUniforms.flatArea = glGetUniformLocation(p, "u_gflatArea");
+            s_grassUniforms.top = glGetUniformLocation(p, "u_gtop");
             GLint gf = glGetUniformLocation(p, "u_gflat");
             if (gf >= 0) glUniform1i(gf, kGrassFlatUnit);
             GLint gc = glGetUniformLocation(p, "u_gcolor"), gd = glGetUniformLocation(p, "u_gdepth");
