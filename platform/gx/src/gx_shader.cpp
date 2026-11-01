@@ -1540,6 +1540,19 @@ void main() {
     ground = vec4((u_g[1].rgb + u_g[2].rgb) * (0.5 / 255.0) * clamp(lum / 0.42, 0.35, 1.15), 1.0);
   }
   if (h < 0.5) { hide(); return; }
+  // AO Near Grass's map (u_gtile.z 1): a flat disc round the root, u_gtile.w across, at the
+  // ground; v_col: where in the disc, and the ground's view z
+  if (u_gtile.z > 0.5) {
+    const vec2 kQ[6] = vec2[6](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
+                               vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
+    vec2 q = kQ[gl_VertexID % 6];
+    gl_Position = place(bp + vec3(q.x * u_gtile.w, 1.0, q.y * u_gtile.w));
+    gl_ClipDistance[0] = s_gx.x;
+    gl_ClipDistance[1] = s_gx.y;
+    gl_ClipDistance[2] = dot(vec4(s_vpos, 1.0), u_uclip);
+    v_col = vec3(q, s_vpos.z);
+    return;
+  }
   // the breeze
   float t = u_g[0].x;
   vec2 wind = u_g[4].xy;
@@ -1617,8 +1630,15 @@ in vec3 v_col;
 uniform vec4 u_fog;
 uniform vec4 u_fogcolor;
 uniform vec4 u_g[6];
+uniform vec4 u_gtile;
 out vec4 o_color;
 void main() {
+  // AO Near Grass's map: the ground's view z, within the disc
+  if (u_gtile.z > 0.5) {
+    if (dot(v_col.xy, v_col.xy) > 1.0) discard;
+    o_color = vec4(v_col.z, 0.0, 0.0, 1.0);
+    return;
+  }
   vec4 color = vec4(v_col, 1.0);
   int fogType = int(u_g[5].x);
   if (fogType != 0) {

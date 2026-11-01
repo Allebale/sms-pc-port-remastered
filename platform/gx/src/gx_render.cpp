@@ -7,7 +7,6 @@
 #include "gx_glthread.h"
 #include "gx_nis_coef.h"
 #include "sms_gx/gx_pc.h"
-#include "port_settings.h"
 
 #include <math.h>
 #include <algorithm>
@@ -2416,6 +2415,8 @@ static void resetBatch() {
 // culling, the main camera's projection and viewport) and the grass's own uniforms
 // (GXPC_GrassBegin: the view, the kind, what presses the blades).
 static GLuint s_grassVao;
+// AO Near Grass: the tiles drawn this frame, drawn again as the ground's map (grassMask)
+static std::vector<std::pair<unsigned, int>> s_grassDrawn;
 static GrassUniforms s_grassU;
 static const ShaderProgram* s_grassSp;
 // What is drawn so far (the ground the blades stand on), copied each frame the grass is drawn: the
@@ -2509,6 +2510,7 @@ extern "C" void GXPC_GrassBegin(const float view[3][4], const float* params, con
     flushBatch();
     grassCopyGround();
     s_grassSp = grassProgram(&s_grassU);
+    s_grassDrawn.clear();
     s_xmap    = drawXMap();
     s_bclass  = PRIM_TRIS;
     glcUseProgram(s_grassSp->prog);
@@ -2550,6 +2552,7 @@ extern "C" void GXPC_GrassBegin(const float view[3][4], const float* params, con
 
 extern "C" void GXPC_GrassDraw(unsigned buf, int blades, int segments, int pressed) {
     if (!buf || blades <= 0 || !s_grassSp) return;
+    s_grassDrawn.push_back(std::make_pair(buf, blades));
     float tile[4] = {pressed ? 1.0f : 0.0f, float(segments), 0.0f, 0.0f};
     if (s_grassU.tile >= 0) glUniform4fv(s_grassU.tile, 1, tile);
     glBindBuffer(GL_ARRAY_BUFFER, buf);
@@ -2562,10 +2565,13 @@ extern "C" void GXPC_GrassDraw(unsigned buf, int blades, int segments, int press
 }
 
 static void grassCopyAfter();
+static void grassMask();
 extern "C" void GXPC_GrassEnd(void) {
-    s_grassSp = nullptr;
     flushBatch();
     grassCopyAfter();  // Ambient Occlusion: where the blades are
+    grassMask();       // AO Near Grass: the ground round them
+    s_grassSp = nullptr;
+    s_grassDrawn.clear();
 }
 
 // The flattened grass (ext/core/game/port_grass.cpp): a map round Mario, how flat each cell is and
@@ -2626,8 +2632,8 @@ uniform vec4 u_vm;   // the viewport: x scale, y scale, x centre, y centre (EFB 
 uniform vec2 u_es;   // the EFB's size: the picture's own mapping, widescreen and all
 uniform vec4 u_ao;   // fine strength, large strength, fade start, fade end (units from the camera)
 uniform vec4 u_q;    // x: samples for each (4 to 8: Ambient Occlusion Quality)
-uniform vec4 u_gr;   // x: 1 takes the shade off the ground among and around 3D Grass (AO Near Grass);
-                     // yzw: the world's up, in view space
+uniform vec4 u_gr;   // AO Near Grass: x 1 on (the map below is this frame's); y how near the ground
+uniform sampler2D u_gmask;  // the ground under and round 3D Grass's blades: its view z (0: none)
 uniform vec4 u_mario[2];  // Mario: from his feet (xyz, w how far round him) to over his cap (view
                           // space; w how much of his shade is kept: Mario Ambient Occlusion)
 // whether a point is within Mario (FLUDD and all): what is there shades only as much as kept
@@ -2663,33 +2669,6 @@ vec3 posUV(vec2 uv) { return posAt(uv, sceneDepth(uv)); }
 vec2 toUV(vec3 p) {
   vec2 ndc = vec2(u_pm.x * p.x / -p.z - u_pm.y, u_pm.z * p.y / -p.z - u_pm.w);
   return (u_vm.zw + u_vm.xy * ndc) / u_es;
-}
-// AO Near Grass: whether a point is ground among or around the blades (it is not shaded then).
-// A surface that faces up and is part of a wide flat piece (most of the points round it, a few
-// pixels off and farther, lie in its plane), with blades somewhere close. A character, a wall or a
-// trunk is not (it ends, or turns, within those pixels): what stands in the grass keeps its shade.
-bool grassGround(vec2 uv, vec3 P, vec3 N) {
-  if (u_gr.x < 0.5 || u_g.x < 0.5) return false;
-  if (dot(N, u_gr.yzw) < 0.55 || inMario(P)) return false;
-  float tol = -P.z * 0.02 + 4.0;
-  int total = 0, onFace = 0, blades = 0;
-  for (int ring = 0; ring < 2; ring++) {
-    float r = ring == 0 ? 7.0 : 19.0;
-    for (int k = 0; k < 8; k++) {
-      float a = (float(k) + 0.5 * float(ring)) * 0.7853982;
-      vec2 u2 = uv + vec2(cos(a), sin(a)) * r * u_f.zw;
-      if (any(lessThan(u2, vec2(0.0))) || any(greaterThan(u2, vec2(1.0)))) continue;
-      float d = textureLod(u_depth, u2, 0.0).r;
-      float g = textureLod(u_ground, u2, 0.0).r, af = textureLod(u_after, u2, 0.0).r;
-      bool blade = af < g && abs(d - af) < 1e-7;
-      float dg = blade ? g : d;
-      if (dg >= 0.999999) continue;
-      total++;
-      if (blade) blades++;
-      if (abs(dot(posAt(u2, dg) - P, N)) < tol) onFace++;
-    }
-  }
-  return total >= 8 && onFace * 4 >= total * 3 && blades >= 1;
 }
 const vec3 K[8] = vec3[8](
   vec3( 0.36,  0.00, 0.21), vec3(-0.17,  0.38, 0.27), vec3(-0.30, -0.36, 0.33),
@@ -2741,6 +2720,13 @@ void main() {
   vec3 P = posAt(v_uv, d);
   float dist = -P.z;
   if (dist <= 0.0 || dist >= u_ao.w) { o_color = vec4(1.0); return; }
+  // AO Near Grass: none on the ground under and round the blades (the grass's own map of that
+  // ground, drawn with the blades). What stands there (Mario, a character, a wall) is nearer the
+  // camera than that ground: it keeps its shade
+  if (u_gr.x > 0.5) {
+    float gz = textureLod(u_gmask, v_uv, 0.0).r;
+    if (gz < -1.0 && abs(P.z - gz) < u_gr.y + dist * 0.01) { o_color = vec4(1.0); return; }
+  }
   // the face from the depth 3 pixels away (the depth is stored in steps: from the next pixel, a
   // surface turned away from the view reads as flat, then a step, in columns)
   vec2 t = u_f.zw * 3.0;
@@ -2752,8 +2738,6 @@ void main() {
   if (dot(N, N) < 1e-12) { o_color = vec4(1.0); return; }
   N = normalize(N);
   if (dot(N, P) > 0.0) N = -N;
-  // AO Near Grass: none on the ground among and around the blades
-  if (grassGround(v_uv, P, N)) { o_color = vec4(1.0); return; }
   // a turn for each pixel of a 4 by 4 tile (the blur's 4 by 4 averages them out)
   ivec2 ip = ivec2(gl_FragCoord.xy) & 3;
   const float bayer[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
@@ -2928,12 +2912,8 @@ extern "C" void GXPC_AOMario(const float* bottom, const float* top, float radius
     s_aoMario[7] = keep > 0.0f ? keep : 0.0f;
 }
 
-static int s_aoGrassOn;      // AO Near Grass (GXPC_AOGrass)
-static float s_aoUp[3] = {0.0f, 1.0f, 0.0f};  // the world's up in the main camera's view
-extern "C" void GXPC_AOGrass(int on, const float* up) {
-    s_aoGrassOn = on != 0 && up != nullptr;
-    if (up) memcpy(s_aoUp, up, sizeof s_aoUp);
-}
+static int s_aoGrassOn;  // AO Near Grass (GXPC_AOGrass)
+extern "C" void GXPC_AOGrass(int on) { s_aoGrassOn = on != 0; }
 
 extern "C" void GXPC_AOFrame(int mode, float strength, float distance, int view, int quality, int halfRate) {
     s_aoHalfRate = halfRate != 0;
@@ -2985,6 +2965,73 @@ static void grassCopyAfter() {
     glcInvalidate();
 }
 
+// AO Near Grass: the ground under and round 3D Grass's blades, as a map of the picture (each pixel the
+// view z of that ground, 0 where there is none). The blades drawn this frame are drawn again by the
+// grass program as flat discs round their roots (u_gtile.z 1, u_gtile.w across), into a texture of
+// their own, as and where the blades were drawn. Ambient Occlusion leaves a pixel alone whose depth
+// is that ground's: what stands on it (nearer the camera) keeps its shade.
+static GLuint s_grassMaskTex, s_grassMaskDepth, s_grassMaskFbo;
+static int s_grassMaskW, s_grassMaskH;
+static uint32_t s_grassMaskFrame = ~0u;
+static const float kGrassMaskReach = 26.0f;  // how far round each blade's root, in units
+static void grassMask() {
+    if (!s_aoGrassOn || s_aoMode <= 0 || !g.aoArmed || !s_grassSp || s_grassDrawn.empty()) return;
+    const int W = scaled(s_efbW), H = scaled(EFB_H);
+    if (W != s_grassMaskW || H != s_grassMaskH) {
+        if (s_grassMaskFbo) {
+            glDeleteFramebuffers(1, &s_grassMaskFbo);
+            glDeleteTextures(1, &s_grassMaskTex);
+            glDeleteRenderbuffers(1, &s_grassMaskDepth);
+        }
+        s_grassMaskW = W, s_grassMaskH = H;
+        glGenTextures(1, &s_grassMaskTex);
+        glGenRenderbuffers(1, &s_grassMaskDepth);
+        glGenFramebuffers(1, &s_grassMaskFbo);
+        glActiveTexture(GL_TEXTURE0 + kGrassMaskUnit);
+        glBindTexture(GL_TEXTURE_2D, s_grassMaskTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, W, H, 0, GL_RED, GL_HALF_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindRenderbuffer(GL_RENDERBUFFER, s_grassMaskDepth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, W, H);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_grassMaskFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_grassMaskTex, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s_grassMaskDepth);
+        GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (st != GL_FRAMEBUFFER_COMPLETE) logmsg("ambient occlusion: the grass map is not complete (0x%x)", st);
+        logmsg("ambient occlusion: the grass map made (%dx%d)", W, H);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, s_grassMaskFbo);
+    glViewport(0, 0, W, H);  // as the EFB's draws (the GX viewport is in the shader)
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_COLOR_LOGIC_OP);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glUseProgram(s_grassSp->prog);
+    glBindVertexArray(s_grassVao);
+    const float tile[4] = {0.0f, 1.0f, 1.0f, kGrassMaskReach};
+    if (s_grassU.tile >= 0) glUniform4fv(s_grassU.tile, 1, tile);
+    for (size_t i = 0; i < s_grassDrawn.size(); i++) {
+        glBindBuffer(GL_ARRAY_BUFFER, s_grassDrawn[i].first);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 32, reinterpret_cast<const void*>(0));
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 32, reinterpret_cast<const void*>(16));
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, s_grassDrawn[i].second);
+    }
+    s_stats.draws += uint32_t(s_grassDrawn.size());
+    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    s_grassMaskFrame = GXPC_FrameCount();
+    glcInvalidate();
+}
+
 void aoApply() {
     if (!s_ready || (s_aoMode <= 0 && s_aoView <= 0)) return;
     // the main view's projection and depth range (the XF's, still the main camera's)
@@ -3009,6 +3056,7 @@ void aoApply() {
         s_aoTQ   = glGetUniformLocation(s_aoTraceProg, "u_q");
         s_aoTMario = glGetUniformLocation(s_aoTraceProg, "u_mario");
         s_aoTGr    = glGetUniformLocation(s_aoTraceProg, "u_gr");
+        glUniform1i(glGetUniformLocation(s_aoTraceProg, "u_gmask"), kGrassMaskUnit);
         glUniform1i(glGetUniformLocation(s_aoTraceProg, "u_ground"), kGrassDepthUnit);
         glUniform1i(glGetUniformLocation(s_aoTraceProg, "u_after"), kGrassAfterUnit);
         glUseProgram(s_aoApplyProg);
@@ -3170,7 +3218,12 @@ void aoApply() {
     const float q[4] = {float(kAoSamples[s_aoQuality]), 0.0f, 0.0f, 0.0f};
     glUniform4fv(s_aoTQ, 1, q);
     glUniform4fv(s_aoTMario, 2, s_aoMario);
-    const float gr[4] = {s_aoGrassOn ? 1.0f : 0.0f, s_aoUp[0], s_aoUp[1], s_aoUp[2]};
+    // AO Near Grass: the grass's ground map, when made this frame at this size
+    const bool gmask = s_aoGrassOn && grass && s_grassMaskFrame == frame && s_grassMaskW == W && s_grassMaskH == H;
+    glActiveTexture(GL_TEXTURE0 + kGrassMaskUnit);
+    glBindTexture(GL_TEXTURE_2D, gmask ? s_grassMaskTex : 0);
+    glBindSampler(kGrassMaskUnit, 0);
+    const float gr[4] = {gmask ? 1.0f : 0.0f, 18.0f, 0.0f, 0.0f};
     glUniform4fv(s_aoTGr, 1, gr);
     glUniform4fv(s_aoTG, 1, gu);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);

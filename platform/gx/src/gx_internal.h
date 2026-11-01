@@ -428,6 +428,8 @@ struct GrassUniforms {
 const ShaderProgram* grassProgram(GrassUniforms* u);
 // Its copies of the ground drawn so far (colour, depth), on these texture units.
 const int kGrassColorUnit = 11, kGrassDepthUnit = 12, kGrassFlatUnit = 13;
+// AO Near Grass: the ground under and round the blades, as a map of the picture (gx_render.cpp)
+const int kGrassMaskUnit = 8;
 // `lines`: the program for a line batch, which draws each line as a quad
 // GXSetLineWidth wide (a geometry shader)
 // depthOnly: 0 the draw, 1 its depth only (the ordered depth pass), 2 into the sun's shadow map

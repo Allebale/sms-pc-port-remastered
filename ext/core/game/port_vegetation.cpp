@@ -39,6 +39,10 @@ namespace {
 const f32 kAmounts[] = {0.0f, 0.6f, 1.0f, 1.8f, 2.7f};  // Off through Very Windy
 const f32 kWind[3]   = {0.8f, 0.0f, 0.6f};        // the way the breeze blows (unit)
 
+// Palm fronds are solid only while their tree was touched lately (port_tree_leaf_collides)
+const int kTouchedTicks = 240;                      // about as long as the game's fronds take to settle
+std::map<const TMapObjTree*, int> s_sinceTouch;     // ticks since Mario last touched each tree
+
 f32 amount()
 {
 	const int level = port_vegetation();
@@ -144,6 +148,9 @@ void afterMovement()
 	GXPC_SwayFrame(world, pushers, n);
 }
 
+// A new area: its trees are new (an old tree's place may be a new tree's), none touched yet
+void stageSetup() { s_sinceTouch.clear(); }
+
 PortExtension s_extension;
 
 struct Register {
@@ -151,6 +158,7 @@ struct Register {
 	{
 		memset(&s_extension, 0, sizeof s_extension);
 		s_extension.name          = "vegetation";
+		s_extension.stageSetup    = stageSetup;
 		s_extension.afterMovement = afterMovement;
 		port_ext_register(&s_extension);
 	}
@@ -224,11 +232,6 @@ void port_veg_model_named(J3DModelData* data, const char* path)
 	}
 	s_registered += parts;
 	fprintf(stderr, "[vegetation] %s: a plant, all %d of its parts (%.0f high)\n", base, parts, hi - lo);
-}
-
-namespace {
-const int kTouchedTicks = 240;                      // about as long as the game's fronds take to settle
-std::map<const TMapObjTree*, int> s_sinceTouch;     // ticks since Mario last touched each tree
 }
 
 void port_tree_sway(TMapObjTree* tree)

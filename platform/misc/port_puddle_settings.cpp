@@ -630,7 +630,7 @@ int aoGrassSet(int i) {
     load();
     s_aoGrass = i;
     save();
-    port_log("[ao] AO Near Grass changed: %s\n", kAoGrassNames[i]);
+    port_log("[ao] Ambient Occlusion Near Grass changed: %s\n", kAoGrassNames[i]);
     return 1;
 }
 const char* const kAoRateNames[] = {"Every Frame", "Every Other Frame"};
@@ -1105,7 +1105,7 @@ const EffectValue kEffects[] = {
     {"Ambient Occlusion Quality", "Medium", "High"},
     {"Ambient Occlusion Update Rate", "Every Frame", "Every Other Frame"},
     {"Mario Ambient Occlusion", "None", "Low"},
-    {"AO Near Grass", "Kept", "Removed"},
+    {"Ambient Occlusion Near Grass", "Kept", "Removed"},
     {"Shader Warm-up", "On", "On"},
 };
 const char* const kEffectPresetNames[] = {"Original", "Remastered", "Custom"};
@@ -1272,8 +1272,8 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 118, "Mario Ambient Occlusion",
      "How much shade Mario makes round him and on himself. None has no dark ring. Others keep their own.", 0, nullptr,
      aoMarioCount, aoMarioName, aoMarioGet, aoMarioSet},
-    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 120, "AO Near Grass",
-     "Removed takes the shade off the ground among 3D Grass. Characters keep theirs.", 0, nullptr,
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 118, "Ambient Occlusion Near Grass",
+     "Removed takes the shade off the ground round 3D Grass. Characters keep theirs.", 0, nullptr,
      aoGrassCount, aoGrassName, aoGrassGet, aoGrassSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 119, "Depth Buffer View",
      "For troubleshooting, as ReShade's DisplayDepth. Shows the depth, the normals, or the shade alone (grass in green).", 0,

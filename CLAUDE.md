@@ -76,7 +76,7 @@ Saves are never touched by the fork: no file it changes deals with the memory ca
 | Puddle and water reflections, ripples, glints, water depth, wet footprints, Puddle Lifetime | `ext/core/game/port_reflections.cpp`, `port_water_reflections.cpp`, `platform/misc/port_puddle_options.cpp` | `platform/gx/src/gx_render.cpp`, `gx_shader.cpp` |
 | Wet Mario, Sandy Mario (drawn on Mario only) | `port_water_reflections.cpp` (`port_wet_mario_draw`), `port_sandy.cpp` | `gx_shader.cpp`: only compiled into Mario's own program (`depthOnly == 3`, set by `GXPC_ShadowTag`) |
 | Real Shadows, Soft Shadow Edges, Round Shadows Under Characters | `ext/core/game/port_shadows.cpp`, `decomp-patches/zzzzz-ext-31-shadows*.patch` | `gx_render.cpp` (`GXPC_ShadowFrame`, two 4096 cascades, `shadowNoCast`), `gx_shader.cpp` (`shadowLit`) |
-| Ambient Occlusion (+ Strength, Distance, Quality, Update Rate, Mario Ambient Occlusion), Depth Buffer View | `port_shadows.cpp` calls `GXPC_AOFrame` and `GXPC_AOMario` | `gx_render.cpp` (`kAoTraceFs`, `kAoApplyFs`, `kAoViewFs`, `aoApply`) |
+| Ambient Occlusion (+ Strength, Distance, Quality, Update Rate, Mario Ambient Occlusion, Ambient Occlusion Near Grass), Depth Buffer View | `port_shadows.cpp` calls `GXPC_AOFrame`, `GXPC_AOMario` and `GXPC_AOGrass` | `gx_render.cpp` (`kAoTraceFs`, `kAoApplyFs`, `kAoViewFs`, `aoApply`) |
 | 3D Grass and flattening | `ext/core/game/port_grass.cpp` | `gx_render.cpp` (`GXPC_Grass*`), `gx_shader.cpp` (`kGrassVs`, `kGrassFs`) |
 | Moving Vegetation (Off to Very Windy; palm fronds are solid only while a tree is touched: `port_tree_touched`) | `ext/core/game/port_vegetation.cpp`, `decomp-patches/zzzzz-ext-32-vegetation-trees.patch` | `gx_render.cpp` (`GXPC_SwayRegister`), `gx_fifo.cpp` (`callDisplayList`) |
 | Global Illumination (was Fire Lights; fires and Shine Sprites are the lights, `Fire Light Intensity` sets their reach; the saved key is still `firelights`) | `ext/core/game/port_lights.cpp` | `gx_shader.cpp` (`u_plight`) |
@@ -86,16 +86,18 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 
 ### Renderer facts worth knowing
 
-- Texture units: 0 to 7 the game's, 8 free, 9 grass depth after the blades, 10 shadow map,
+- Texture units: 0 to 7 the game's, 8 AO Near Grass's ground map, 9 grass depth after the blades, 10 shadow map,
   11 and 12 grass copy (colour, depth), 13 grass flat map, 14 AO depth, 15 AO shade.
 - Post passes use `kPostVs` and `compileProgram`, read the picture with `efbReadFbo` plus a blit,
   and end with `glcInvalidate()`.
 - AO runs once a frame when the main camera's 3D scene ends (the first orthographic projection after it).
   The game's depth is stored in steps, so slopes and normals use points **3 pixels apart**, not the next pixel.
 - 3D Grass blades are known per pixel (depth before and after the blades), so AO never shades them.
-- AO Near Grass (Kept or Removed): `grassGround()` in `kAoTraceFs` skips the shade on up-facing, wide flat ground with
-  blades within about 19 pixels. The grass ground copy holds characters too, so they are told apart by shape (a character is not
-  a wide flat piece) and by Mario's capsule, not by depth. `GXPC_AOGrass` passes the setting and the world's up in view space.
+- Ambient Occlusion Near Grass (Kept or Removed): as the grass is done (`GXPC_GrassEnd`), `grassMask()` draws the
+  blades drawn this frame again with the grass program in a second mode (`u_gtile.z` 1): a flat disc 26 units round each
+  root, writing the ground's view z into a map of the picture (unit 8). The AO trace leaves a pixel alone whose depth is
+  that ground's (within 18 units and 1%); anything standing on it (Mario, characters, walls) is nearer the camera and keeps
+  its shade. An earlier try that guessed "ground" from the picture's shape was slow and unreliable and was replaced.
 - Mario's AO is limited with a capsule around him (`u_mario`), not his exact shape. Doing his exact
   shape would need a stencil buffer or two extra depth copies a frame (slower, riskier).
 - Round Shadows Under Characters: characters', enemies' and Yoshi's display lists are registered at
@@ -121,18 +123,16 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 
 ## Planned features
 
-- ** No AO Near Grass**: exclude Ambient Occlusion from the ground among and around 3D grass, while keeping AO on Mario, NPCs and enemies standing in or near the grass. This needs reliable per-pixel character identification; it is not implemented and must not be exposed as a setting until that works.
 - **3D Ladders**: add 3D ladder geometry to replace or enhance the flat ladder visuals.
 - **Code Quality Review**: review the codebase for correctness, maintainability, performance issues, and unnecessary complexity; fix issues where appropriate.
 - **Faster Game Start**: investigate and reduce game startup time without changing gameplay or introducing regressions.
 - **Puddles Around Fountains**: add puddles around fountains.
-- **Shine Sprites Global Illumination**: use light from Shine Sprites to illuminate the surrounding environment.
-- **Frame generation and Upscaling** FSR/DLSS/Other.
-- **Disalbe Double World Rendering is the graphic optinon "Reflect the Level" is Off**
-- **No goop on grass** Goop takes priority.
+- **Frame generation and upscaling** (FSR, DLSS or others).
+- **Disable double world rendering when Reflect the Level is Off**.
+- **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
 
 ## Ideas tried and dropped (do not bring back unasked)
 
-God Rays, Cloud Shadows, Moving Clouds, Moving Cloth, Swaying Hanging Things, Grass Stains
-Duration; removed on request), Grass Thinned Far Away,
+God Rays, Cloud Shadows, Moving Clouds, Moving Cloth, Swaying Hanging Things, Grass Stains (and Grass
+Stain Duration; removed on request), Grass Thinned Far Away,
 the Realistic Soft Shadow Edges option, and Softer and Very Soft Shadow Edges.
