@@ -50,6 +50,10 @@ Wet s_wet[kMost];
 int s_count;
 s32 s_last;
 f32 s_dripDue[kDrawn];
+// each drawn one's joints last frame, from its position (its own animation, not its walking)
+const int kJoints = 64;
+f32 s_prevJoint[kDrawn][kJoints][3];
+bool s_prevValid[kDrawn];
 u32 s_rand = 777u;
 
 f32 rand01()
@@ -141,9 +145,10 @@ f32 waterSurface(TLiveActor* a)
 }
 
 // Drops off a wet one, as Mario's (port_wet_drip): from its joints below how far up it is wet, a
-// little out from its middle, above the water it stands in; more the wetter it is and the faster
-// it moves (jumping, running), none while it is under the water.
-void drip(const Wet& w, f32* due, f32 dtMs)
+// little out from its middle, above the water it stands in; more the wetter it is, the faster it
+// moves (jumping, running) and the more its animation moves its body (shaking, waving: its joints
+// against its position since last frame), flung the way the joint swings; none under the water.
+void drip(const Wet& w, int slot, f32* due, f32 dtMs)
 {
 	TLiveActor* a   = w.actor;
 	J3DModel* model = a->getMActor() ? a->getMActor()->getModel() : 0;
@@ -157,14 +162,38 @@ void drip(const Wet& w, f32* due, f32 dtMs)
 	}
 	const JGeometry::TVec3<f32>& v = a->getVelocity();  // units a frame
 	const f32 speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-	*due += kDripsPerSec * w.wet * w.wet * (1.0f + (speed < 20.0f ? speed : 20.0f) / 6.0f) * dtMs * 0.001f;
+	// the animation: each joint's move since last frame (from its position), in units a game frame
+	const int nj = joints < kJoints ? joints : kJoints;
+	f32 (*prev)[3] = s_prevJoint[slot];
+	f32 jv[kJoints][3];
+	f32 anim = 0.0f;
+	const f32 perFrame = 33.3f / dtMs;  // to units a frame (30 a second)
+	for (int j = 0; j < nj; j++) {
+		MtxPtr mt = model->getAnmMtx(j);
+		const f32 rel[3] = {mt[0][3] - a->mPosition.x, mt[1][3] - a->mPosition.y, mt[2][3] - a->mPosition.z};
+		for (int k = 0; k < 3; k++) {
+			jv[j][k]   = s_prevValid[slot] ? (rel[k] - prev[j][k]) * perFrame : 0.0f;
+			prev[j][k] = rel[k];
+		}
+		anim += sqrtf(jv[j][0] * jv[j][0] + jv[j][1] * jv[j][1] + jv[j][2] * jv[j][2]);
+	}
+	const bool moved = s_prevValid[slot];
+	s_prevValid[slot] = true;
+	anim = moved ? anim / (f32)nj : 0.0f;  // a joint's average move a frame
+	if (anim > 30.0f)  // a jump to a new pose (teleported, a cut): not a shake
+		anim = 0.0f;
+	*due += kDripsPerSec * w.wet * w.wet
+	        * (1.0f + (speed < 20.0f ? speed : 20.0f) / 6.0f + (anim < 12.0f ? anim : 12.0f) / 1.5f) * dtMs * 0.001f;
 	if (*due > 8.0f)
 		*due = 8.0f;
 	const f32 top = w.height >= kAllOver ? 1e30f : a->mPosition.y + w.height;
 	for (; *due >= 1.0f; *due -= 1.0f)
 		for (int tries = 0; tries < 4; tries++) {
-			MtxPtr j = model->getAnmMtx(1 + (int)(rand01() * (joints - 1)) % (joints - 1));
+			const int ji = 1 + (int)(rand01() * (joints - 1)) % (joints - 1);
+			MtxPtr j = model->getAnmMtx(ji);
 			f32 x = j[0][3], y = j[1][3], z = j[2][3];
+			// flung the way the joint swings, as well as the way it walks
+			const f32 sx = ji < nj ? jv[ji][0] : 0.0f, sy = ji < nj ? jv[ji][1] : 0.0f, sz = ji < nj ? jv[ji][2] : 0.0f;
 			if (y > top || y < waterY + 2.0f || y < a->mPosition.y + 3.0f)
 				continue;
 			f32 ox = x - a->mPosition.x, oz = z - a->mPosition.z;
@@ -175,7 +204,7 @@ void drip(const Wet& w, f32* due, f32 dtMs)
 				ox = rand01() - 0.5f, oz = rand01() - 0.5f;
 			x += ox * (5.0f + 4.0f * rand01()) + (rand01() - 0.5f) * 6.0f;
 			z += oz * (5.0f + 4.0f * rand01()) + (rand01() - 0.5f) * 6.0f;
-			port_wet_drip(x, y - 2.0f * rand01(), z, v.x, v.y, v.z, waterY);
+			port_wet_drip(x, y - 2.0f * rand01(), z, v.x + sx, v.y + sy, v.z + sz, waterY);
 			break;
 		}
 }
@@ -282,10 +311,11 @@ void port_wet_characters_view(float (*view)[4])
 	static TLiveActor* s_dripOf[kDrawn];
 	for (int n = 0; n < picked; n++) {
 		if (s_dripOf[n] != s_wet[pick[n]].actor) {
-			s_dripOf[n]  = s_wet[pick[n]].actor;
-			s_dripDue[n] = 0.0f;
+			s_dripOf[n]    = s_wet[pick[n]].actor;
+			s_dripDue[n]   = 0.0f;
+			s_prevValid[n] = false;  // another one: its joints from the next frame
 		}
-		drip(s_wet[pick[n]], &s_dripDue[n], dt > 0 && dt < 1000 ? (f32)dt : 0.0f);
+		drip(s_wet[pick[n]], n, &s_dripDue[n], dt > 0 && dt < 1000 ? (f32)dt : 0.0f);
 	}
 	// each: its sphere in the view (centre, radius), how wet, its waterline (up . p + d = 0 there)
 	float data[kDrawn * 8];
