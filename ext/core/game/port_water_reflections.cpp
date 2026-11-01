@@ -1057,7 +1057,7 @@ s32 s_wetLast;
 // Drips: while he is wet (not in deep water), drops of water fall from the wet part of him (from his
 // joints below the waterline, a little out from his middle, and above the water he stands in), more
 // the wetter he is, and fall as drops do, leaving a small damp spot where they land on the ground.
-const int kMostDrips   = 320;
+const int kMostDrips   = 640;  // Wet Characters' drips share them (port_wet_drip)
 const f32 kDripsPerSec = 70.0f;  // soaked; fewer as he dries (by wetness squared)
 const f32 kGravity     = 980.0f; // units per second squared (Mario: about 160 units tall)
 const f32 kSpotMs      = 900.0f; // a damp spot's fading
@@ -1074,6 +1074,29 @@ f32 rand01()
 {
 	s_dripRand = s_dripRand * 1664525u + 1013904223u;
 	return (f32)(s_dripRand >> 8) * (1.0f / 16777216.0f);
+}
+
+// A drop at (x, y, z), moving with what it runs off (v: units a frame, 30 a second), falling to the
+// ground, or into the water at waterY it stands in.
+void addDrip(f32 x, f32 y, f32 z, f32 vx, f32 vy, f32 vz, f32 waterY)
+{
+	int slot = -1;
+	for (int i = 0; i < kMostDrips && slot < 0; i++)
+		if (!s_drips[i].live)
+			slot = i;
+	if (slot < 0 || !gpMap)
+		return;
+	Drip& dr = s_drips[slot];
+	dr.x = x, dr.y = y, dr.z = z;
+	dr.vx = vx * 15.0f + (rand01() - 0.5f) * 20.0f;
+	dr.vz = vz * 15.0f + (rand01() - 0.5f) * 20.0f;
+	dr.vy = (vy > 0.0f ? vy * 15.0f : 0.0f) - 80.0f - 80.0f * rand01();  // already running off
+	const TBGCheckData* floor = 0;
+	const f32 g = gpMap->checkGroundIgnoreWaterSurface(x, y, z, &floor);
+	dr.onGround = waterY < g;  // lands on the ground (not into water it stands in)
+	dr.floor    = dr.onGround ? g : waterY;
+	dr.spot     = 0.0f;
+	dr.live     = true;
 }
 
 void spawnDrip(TMario* m, f32 waterY)
@@ -1099,24 +1122,8 @@ void spawnDrip(TMario* m, f32 waterY)
 		x += ox * (5.0f + 4.0f * rand01()) + (rand01() - 0.5f) * 6.0f;
 		z += oz * (5.0f + 4.0f * rand01()) + (rand01() - 0.5f) * 6.0f;
 		y -= 2.0f * rand01();
-		int slot = -1;
-		for (int i = 0; i < kMostDrips && slot < 0; i++)
-			if (!s_drips[i].live)
-				slot = i;
-		if (slot < 0)
-			return;
-		Drip& dr = s_drips[slot];
 		const JGeometry::TVec3<f32>& v = m->getVel();  // units a frame (30 a second)
-		dr.x = x, dr.y = y, dr.z = z;
-		dr.vx = v.x * 15.0f + (rand01() - 0.5f) * 20.0f;
-		dr.vz = v.z * 15.0f + (rand01() - 0.5f) * 20.0f;
-		dr.vy = (v.y > 0.0f ? v.y * 15.0f : 0.0f) - 80.0f - 80.0f * rand01();  // already running off him
-		const TBGCheckData* floor = 0;
-		const f32 g   = gpMap->checkGroundIgnoreWaterSurface(x, y, z, &floor);
-		dr.onGround   = waterY < g;  // lands on the ground (not into water he stands in)
-		dr.floor      = dr.onGround ? g : waterY;
-		dr.spot       = 0.0f;
-		dr.live       = true;
+		addDrip(x, y, z, v.x, v.y, v.z, waterY);
 		return;
 	}
 }
@@ -1160,7 +1167,7 @@ void drawDrips(MtxPtr view)
 	bool any = false;
 	for (int i = 0; i < kMostDrips && !any; i++)
 		any = s_drips[i].live;
-	if (!any || !port_wet_mario())
+	if (!any || !(port_wet_mario() || port_wet_characters()))
 		return;
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
@@ -1251,8 +1258,11 @@ void updateWetness()
 	if (!port_wet_mario() || !m) {
 		s_wetness   = 0.0f;
 		s_wetHeight = 0.0f;
-		for (int i = 0; i < kMostDrips; i++)
-			s_drips[i].live = false;
+		if (port_wet_characters())  // Wet Characters' drips still fall
+			updateDrips(0, dt > 0 && dt < 1000 ? (f32)dt : 0.0f, false, -1e9f);
+		else
+			for (int i = 0; i < kMostDrips; i++)
+				s_drips[i].live = false;
 		return;
 	}
 	if (dt > 0 && dt < 1000)
@@ -1298,6 +1308,12 @@ void updateWetness()
 }
 
 } // namespace
+
+// Wet Characters (port_wet_characters.cpp): a drop off a wet character, as Mario's
+void port_wet_drip(float x, float y, float z, float vx, float vy, float vz, float waterY)
+{
+	addDrip(x, y, z, vx, vy, vz, waterY);
+}
 
 extern "C" void GXPC_SetWetness(float wet, const float* line);
 extern "C" void GXPC_SetWetLook(float darkness, float shine);

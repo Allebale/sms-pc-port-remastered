@@ -39,6 +39,7 @@ const f32 kAllOver    = 100000.0f; // a waterline over all of them
 const f32 kNear       = 3000.0f;   // only these near Mario are checked for water, and drawn wet
 const f32 kMargin     = 35.0f;     // the sphere past their joints (their skin round the bones)
 const f32 kLargest    = 450.0f;    // no sphere larger (a boss's)
+const f32 kDripsPerSec = 40.0f;    // soaked and still; fewer as they dry (by wetness squared), more moving
 
 struct Wet {
 	TLiveActor* actor;
@@ -48,6 +49,14 @@ struct Wet {
 Wet s_wet[kMost];
 int s_count;
 s32 s_last;
+f32 s_dripDue[kDrawn];
+u32 s_rand = 777u;
+
+f32 rand01()
+{
+	s_rand = s_rand * 1664525u + 1013904223u;
+	return (f32)(s_rand >> 8) * (1.0f / 16777216.0f);
+}
 int s_next;  // the next actor to check for water (a few each frame)
 
 bool character(TLiveActor* a) { return a && a->getMActor() && dynamic_cast<TSpineEnemy*>(a); }
@@ -122,6 +131,53 @@ void checkWater()
 				soak(a, depth > 150.0f ? kAllOver : depth + 8.0f);
 		}
 	s_next = checked >= 12 ? from + checked : 0;  // round again from the first
+}
+
+// The water's surface over an actor's feet, if it stands in water (-1e9 none).
+f32 waterSurface(TLiveActor* a)
+{
+	const f32 depth = waterDepth(a);
+	return depth > 0.0f ? a->mPosition.y + depth : -1e9f;
+}
+
+// Drops off a wet one, as Mario's (port_wet_drip): from its joints below how far up it is wet, a
+// little out from its middle, above the water it stands in; more the wetter it is and the faster
+// it moves (jumping, running), none while it is under the water.
+void drip(const Wet& w, f32* due, f32 dtMs)
+{
+	TLiveActor* a   = w.actor;
+	J3DModel* model = a->getMActor() ? a->getMActor()->getModel() : 0;
+	const int joints = model && model->getModelData() ? model->getModelData()->getJointNum() : 0;
+	if (joints <= 1 || dtMs <= 0.0f)
+		return;
+	const f32 waterY = waterSurface(a);
+	if (waterY > a->mPosition.y + 150.0f) {  // under the water
+		*due = 0.0f;
+		return;
+	}
+	const JGeometry::TVec3<f32>& v = a->getVelocity();  // units a frame
+	const f32 speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+	*due += kDripsPerSec * w.wet * w.wet * (1.0f + (speed < 20.0f ? speed : 20.0f) / 6.0f) * dtMs * 0.001f;
+	if (*due > 8.0f)
+		*due = 8.0f;
+	const f32 top = w.height >= kAllOver ? 1e30f : a->mPosition.y + w.height;
+	for (; *due >= 1.0f; *due -= 1.0f)
+		for (int tries = 0; tries < 4; tries++) {
+			MtxPtr j = model->getAnmMtx(1 + (int)(rand01() * (joints - 1)) % (joints - 1));
+			f32 x = j[0][3], y = j[1][3], z = j[2][3];
+			if (y > top || y < waterY + 2.0f || y < a->mPosition.y + 3.0f)
+				continue;
+			f32 ox = x - a->mPosition.x, oz = z - a->mPosition.z;
+			const f32 d = sqrtf(ox * ox + oz * oz);
+			if (d > 0.5f)
+				ox /= d, oz /= d;
+			else
+				ox = rand01() - 0.5f, oz = rand01() - 0.5f;
+			x += ox * (5.0f + 4.0f * rand01()) + (rand01() - 0.5f) * 6.0f;
+			z += oz * (5.0f + 4.0f * rand01()) + (rand01() - 0.5f) * 6.0f;
+			port_wet_drip(x, y - 2.0f * rand01(), z, v.x, v.y, v.z, waterY);
+			break;
+		}
 }
 
 // The sphere round an actor's model (its joints), in the world: false if it has none.
@@ -221,6 +277,15 @@ void port_wet_characters_view(float (*view)[4])
 			break;
 		used[best]     = true;
 		pick[picked++] = best;
+	}
+	// their drops (as each frame, so a pick's count follows it while it stays the same one)
+	static TLiveActor* s_dripOf[kDrawn];
+	for (int n = 0; n < picked; n++) {
+		if (s_dripOf[n] != s_wet[pick[n]].actor) {
+			s_dripOf[n]  = s_wet[pick[n]].actor;
+			s_dripDue[n] = 0.0f;
+		}
+		drip(s_wet[pick[n]], &s_dripDue[n], dt > 0 && dt < 1000 ? (f32)dt : 0.0f);
 	}
 	// each: its sphere in the view (centre, radius), how wet, its waterline (up . p + d = 0 there)
 	float data[kDrawn * 8];

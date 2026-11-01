@@ -135,6 +135,9 @@ float port_wet_characters_darkness(void);
 float port_wet_characters_shine(void);
 // Once a frame, from the main camera's view (port_shadows_main_view): the wet ones to the renderer.
 void port_wet_characters_view(float (*view)[4]);
+// A drop of water off a wet character at (x, y, z), with its velocity (units a frame), falling to
+// the ground or into the water at waterY (ext/core/game/port_water_reflections.cpp, as Mario's drips).
+void port_wet_drip(float x, float y, float z, float vx, float vy, float vz, float waterY);
 
 // Water Reflections: 1 when the stage's own water and wet ground show the reflections puddles
 // do (ext/core/game/port_water_reflections.cpp); 0 as the game has it.
