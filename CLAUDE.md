@@ -70,7 +70,7 @@ saves), and the two presets:
   label and the value name for each preset). **When you add a Graphics setting, add it to `kEffects`.**
 - **Performance** is made for a player's laptop (RTX 4050 6 GB, i5-13420H, 16 GB): smaller shadow maps
   (Shadow Size Medium), cheaper Ambient Occlusion, Reflection Quality Low, no blur; Reflect the Level kept.
-  **Ultra Performance**: Shadow Size Low, no Ambient Occlusion, less grass, Mario-only reflections, no Reflect the Level.
+  **Ultra Performance**: Shadow Size Low, no Ambient Occlusion, less grass, everything reflected but no Reflect the Level.
 
 Saves are never touched by the fork: no file it changes deals with the memory card or progress.
 

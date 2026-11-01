@@ -1055,9 +1055,9 @@ const Preset kPresets[4] = {
     // Performance (a laptop's RTX 4050 and 13th-gen i5): puddles and the water reflect Mario, the
     // people and the stage; no blur (seven passes); Reflection Quality Low
     {1, 1, 8, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, {1, 1, 0, 0, 0}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 0},
-    // Ultra Performance: Mario only, in puddles and the water, as far as the game's own; no stage,
-    // blur, glints, viewing angle or water depth
-    {0, 1, 4, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, {1, 0, 0, 0, 0}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 0},
+    // Ultra Performance: everything (Mario, the people, enemies, items, objects) in puddles and the
+    // water, as far as the game's own; no stage, blur, glints, viewing angle or water depth
+    {1, 1, 4, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, {1, 1, 1, 1, 1}, 1, {300, 500, 400, 330, 50, 60, 100, 550, 500, 450}, 0},
 };
 const char* const kPresetNames[] = {"Original", "Remastered", "Performance", "Ultra Performance", "Custom"};
 
