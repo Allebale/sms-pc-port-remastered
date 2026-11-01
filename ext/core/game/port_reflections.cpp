@@ -84,7 +84,7 @@ private:
 	bool shown() const
 	{
 		if (!port_puddle_reflections() || !gpModelWaterManager
-		    || (!gpModelWaterManager->getParticleCount() && !port_water_mirror_active()))
+		    || (!port_puddles_near() && !port_water_mirror_active()))
 			return false;
 		if (!port_reflect_kind(mKind))
 			return false;
@@ -244,8 +244,9 @@ public:
 
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics)
 	{
-		if (port_reflect_level() && gpModelWaterManager
-		    && (gpModelWaterManager->getParticleCount() || port_water_mirror_active()))
+		// only while a puddle near Mario or the water shows the reflection (the stage drawn twice
+		// costs the most of all)
+		if (port_reflect_level() && gpModelWaterManager && (port_puddles_near() || port_water_mirror_active()))
 			TMirrorActor::perform(cue, graphics);
 	}
 };

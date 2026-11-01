@@ -98,6 +98,9 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   root, writing the ground's view z into a map of the picture (unit 8). The AO trace leaves a pixel alone whose depth is
   that ground's (within 18 units and 1%); anything standing on it (Mario, characters, walls) is nearer the camera and keeps
   its shade. An earlier try that guessed "ground" from the picture's shape was slow and unreliable and was replaced.
+- Reflections: the mirror's copies (characters' and, with Reflect the Level, the whole stage's) are drawn only while
+  a puddle lies within the Reflection Distance of Mario (`port_puddles_near`) or the water reflects. Reflection Quality
+  (Reflections page) sets the reflection web's density (48x96, 30x60, 18x36) and Reflection Blur's taps (7 or 4).
 - Mario's AO is limited with a capsule around him (`u_mario`), not his exact shape. Doing his exact
   shape would need a stencil buffer or two extra depth copies a frame (slower, riskier).
 - Round Shadows Under Characters: characters', enemies' and Yoshi's display lists are registered at

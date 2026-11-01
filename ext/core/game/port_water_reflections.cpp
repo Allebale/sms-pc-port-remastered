@@ -471,9 +471,19 @@ void updateRings(const TBGCheckData* ground)
 // As the game draws it (drawMirror): the frame's alpha holds the marks (the puddles, or the
 // water); the disc's alpha times the picture's multiplies it; the colour already there is darkened
 // by it and the picture added in its place; the alpha is left clear.
-const int kRings    = 48;
+const int kRings    = 48;  // the web at its finest (Reflection Quality High)
 const int kSegments = 96;
 const int kVerts    = (kRings + 1) * kSegments;
+// This frame's web (Reflection Quality): High 48 rings of 96, Medium 30 of 60, Low 18 of 36; and
+// how many taps Reflection Blur takes (Low 4, else 7)
+int s_webRings = kRings, s_segs = kSegments, s_tapMost = 7;
+void webQuality()
+{
+	const int q = port_reflection_quality();
+	s_webRings = q >= 2 ? kRings : q == 1 ? 30 : 18;
+	s_segs    = q >= 2 ? kSegments : q == 1 ? 60 : 36;
+	s_tapMost = q == 0 ? 4 : 7;
+}
 const int kMostTaps = 7;
 
 struct Ripple {
@@ -582,7 +592,7 @@ f32 s_vs[kMostTaps][kVerts], s_vt[kMostTaps][kVerts];
 int s_taps;
 u8 s_sun[3];
 
-int vertexIndex(int ring, int segment) { return ring * kSegments + segment; }
+int vertexIndex(int ring, int segment) { return ring * s_segs + segment; }
 
 const int kCoarseRings = 12, kCoarseSegments = 24;  // Water Depth's web
 
@@ -609,13 +619,14 @@ void buildWeb(const Ripple& r, u8 centre)
 	const JGeometry::TVec3<f32>& n0  = r.plane->getNormal();
 
 	const f32 b = (f32)port_reflection_blur() * 0.03f;  // hundredths: 3 units a whole step
-	s_taps      = b > 0.0f ? kMostTaps : 1;
+	webQuality();
+	s_taps      = b > 0.0f ? s_tapMost : 1;
 
-	for (int ring = 0; ring <= kRings; ring++) {
-		const f32 along = (f32)ring / kRings;
-		for (int seg = 0; seg < kSegments; seg++) {
+	for (int ring = 0; ring <= s_webRings; ring++) {
+		const f32 along = (f32)ring / s_webRings;
+		for (int seg = 0; seg < s_segs; seg++) {
 			const int i     = vertexIndex(ring, seg);
-			const f32 angle = (f32)seg * (6.2831853f / kSegments);
+			const f32 angle = (f32)seg * (6.2831853f / s_segs);
 			const f32 x     = gpMarioPos->x + sinf(angle) * r.radius * along;
 			const f32 z     = gpMarioPos->z + cosf(angle) * r.radius * along;
 			const f32 y     = heightAt(r.plane, x, z) + kLift;
@@ -638,7 +649,7 @@ void buildWeb(const Ripple& r, u8 centre)
 			texCoordAt(r, x + ox, z + oz, &s_vs[0][i], &s_vt[0][i]);
 			if (s_taps > 1) {
 				for (int t = 1; t < s_taps; t++) {
-					const f32 ta = (t - 1) * (6.2831853f / (kMostTaps - 1)) + 0.4f;
+					const f32 ta = (t - 1) * (6.2831853f / (s_taps - 1)) + 0.4f;
 					texCoordAt(r, x + ox + sinf(ta) * b, z + oz + cosf(ta) * b, &s_vs[t][i], &s_vt[t][i]);
 				}
 			}
@@ -686,11 +697,11 @@ void drawWeb(int tap, int colour, u8 grey, bool tex)
 		GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
 		GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY, GX_FALSE, GX_PTIDENTITY);
 	}
-	for (int ring = 0; ring < kRings; ring++) {
-		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, (u16)(2 * (kSegments + 1)));
-		for (int seg = 0; seg <= kSegments; seg++) {
+	for (int ring = 0; ring < s_webRings; ring++) {
+		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, (u16)(2 * (s_segs + 1)));
+		for (int seg = 0; seg <= s_segs; seg++) {
 			for (int k = 0; k < 2; k++) {
-				const int i = vertexIndex(ring + 1 - k, seg % kSegments);
+				const int i = vertexIndex(ring + 1 - k, seg % s_segs);
 				GXPosition3f32(s_vx[i], s_vy[i], s_vz[i]);
 				if (colour == WEB_ALPHA)
 					GXColor4u8(0xff, 0xff, 0xff, s_va[i]);
@@ -709,7 +720,7 @@ void drawWeb(int tap, int colour, u8 grey, bool tex)
 
 bool anyGlint()
 {
-	for (int i = 0; i < kVerts; i++)
+	for (int i = 0, n = (s_webRings + 1) * s_segs; i < n; i++)
 		if (s_vg[i])
 			return true;
 	return false;
@@ -1401,6 +1412,29 @@ const TBGCheckData* choosePlane(const TBGCheckData* ground)
 
 // Whether water or wet ground shows reflections this frame (port_reflections.cpp draws the copies
 // of characters and objects then, as it does while there are puddles).
+// Whether any of FLUDD's puddles lies within the Reflection Distance of Mario (once a tick): the
+// reflection is only drawn there, so with none near, the mirror's copies (the characters', the
+// level's) need not be drawn. Long-lasting puddles (Puddle Lifetime) can be anywhere in the stage.
+extern "C" int port_puddles_near(void)
+{
+	TModelWaterManager* water = gpModelWaterManager;
+	if (!water || !gpMarioPos)
+		return 0;
+	static int s_tick = -1, s_near;
+	if (water->unk5E00 == s_tick)
+		return s_near;
+	s_tick = water->unk5E00;
+	s_near = 0;
+	const f32 reach = port_puddle_reflection_distance() + 300.0f;
+	const f32 mx = gpMarioPos->x, mz = gpMarioPos->z;
+	for (int i = 0, n = water->getParticleCount(); i < n && !s_near; i++) {
+		const JGeometry::TVec3<f32>& p = water->mParticlePositionSOA[i];
+		const f32 dx = p.x - mx, dz = p.z - mz;
+		s_near = dx * dx + dz * dz < reach * reach;
+	}
+	return s_near;
+}
+
 extern "C" int port_water_mirror_active(void) { return s_kind != KIND_NONE && s_triCount > 0; }
 
 extern "C" int port_water_mirror_on_water(void) { return s_kind == KIND_WATER; }

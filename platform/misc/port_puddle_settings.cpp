@@ -137,6 +137,7 @@ const char* blurName(int i) {
 }
 bool s_strengthSet;
 int s_viewAngle = 0;  // Viewing Angle: 0 off, 1 subtle, 2 realistic
+int s_reflQuality = 2;  // Reflection Quality: 0 low, 1 medium, 2 high (as it was)
 int s_glints = 0;     // Sun Glints: 0 off, 1 subtle, 2 bright
 int s_depth = 0;      // Water Depth: 0 off, 1 subtle, 2 strong
 
@@ -252,6 +253,8 @@ void load() {
             // done by readBlur
         } else if (sscanf(line, " viewangle = %d", &value) == 1) {
             s_viewAngle = value < 0 ? 0 : value > 2 ? 2 : value;
+        } else if (sscanf(line, " reflectionquality = %d", &value) == 1) {
+            s_reflQuality = value < 0 ? 0 : value > 2 ? 2 : value;
         } else if (sscanf(line, " glints = %d", &value) == 1) {
             s_glints = value < 0 ? 0 : value > 2 ? 2 : value;
         } else if (sscanf(line, " depth = %d", &value) == 1) {
@@ -430,6 +433,8 @@ void save() {
     fprintf(f, "beatmirrors = %d\n", s_beatMirrors);
     fprintf(f, "# viewangle: reflections by how slanting the view is: 0 off, 1 subtle, 2 realistic.\n");
     fprintf(f, "viewangle = %d\n", s_viewAngle);
+    fprintf(f, "# reflectionquality: how finely reflections are drawn: 0 low (fastest), 1 medium, 2 high.\n");
+    fprintf(f, "reflectionquality = %d\n", s_reflQuality);
     fprintf(f, "# glints: the sun's light off puddles and water: 0 off, 1 subtle, 2 bright.\n");
     fprintf(f, "glints = %d\n", s_glints);
     fprintf(f, "# depth: water darker over deep ground: 0 off, 1 subtle, 2 strong.\n");
@@ -955,6 +960,18 @@ int levelCount3() { return 3; }
 const char* viewName(int i) { return i == 2 ? "Realistic" : i == 1 ? "Subtle" : "Off"; }
 const char* glintName(int i) { return i == 2 ? "Bright" : i == 1 ? "Subtle" : "Off"; }
 const char* depthName(int i) { return i == 2 ? "Strong" : i == 1 ? "Subtle" : "Off"; }
+const char* const kReflQualityNames[] = {"Low", "Medium", "High"};
+int reflQualityCount() { return 3; }
+const char* reflQualityName(int i) { return kReflQualityNames[i < 0 || i > 2 ? 2 : i]; }
+int reflQualityGet() { load(); return s_reflQuality; }
+int reflQualitySet(int i) {
+    if (i < 0 || i > 2) return 0;
+    load();
+    s_reflQuality = i;
+    save();
+    port_log("[puddles] Reflection Quality changed: %s\n", kReflQualityNames[i]);
+    return 1;
+}
 int viewGet() { load(); return s_viewAngle; }
 int viewSet(int i) {
     if (i < 0 || i > 2) return 0;
@@ -1338,6 +1355,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 13, "Sun Glints",
      "The sun's light sparkles off puddles and water. None indoors.", 0, nullptr, levelCount3, glintName,
      glintGet, glintSet},
+    {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 31, "Reflection Quality",
+     "How finely reflections and their ripples are drawn. Lower is faster.", 0, nullptr,
+     reflQualityCount, reflQualityName, reflQualityGet, reflQualitySet},
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 15, "Reflection Blur",
      "How blurred reflections in puddles and water are, 0 sharp to 10.", 0, nullptr, blurCount, blurName,
      blurGet, blurSet},
@@ -1452,6 +1472,10 @@ int port_ao_grass(void) {
 int port_ao_half_rate(void) {
     load();
     return s_aoHalfRate;
+}
+int port_reflection_quality(void) {
+    load();
+    return s_reflQuality;
 }
 int port_ao_quality(void) {
     load();

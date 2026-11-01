@@ -83,6 +83,14 @@ int port_sun_glints(void);
 // Water Depth: 0 off, 1 subtle, 2 strong: the sea, lakes and pools darker over deep ground.
 int port_water_depth(void);
 
+// Reflection Quality (the settings menu, Reflections; not a mod's option): 0 low, 1 medium, 2 high
+// (as before): how finely the reflection's surface is drawn (its ripples and glints), how many
+// taps Reflection Blur takes.
+int port_reflection_quality(void);
+// Whether any of FLUDD's puddles lies within the Reflection Distance of Mario this tick (the
+// reflection is only drawn there: the mirror's copies are not drawn for puddles beyond it).
+int port_puddles_near(void);
+
 // Reflection Distance: the radius, in the game's units, of the disc around Mario that puddle
 // reflections are drawn over, fading out to its edge: 500 to 5000 (1000, the game's).
 float port_puddle_reflection_distance(void);
