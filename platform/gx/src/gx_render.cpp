@@ -1931,6 +1931,9 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     UNI(uUserClip, uclip, uclip, glUniform4fv(sp->uUserClip, 1, uclip));
     float wet[8] = {g.wet, g.wetLook[0], g.wetLook[1], 0.0f, g.wetLine[0], g.wetLine[1], g.wetLine[2], g.wetLine[3]};
     UNI(uWet, wet, wet, glUniform4fv(sp->uWet, 2, wet));
+    if (sp->uWetc >= 0) {  // only a wet character's program has it
+        UNI(uWetc, wetc, g.wetChars, glUniform4fv(sp->uWetc, 18, g.wetChars));
+    }
     float shadow[48];
     memcpy(shadow, g.shadow, sizeof shadow);
     static const float kMarioSelfShadowSkip = 45.0f;  // units toward the sun (his cap to his chin)

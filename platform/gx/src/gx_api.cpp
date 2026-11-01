@@ -593,6 +593,24 @@ extern "C" void GXPC_SetWetness(float wet, const float* line) {
     memcpy(g.wetLine, line, sizeof g.wetLine);
 }
 
+// Wet Characters (ext/core/game/port_wet_characters.cpp): up to 8 wet people and enemies, each a
+// sphere in the main camera's view (centre, radius) and (wetness, waterline d, 0, 0); the view's up
+// (the waterlines' normal); Wet Mario's look. Count 0: none, and no character's draw changes.
+extern "C" void GXPC_SetWetCharacters(int count, const float* data, float darkness, float shine, const float* up) {
+    float w[72] = {0};
+    if (count > 8) count = 8;
+    if (count > 0 && data && up) {
+        w[0] = float(count);
+        w[1] = darkness >= 0.0f && darkness < 4.0f ? darkness : 1.0f;
+        w[2] = shine >= 0.0f && shine < 4.0f ? shine : 1.0f;
+        memcpy(w + 4, up, 3 * sizeof(float));
+        memcpy(w + 8, data, size_t(count) * 8 * sizeof(float));
+    }
+    if (!memcmp(w, g.wetChars, sizeof w)) return;
+    flushBatch();
+    memcpy(g.wetChars, w, sizeof w);
+}
+
 // Wet Mario's look (the menu's): how much darker (1 as it was) and how shiny (0 none, 1 as it was).
 extern "C" void GXPC_SetWetLook(float darkness, float shine) {
     if (!(darkness >= 0.0f && darkness < 4.0f)) darkness = 1.0f;

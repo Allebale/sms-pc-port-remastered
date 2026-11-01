@@ -1,0 +1,250 @@
+// Wet Characters (port_puddles.h): the people and enemies get wet as Mario does (Wet Mario's look,
+// darker and shiny), all over when FLUDD's water hits them (the hit's objectHitDone, as each
+// water particle's HIT_MESSAGE_SPRAYED_BY_WATER reaches them), or up to where the water reaches
+// when they stand or swim in it; drying over 45 seconds as he does.
+//
+// The renderer sees no one actor's draw (the game's draw buffers mix them), but it knows the
+// characters' display lists (registered at stage setup for Round Shadows, port_shadows.cpp). So each
+// frame, as the main camera sets its view (port_wet_characters_view), the wettest few near Mario go
+// to it as spheres round them in the camera's view, with how wet each is and its waterline; a
+// character's draw is wet where it is inside one of them.
+#include "port_ext.h"
+#include "port_puddles.h"
+
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <Enemy/Conductor.hpp>
+#include <Enemy/Enemy.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <Strategic/HitActor.hpp>
+#include <Strategic/LiveActor.hpp>
+#include <Strategic/LiveManager.hpp>
+#include <Player/Mario.hpp>
+#include <Player/MarioAccess.hpp>
+#include <dolphin/os.h>
+
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+extern "C" void GXPC_SetWetCharacters(int count, const float* data, float darkness, float shine, const float* up);
+
+namespace {
+
+const int kMost       = 48;        // characters wet at once (the wettest kept)
+const int kDrawn      = 8;         // sent to the renderer: the wettest near Mario (gx_shader.cpp)
+const s32 kDryMs      = 45000;     // as Wet Mario
+const f32 kAllOver    = 100000.0f; // a waterline over all of them
+const f32 kNear       = 3000.0f;   // only these near Mario are checked for water, and drawn wet
+const f32 kMargin     = 35.0f;     // the sphere past their joints (their skin round the bones)
+const f32 kLargest    = 450.0f;    // no sphere larger (a boss's)
+
+struct Wet {
+	TLiveActor* actor;
+	f32 wet;     // 1 soaked, 0 dry
+	f32 height;  // how far up, over their feet (kAllOver: all of them)
+};
+Wet s_wet[kMost];
+int s_count;
+s32 s_last;
+int s_next;  // the next actor to check for water (a few each frame)
+
+bool character(TLiveActor* a) { return a && a->getMActor() && dynamic_cast<TSpineEnemy*>(a); }
+
+Wet* find(TLiveActor* a, bool add)
+{
+	for (int i = 0; i < s_count; i++)
+		if (s_wet[i].actor == a)
+			return &s_wet[i];
+	if (!add)
+		return 0;
+	int slot = s_count < kMost ? s_count++ : -1;
+	if (slot < 0) {  // full: the driest goes
+		slot = 0;
+		for (int i = 1; i < kMost; i++)
+			if (s_wet[i].wet < s_wet[slot].wet)
+				slot = i;
+	}
+	s_wet[slot].actor  = a;
+	s_wet[slot].wet    = 0.0f;
+	s_wet[slot].height = 0.0f;
+	return &s_wet[slot];
+}
+
+void soak(TLiveActor* a, f32 height)
+{
+	Wet* w = find(a, true);
+	if (w->wet <= 0.0f)
+		fprintf(stderr, "[puddles] a character is wet (%s)\n", height >= kAllOver ? "sprayed" : "in water");
+	w->wet = 1.0f;
+	if (height > w->height)
+		w->height = height;
+}
+
+f32 distSq(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
+{
+	const f32 x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
+	return x * x + y * y + z * z;
+}
+
+// The water over an actor's feet, if it stands or swims in it: how deep (0 none).
+f32 waterDepth(TLiveActor* a)
+{
+	if (!gpMap)
+		return 0.0f;
+	const JGeometry::TVec3<f32>& p = a->mPosition;
+	const TBGCheckData* d = 0;
+	const f32 h = gpMap->checkGround(p.x, p.y + 400.0f, p.z, &d);
+	if (!d || !d->isWaterSurface() || h <= p.y + 1.0f)
+		return 0.0f;
+	return h - p.y;
+}
+
+// A few actors near Mario each frame, checked for water over their feet.
+void checkWater()
+{
+	TMario* m = gpMarioOriginal;
+	if (!gpConductor || !m)
+		return;
+	int index = 0, checked = 0;
+	const int from = s_next;
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++, index++) {
+			if (index < from || checked >= 12)
+				continue;
+			TLiveActor* a = (*it)->getObj(i);
+			checked++;
+			if (!character(a) || distSq(a->mPosition, m->mPosition) > kNear * kNear)
+				continue;
+			const f32 depth = waterDepth(a);
+			if (depth > 0.0f)
+				soak(a, depth > 150.0f ? kAllOver : depth + 8.0f);
+		}
+	s_next = checked >= 12 ? from + checked : 0;  // round again from the first
+}
+
+// The sphere round an actor's model (its joints), in the world: false if it has none.
+bool sphere(TLiveActor* a, f32* c, f32* r)
+{
+	J3DModel* model = a->getMActor() ? a->getMActor()->getModel() : 0;
+	const int joints = model && model->getModelData() ? model->getModelData()->getJointNum() : 0;
+	if (joints <= 0)
+		return false;
+	f32 lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+	for (int j = 0; j < joints; j++) {
+		MtxPtr mt = model->getAnmMtx(j);
+		for (int k = 0; k < 3; k++) {
+			if (mt[k][3] < lo[k])
+				lo[k] = mt[k][3];
+			if (mt[k][3] > hi[k])
+				hi[k] = mt[k][3];
+		}
+	}
+	f32 rr = 0.0f;
+	for (int k = 0; k < 3; k++) {
+		c[k] = 0.5f * (lo[k] + hi[k]);
+		rr += (hi[k] - c[k]) * (hi[k] - c[k]);
+	}
+	*r = sqrtf(rr) + kMargin;
+	if (*r > kLargest)
+		*r = kLargest;
+	return true;
+}
+
+// FLUDD's water (any water particle) reached an actor.
+void objectHitDone(void* object, void*, unsigned message, int)
+{
+	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !port_wet_characters())
+		return;
+	TLiveActor* a = dynamic_cast<TLiveActor*>(static_cast<THitActor*>(object));
+	if (character(a))
+		soak(a, kAllOver);
+}
+
+// A new stage: no one is wet (last stage's actors are gone).
+void stageSetup()
+{
+	s_count = 0;
+	s_next  = 0;
+}
+
+PortExtension s_extension;
+
+struct Register {
+	Register()
+	{
+		memset(&s_extension, 0, sizeof s_extension);
+		s_extension.name          = "wet characters";
+		s_extension.stageSetup    = stageSetup;
+		s_extension.objectHitDone = objectHitDone;
+		port_ext_register(&s_extension);
+	}
+} s_register;
+
+} // namespace
+
+// Once a frame, from the main camera's view (port_shadows_main_view): the wet ones dry, a few are
+// checked for water, and the wettest near Mario go to the renderer in this view.
+void port_wet_characters_view(float (*view)[4])
+{
+	const s32 now = (s32)OSTicksToMilliseconds(OSGetTime());
+	const s32 dt  = s_last ? now - s_last : 0;
+	s_last        = now;
+	TMario* m     = gpMarioOriginal;
+	if (!port_wet_characters() || !view || !m) {
+		s_count = 0;
+		GXPC_SetWetCharacters(0, 0, 1.0f, 1.0f, 0);
+		return;
+	}
+	if (dt > 0 && dt < 1000)
+		for (int i = 0; i < s_count; i++)
+			s_wet[i].wet -= (f32)dt / (f32)kDryMs;
+	for (int i = 0; i < s_count;)  // the dry ones go
+		if (s_wet[i].wet <= 0.0f)
+			s_wet[i] = s_wet[--s_count];
+		else
+			i++;
+	checkWater();
+	// the wettest near Mario (still alive: in a manager's list this frame)
+	int pick[kDrawn];
+	int picked = 0;
+	bool used[kMost];
+	memset(used, 0, sizeof used);
+	for (int n = 0; n < kDrawn; n++) {
+		int best = -1;
+		for (int i = 0; i < s_count; i++)
+			if (!used[i] && distSq(s_wet[i].actor->mPosition, m->mPosition) < kNear * kNear
+			    && (best < 0 || s_wet[i].wet > s_wet[best].wet))
+				best = i;
+		if (best < 0)
+			break;
+		used[best]     = true;
+		pick[picked++] = best;
+	}
+	// each: its sphere in the view (centre, radius), how wet, its waterline (up . p + d = 0 there)
+	float data[kDrawn * 8];
+	int count = 0;
+	for (int n = 0; n < picked; n++) {
+		const Wet& w = s_wet[pick[n]];
+		f32 c[3], r;
+		if (!sphere(w.actor, c, &r))
+			continue;
+		float* o = data + count * 8;
+		for (int k = 0; k < 3; k++)
+			o[k] = view[k][0] * c[0] + view[k][1] * c[1] + view[k][2] * c[2] + view[k][3];
+		o[3] = r;
+		o[4] = w.wet;
+		// the line at world height y: the view's up is its second column; up . v = y - (up . t)
+		if (w.height >= kAllOver)
+			o[5] = -kAllOver;
+		else {
+			const f32 y = w.actor->mPosition.y + w.height;
+			o[5] = -y - (view[0][1] * view[0][3] + view[1][1] * view[1][3] + view[2][1] * view[2][3]);
+		}
+		o[6] = o[7] = 0.0f;
+		count++;
+	}
+	const float up[3] = {view[0][1], view[1][1], view[2][1]};
+	GXPC_SetWetCharacters(count, data, port_wet_mario_darkness(), port_wet_mario_shine(), up);
+}

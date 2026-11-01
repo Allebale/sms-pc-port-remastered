@@ -72,6 +72,7 @@ int s_footprints = 0;     // Wet Footprints
 int s_wetMario = 0;       // Wet Mario: on or off (the reflection option, the presets')
 int s_wetDark = 2;        // Wet Mario's darkness, while on: 1 light, 2 normal, 3 heavy
 int s_wetShine = 2;       // Wet Mario Shine: 0 off, 1 light, 2 normal, 3 strong
+int s_wetChars = 1;       // Wet Characters: the people and enemies get wet too (on unless set off)
 int s_grass = 0;          // 3D Grass: 0 off, 1 by location, 2 always cut, 3 always wild
 int s_grassDistance = 2;  // Grass Distance: into kGrassDistances
 int s_grassFlatten = 2;   // Grass Flattening: 0 low .. 4 insane
@@ -319,6 +320,8 @@ void load() {
             s_wetDark = value < 1 ? 1 : value > 3 ? 3 : value;
         } else if (sscanf(line, " wetmarioshine = %d", &value) == 1) {
             s_wetShine = value < 0 ? 0 : value > 3 ? 3 : value;
+        } else if (sscanf(line, " wetcharacters = %d", &value) == 1) {
+            s_wetChars = value != 0;
         } else if (sscanf(line, " level = %d", &value) == 1) {
             s_level = value != 0;
         } else if (sscanf(line, " beatmirrors = %d", &value) == 1) {
@@ -387,6 +390,8 @@ void save() {
     fprintf(f, "wetmariodarkness = %d\n", s_wetDark);
     fprintf(f, "# wetmarioshine: how much wet Mario shines: 0 off, 1 light, 2 normal, 3 strong.\n");
     fprintf(f, "wetmarioshine = %d\n", s_wetShine);
+    fprintf(f, "# wetcharacters: 1 the people and enemies get wet too (sprayed, or in water), 0 not.\n");
+    fprintf(f, "wetcharacters = %d\n", s_wetChars);
     fprintf(f, "# grassblades: blades of grass on the grass: 0 off, 1 by location, 2 always cut, 3 always wild.\n");
     fprintf(f, "grassblades = %d\n", s_grass);
     fprintf(f, "# grassdistance: how far the blades go: 0 low, 1 medium, 2 high, 3 very high, 4 max.\n");
@@ -951,6 +956,18 @@ int wetShineSet(int i) {
     port_log("[puddles] Wet Mario Shine changed: %s\n", kWetShineNames[i]);
     return 1;
 }
+int wetCharsGet() {
+    load();
+    return s_wetChars;
+}
+int wetCharsSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_wetChars = i;
+    save();
+    port_log("[puddles] Wet Characters changed: %s\n", i ? "on" : "off");
+    return 1;
+}
 int levelGet() {
     load();
     return s_level;
@@ -1107,6 +1124,7 @@ int presetSet(int i) {
     s_blur          = p.blurQuarters;
     s_footprints    = p.footprints;
     s_wetMario      = p.wetMario;
+    s_wetChars      = i != 0;  // Wet Characters: off in Original (not part of telling the preset)
     s_surface       = p.surface;
     s_reflQuality   = p.quality;
     for (int k = 0; k < PORT_REFLECT_KINDS; k++) s_show[k] = p.show[k];
@@ -1384,6 +1402,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 19, "Wet Mario Shine",
      "How much wet Mario shines, with Wet Mario on.", 0, nullptr, wetShineCount, wetShineName,
      wetShineGet, wetShineSet},
+    {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 19, "Wet Characters",
+     "People and enemies get wet too when sprayed or in water, as Mario looks.", 0, nullptr, offOnCount,
+     offOnName, wetCharsGet, wetCharsSet},
     {nullptr, PORT_SETTINGS_PAGE_REFLECTIONS, 5, "Reflect the Level",
      "Buildings, trees and the sky in puddles and water too. From the next area.", 1, nullptr, offOnCount,
      offOnName, levelGet, levelSet},
@@ -1469,6 +1490,10 @@ float port_wet_mario_darkness(void) {
     static const float kDark[] = {1.0f, 0.5f, 1.0f, 1.6f};
     load();
     return kDark[s_wetDark < 0 || s_wetDark > 3 ? 2 : s_wetDark];
+}
+int port_wet_characters(void) {
+    load();
+    return s_wetChars;
 }
 float port_wet_mario_shine(void) {
     static const float kShine[] = {0.0f, 0.5f, 1.0f, 2.2f};

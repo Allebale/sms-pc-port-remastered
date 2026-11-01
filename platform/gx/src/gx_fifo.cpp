@@ -1246,12 +1246,15 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size);
 void callDisplayList(const uint8_t* data, uint32_t size) {
     float minY, maxY;
     // Round Shadows Under Characters: a character's list on its own, casting no sun shadow
-    if ((g.shadowRound || g.charMask) && data && !s_dlRec && characterLookup(data, size)) {
+    // (Wet Characters: drawn with the wet ones' spheres)
+    if ((g.shadowRound || g.charMask || g.wetChars[0] > 0.0f) && data && !s_dlRec && characterLookup(data, size)) {
         flushBatch();
         g.shadowNoCast = true;
+        g.charDraw     = true;
         callDisplayListInner(data, size);
         flushBatch();
         g.shadowNoCast = false;
+        g.charDraw     = false;
         return;
     }
     if (g.swayOn && data && !s_dlRec && swayLookup(data, size, &minY, &maxY)) {

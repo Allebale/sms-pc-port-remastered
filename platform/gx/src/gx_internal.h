@@ -127,6 +127,11 @@ struct State {
     bool aoArmed;
     // Sandy Mario (GXPC_SetSand): the sand on what is drawn now (u_sand; [5..7] 0: none)
     float sand[12];
+    // Wet Characters (GXPC_SetWetCharacters): the wet people and enemies near Mario this frame, in
+    // the main camera's view (u_wetc: [0] count, darkness, shine; [1] the view's up; then two each,
+    // sphere (centre, radius) and (wetness, waterline's d)); characters' draws are wet inside them
+    float wetChars[72];
+    bool charDraw;  // a registered character's display list is being drawn (gx_fifo.cpp)
     // Moving Vegetation (GXPC_SwayFrame, GXPC_SwayRegister; gx_render.cpp): the wind and what
     // pushes plants aside, in the world (set each tick) and in the view they were last taken
     // into (u_sway: up, wind and time, the plant's shape, six pushers, their count); a plant's
@@ -414,12 +419,13 @@ struct UniformCache {
     float plight[68];
     float sway[44];
     float sand[12];
+    float wetc[72];
 };
 struct ShaderProgram {
     unsigned prog;
     int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
-        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand;
+        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc;
     mutable UniformCache uc;
 };
 bool shaderHasEarlyFragmentTests();

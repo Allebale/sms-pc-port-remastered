@@ -127,6 +127,11 @@ float port_wet_mario_shine(void);
 // Around Mario's own draw (TMario::perform, zzzzz-ext-25-wet-mario): his wetness for the renderer,
 // begin 1 before (view: the camera's, world to view), 0 after.
 void port_wet_mario_draw(int begin, float (*view)[4]);
+// Wet Characters: 1 when the people and enemies get wet too, with Wet Mario's look (sprayed by
+// FLUDD: all over; in water: up to where it reaches), drying as he does.
+int port_wet_characters(void);
+// Once a frame, from the main camera's view (port_shadows_main_view): the wet ones to the renderer.
+void port_wet_characters_view(float (*view)[4]);
 
 // Water Reflections: 1 when the stage's own water and wet ground show the reflections puddles
 // do (ext/core/game/port_water_reflections.cpp); 0 as the game has it.

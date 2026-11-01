@@ -262,12 +262,13 @@ static std::string genVS(const ShaderKey& k) {
                 for (int l = 0; l < 8; l++)
                     if (mask & (1u << l)) {
                         emitLight(s, ctrl, comp, "lsum", l);
-                        if (c == 0 && part == 0 && k.depthOnly == 3) {  // Wet Mario: this light, for his highlight
+                        // Wet Mario, Wet Characters (depthOnly 4): this light, for the highlight
+                        if (c == 0 && part == 0 && (k.depthOnly == 3 || k.depthOnly == 4)) {
                             snprintf(buf, sizeof buf,
-                                     "    if (u_wet[0].x > 0.0) { vec3 lc = lightColor(%d).rgb;\n"
+                                     "    if (%s) { vec3 lc = lightColor(%d).rgb;\n"
                                      "      wdir += normalize(lightPos(%d) - vpos) * dot(lc, vec3(0.3333));\n"
                                      "      wcol += lc; }\n",
-                                     l, l);
+                                     k.depthOnly == 3 ? "u_wet[0].x > 0.0" : "true", l, l);
                             s += buf;
                         }
                     }
@@ -357,6 +358,9 @@ in vec4 v_c0; in vec4 v_c1;
 uniform vec4 u_sand[3];
 in vec3 v_wn; in vec3 v_wp; in vec3 v_wl; in vec3 v_wlc; in vec3 v_mp;
 uniform vec4 u_wet[2];
+// Wet Characters (gx_api.cpp GXPC_SetWetCharacters): [0] count, darkness, shine; [1] the view's up;
+// then per wet one (up to 8), its sphere (centre, radius) and (wetness, waterline d)
+uniform vec4 u_wetc[18];
 uniform vec4 u_shadow[12];
 uniform sampler2DShadow u_shadowMap;
 uniform vec4 u_plight[17];
@@ -710,6 +714,32 @@ static std::string genFS(const ShaderKey& k) {
          "  }\n"
          "";
     if (k.depthOnly == 3) s += mario;
+    // Wet Characters (depthOnly 4: a registered character's draw while some are wet): wet inside
+    // the sphere of a wet one (fading over its outer fifth), below its waterline, as Wet Mario is
+    if (k.depthOnly == 4)
+        s += "  {\n"
+             "    float w = 0.0;\n"
+             "    vec3 up = u_wetc[1].xyz;\n"
+             "    for (int i = 0; i < 8; i++) {\n"
+             "      if (float(i) >= u_wetc[0].x) break;\n"
+             "      vec4 a = u_wetc[2 + 2 * i], b = u_wetc[3 + 2 * i];\n"
+             "      float inside = 1.0 - smoothstep(a.w * 0.8, a.w, length(v_wp - a.xyz));\n"
+             "      float below = clamp(0.5 - (dot(up, v_wp) + b.y) / 12.0, 0.0, 1.0);\n"
+             "      w = max(w, b.x * inside * below);\n"
+             "    }\n"
+             "    if (w > 0.0) {\n"
+             "      vec3 N = normalize(v_wn), V = normalize(-v_wp);\n"
+             "      float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));\n"
+             "      float d = w * u_wetc[0].y;\n"
+             "      vec3 c = max(mix(vec3(lum), color.rgb, 1.0 + 0.3 * d), vec3(0.0)) * (1.0 - min(0.55 * d, 0.9));\n"
+             "      vec3 L = dot(v_wl, v_wl) > 1e-8 ? normalize(v_wl) : up;\n"
+             "      float sl = pow(max(dot(N, normalize(L + V)), 0.0), 60.0);\n"
+             "      float ss = pow(max(dot(N, normalize(up + V)), 0.0), 40.0);\n"
+             "      float fr = pow(1.0 - max(dot(N, V), 0.0), 5.0);\n"
+             "      vec3 lc = dot(v_wlc, v_wlc) > 0.0 ? v_wlc : vec3(1.0);\n"
+             "      color.rgb = clamp(c + w * u_wetc[0].z * (0.3 * sl * lc + 0.08 * ss + 0.06 * fr), 0.0, 1.0);\n"
+             "    }\n"
+             "  }\n";
     s += ""
          // Shadows (u_shadow[9].x, 0 off; u_shadow[10].w, 1 for the main camera's view): where the
          // sun's light is blocked, the surface darker. The face's own normal (from the position's
@@ -856,6 +886,7 @@ static void setupProgram(GLuint p, ShaderProgram& sp, bool aside = false) {
     sp.uLineWidth = glGetUniformLocation(p, "u_linewidth");
     sp.uUserClip = glGetUniformLocation(p, "u_uclip");
     sp.uWet = glGetUniformLocation(p, "u_wet");
+    sp.uWetc = glGetUniformLocation(p, "u_wetc");
     sp.uDstAlpha = -1;
     if (aside) glUseProgram(GLuint(bound));
 }
@@ -1372,6 +1403,8 @@ const ShaderProgram* shaderForCurrentState(int depthOnly, bool lines) {
     buildKey(k);
     k.depthOnly = uint32_t(depthOnly);
     if (depthOnly == 0 && g.shadowTag) k.depthOnly = 3;  // Mario's own draw: his wet, sand
+    // a character's draw (not a mirror's copy) while some are wet: Wet Characters
+    else if (depthOnly == 0 && g.charDraw && g.wetChars[0] > 0.0f && !g.userClipOn) k.depthOnly = 4;
     if (depthOnly == 2) k.earlyZ = 0;  // a shadow caster: its alpha test discards before depth
     key.indScale[0] = k.numInd ? g.bp[BP_RAS1_SS0] : 0;
     key.indScale[1] = k.numInd ? g.bp[BP_RAS1_SS0 + 1] : 0;
