@@ -56,9 +56,11 @@ void endLane(Lane& l) {
     l.rendering = false;
 }
 
-// The lane a draw or clear into the draw framebuffer goes in.
+// The lane a draw or clear into the draw framebuffer goes in. Also while an
+// occlusion query counts (the game's pixel counter runs most of the frame):
+// the side lane's maps are not in the picture, and their draws not the game's.
 void pickLane(bool sideOk) {
-    s_lane = sideOk && !s_sideSealed && !S.query && s_deferFbos.count(S.drawFbo) ? &s_sideLane : &s_mainLane;
+    s_lane = sideOk && !s_sideSealed && s_deferFbos.count(S.drawFbo) ? &s_sideLane : &s_mainLane;
 }
 
 bool resolveTarget(GLuint fbo, RenderTarget& rt) {
