@@ -43,8 +43,11 @@ bool s_active = false;
 struct Segment {
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer upload = VK_NULL_HANDLE, main = VK_NULL_HANDLE;
+    // depth-only passes kept apart (glvkDeferTarget): run before main, so main's
+    // rendering is not broken up by each of their draws
+    VkCommandBuffer side = VK_NULL_HANDLE;
     uint64_t serial = 0;
-    bool uploadBegun = false;
+    bool uploadBegun = false, sideBegun = false;
 };
 std::vector<Segment*> s_idle;
 std::deque<Segment*> s_busy;
@@ -170,13 +173,15 @@ void beginSegment() {
         VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         ai.commandPool = s->pool;
         ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        ai.commandBufferCount = 2;
-        VkCommandBuffer cbs[2];
+        ai.commandBufferCount = 3;
+        VkCommandBuffer cbs[3];
         vkAllocateCommandBuffers(D.dev, &ai, cbs);
         s->upload = cbs[0];
         s->main = cbs[1];
+        s->side = cbs[2];
     }
     s->uploadBegun = false;
+    s->sideBegun = false;
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(s->main, &bi);
@@ -207,11 +212,15 @@ void submitSegment(VkSemaphore wait, VkPipelineStageFlags waitStage, VkSemaphore
     vkCmdPipelineBarrier(s_cur->main, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0,
                          nullptr, 0, nullptr);
     vkEndCommandBuffer(s_cur->main);
-    VkCommandBuffer cbs[2];
+    VkCommandBuffer cbs[3];
     uint32_t n = 0;
     if (s_cur->uploadBegun) {
         vkEndCommandBuffer(s_cur->upload);
         cbs[n++] = s_cur->upload;
+    }
+    if (s_cur->sideBegun) {
+        vkEndCommandBuffer(s_cur->side);
+        cbs[n++] = s_cur->side;
     }
     cbs[n++] = s_cur->main;
     const uint64_t serial = D.submitted + 1;
@@ -523,6 +532,16 @@ void collectGarbage() {
 
 VkCommandBuffer mainCmd() { return s_cur->main; }
 
+VkCommandBuffer sideCmd() {
+    if (!s_cur->sideBegun) {
+        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(s_cur->side, &bi);
+        s_cur->sideBegun = true;
+    }
+    return s_cur->side;
+}
+
 VkCommandBuffer uploadCmd() {
     if (!s_cur->uploadBegun) {
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -678,6 +697,8 @@ VkImageView imageView(Image* img, uint32_t base, uint32_t count) {
 
 void use(Image* img, VkImageLayout layout, VkPipelineStageFlags stage, VkAccessFlags access, bool write, VkCommandBuffer cb) {
     const bool main = cb == VK_NULL_HANDLE || cb == s_cur->main;
+    // main (run after the side passes) uses what they drew: later draws of theirs go in main
+    if (main && img->sideSerial == currentSerial()) sealSide();
     if (img->layout != layout || img->lastWrite || write) {
         if (main) {
             if (renderingActive()) endRendering();

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <algorithm>
 #include <atomic>
+#include <unordered_set>
 
 namespace glvk {
 
@@ -25,8 +26,40 @@ struct RenderTarget {
         return color == o.color && depth == o.depth && colorLevel == o.colorLevel && depthLevel == o.depthLevel;
     }
 };
-bool s_rendering = false;
-RenderTarget s_rt;
+// Two lanes of rendering: main, and the side command buffer's (sideCmd), where
+// draws into the framebuffers the renderer marked (glvkDeferTarget: the sun's
+// shadow maps, the characters' depth map) go. Those are depth-only, drawn
+// with a LESS test (the result does not depend on the order), and not read
+// until later, so drawing them before main's work loses nothing; drawn in
+// main, each caster batch ended main's rendering twice, with barriers.
+struct Lane {
+    bool rendering = false;
+    RenderTarget rt;
+};
+Lane s_mainLane, s_sideLane;
+Lane* s_lane = &s_mainLane;
+#define s_rendering (s_lane->rendering)
+#define s_rt (s_lane->rt)
+std::unordered_set<GLuint> s_deferFbos;
+bool s_sideSealed = false;  // main used what the side drew (sealSide): no more side draws this segment
+bool sideLane() { return s_lane == &s_sideLane; }
+VkCommandBuffer laneCmd() { return sideLane() ? sideCmd() : mainCmd(); }
+
+void endLane(Lane& l) {
+    if (!l.rendering) return;
+    if (&l == &s_mainLane) {
+        endQueryPiece();
+        D.cmdEndRendering(mainCmd());
+    } else {
+        D.cmdEndRendering(sideCmd());
+    }
+    l.rendering = false;
+}
+
+// The lane a draw or clear into the draw framebuffer goes in.
+void pickLane(bool sideOk) {
+    s_lane = sideOk && !s_sideSealed && !S.query && s_deferFbos.count(S.drawFbo) ? &s_sideLane : &s_mainLane;
+}
 
 bool resolveTarget(GLuint fbo, RenderTarget& rt) {
     rt = RenderTarget();
@@ -54,13 +87,16 @@ bool resolveTarget(GLuint fbo, RenderTarget& rt) {
 }
 
 void beginRendering(const RenderTarget& rt, const VkClearValue* clearColor, const VkClearValue* clearDepth) {
-    if (s_rendering) endRendering();
+    endLane(*s_lane);
+    const bool side = sideLane();
+    const VkCommandBuffer useCb = side ? sideCmd() : VK_NULL_HANDLE;
     VkRenderingAttachmentInfo ca{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     VkRenderingAttachmentInfo da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     if (rt.color) {
         const VkImageLayout before = rt.color->layout;
         use(rt.color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, true);
+            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, true, useCb);
+        if (side) rt.color->sideSerial = currentSerial();
         ca.imageView = imageView(rt.color, rt.colorLevel, 1);
         ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         ca.loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR
@@ -72,7 +108,8 @@ void beginRendering(const RenderTarget& rt, const VkClearValue* clearColor, cons
         const VkImageLayout before = rt.depth->layout;
         use(rt.depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, true);
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, true, useCb);
+        if (side) rt.depth->sideSerial = currentSerial();
         da.imageView = imageView(rt.depth, rt.depthLevel, 1);
         da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         da.loadOp = clearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR
@@ -86,11 +123,11 @@ void beginRendering(const RenderTarget& rt, const VkClearValue* clearColor, cons
     ri.colorAttachmentCount = rt.color ? 1 : 0;
     ri.pColorAttachments = rt.color ? &ca : nullptr;
     ri.pDepthAttachment = rt.depth ? &da : nullptr;
-    D.cmdBeginRendering(mainCmd(), &ri);
+    D.cmdBeginRendering(laneCmd(), &ri);
     g_stats.renderPasses++;
     s_rendering = true;
     s_rt = rt;
-    if (S.query) beginQueryPiece();
+    if (!side && S.query) beginQueryPiece();
 }
 
 // Rendering into the draw framebuffer, begun if it is not already.
@@ -124,7 +161,8 @@ struct CmdCache {
     uint32_t constVersion = 0;
     VkDescriptorBufferInfo constAt{};
 };
-CmdCache s_cc;
+CmdCache s_ccMain, s_ccSide;  // each lane's command buffer's
+#define s_cc (*(sideLane() ? &s_ccSide : &s_ccMain))
 uint32_t s_constVersion = 1;  // bumped by glVertexAttrib*
 uint32_t s_framePipelines = 0;      // made since the last present
 double s_framePipelineSeconds = 0;
@@ -746,19 +784,42 @@ bool bindVertexInput(VkCommandBuffer cb, const VertexLayout* vl) {
     return true;
 }
 
+// Whether every texture the program samples is ready to read without a
+// barrier, and not drawn by the side lane this segment: a draw in the side
+// lane runs before main's work, so it may not wait on any of it.
+bool texturesSettled(const Program* p) {
+    for (const UniformInfo& u : p->uniforms) {
+        if (u.block != -2) continue;
+        for (int e = 0; e < u.arraySize; e++) {
+            const int unit = u.units[size_t(e)];
+            if (unit < 0 || unit >= kMaxUnits) continue;
+            const Texture* t = g_textures.get(S.textures[unit]);
+            if (!t) continue;
+            const Image* img = t->img;
+            if (!img || !t->pending.empty() || img->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || img->lastWrite ||
+                img->sideSerial == currentSerial())
+                return false;
+        }
+    }
+    return true;
+}
+
 // Everything a draw needs, up to the draw command. False: nothing to draw.
 bool prepareDraw(GLenum mode, VkCommandBuffer* outCb) {
     Program* p = g_programs.get(S.program);
     if (!p) return false;
     finishLink(p);
     if (!p->linked) return false;
+    // the side lane only when its textures need no barrier (main's run after it)
+    pickLane(texturesSettled(p));
     DescSet ds;
     gatherDescriptors(p, ds);
+    if (sideLane() && s_sideSealed) s_lane = &s_mainLane;
     if (!ensureRendering()) return false;
     const VertexLayout* vl = vertexLayout(p);
     VkPipeline pipe = pipelineFor(p, vl, topology(mode));
     if (!pipe) return false;
-    VkCommandBuffer cb = mainCmd();
+    VkCommandBuffer cb = laneCmd();
     if (!applyDynamicState(cb)) return false;
     if (s_cc.pipeline != pipe) {
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
@@ -888,6 +949,7 @@ VkPipeline clearPipeline(VkFormat color, VkFormat depth, VkSampleCountFlagBits s
 void clear(GLbitfield mask) {
     RenderTarget rt;
     if (!resolveTarget(S.drawFbo, rt)) return;
+    pickLane(true);
     const bool anyColor = S.colorMask[0] || S.colorMask[1] || S.colorMask[2] || S.colorMask[3];
     const bool fullColor = S.colorMask[0] && S.colorMask[1] && S.colorMask[2] && S.colorMask[3];
     const bool doColor = (mask & GL_COLOR_BUFFER_BIT) && rt.color && anyColor;
@@ -911,7 +973,7 @@ void clear(GLbitfield mask) {
         return;
     }
     if (!s_rendering || !(rt == s_rt)) beginRendering(rt, nullptr, nullptr);
-    VkCommandBuffer cb = mainCmd();
+    VkCommandBuffer cb = laneCmd();
     VkClearAttachment atts[2];
     uint32_t n = 0;
     if (doColor && fullColor) atts[n++] = VkClearAttachment{VK_IMAGE_ASPECT_COLOR_BIT, 0, cc};
@@ -1003,23 +1065,25 @@ VkPipeline makeFragmentLibrary(VkShaderModule fs, VkSampleCountFlagBits samples)
     return createLibrary(ci, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, &ri);
 }
 
-void endRendering() {
-    if (!s_rendering) return;
-    endQueryPiece();
-    D.cmdEndRendering(mainCmd());
-    s_rendering = false;
-}
+// main's (barriers, copies and readbacks go in main)
+void endRendering() { endLane(s_mainLane); }
 
-bool renderingActive() { return s_rendering; }
+bool renderingActive() { return s_mainLane.rendering; }
+
+void sealSide() { s_sideSealed = true; }
 
 void onSegmentStart() {
-    s_rendering = false;
-    s_cc = CmdCache();
+    s_mainLane.rendering = s_sideLane.rendering = false;
+    s_lane = &s_mainLane;
+    s_sideSealed = false;
+    s_ccMain = CmdCache();
+    s_ccSide = CmdCache();
     queriesSegmentStart();
 }
 
 void beforeSubmit() {
-    if (s_rendering) endRendering();
+    endLane(s_sideLane);
+    endLane(s_mainLane);
 }
 
 void destroyDrawObjects() {
@@ -1243,6 +1307,11 @@ GLAPI_FN(void, x_glClearColor)(GLfloat r, GLfloat g, GLfloat b, GLfloat a) {
 }
 GLAPI_FN(void, x_glClearDepth)(GLdouble d) { S.clearDepth = d; }
 GLAPI_FN(void, x_glClear)(GLbitfield mask) { clear(mask); }
+// glvk's own: draws into fbo may go in the side lane (see Lane)
+GLAPI_FN(void, x_glvkDeferTarget)(GLuint fbo, GLboolean on) {
+    if (on) s_deferFbos.insert(fbo);
+    else s_deferFbos.erase(fbo);
+}
 GLAPI_FN(void, x_glDepthRange)(GLdouble n, GLdouble f) {
     S.depthRange[0] = n;
     S.depthRange[1] = f;
@@ -1592,6 +1661,7 @@ GLAPI_FN(void, x_glDeleteFramebuffers)(GLsizei n, const GLuint* names) {
     for (GLsizei i = 0; i < n; i++) {
         if (S.drawFbo == names[i]) S.drawFbo = 0;
         if (S.readFbo == names[i]) S.readFbo = 0;
+        s_deferFbos.erase(names[i]);
         g_framebuffers.remove(names[i]);
     }
 }
@@ -1677,7 +1747,7 @@ const ProcEntry kProcs[] = {
     P(glDrawArraysInstanced), P(glVertexAttribDivisor), P(glDrawBuffer), P(glReadBuffer),
     P(glDrawElements), P(glDrawElementsBaseVertex), P(glMultiDrawElementsBaseVertex), P(glCreateShader), P(glShaderSource),
     P(glCompileShader), P(glGetShaderiv), P(glGetShaderInfoLog), P(glDeleteShader), P(glCreateProgram), P(glAttachShader),
-    P(glLinkProgram), P(glGetProgramiv), P(glGetProgramInfoLog), P(glUseProgram), P(glDeleteProgram), P(glBindAttribLocation),
+    P(glvkDeferTarget), P(glLinkProgram), P(glGetProgramiv), P(glGetProgramInfoLog), P(glUseProgram), P(glDeleteProgram), P(glBindAttribLocation),
     P(glBindFragDataLocation), P(glGetUniformLocation), P(glGetUniformBlockIndex), P(glUniformBlockBinding), P(glUniform1i),
     P(glUniform1iv), P(glUniform2iv), P(glUniform4iv), P(glUniform1f), P(glUniform2f), P(glUniform1fv), P(glUniform2fv),
     P(glUniform4fv), P(glGetProgramBinary), P(glProgramBinary), P(glProgramParameteri), P(glMaxShaderCompilerThreadsKHR),

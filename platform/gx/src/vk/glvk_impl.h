@@ -136,6 +136,11 @@ double now();
 void collectGarbage();
 
 VkCommandBuffer mainCmd();
+// The segment's side command buffer (begun on demand), submitted after the
+// upload one and before main: depth-only passes the renderer marked
+// (glvkDeferTarget) are drawn there while nothing in main has used them.
+VkCommandBuffer sideCmd();
+void sealSide();  // main has used what the side drew: no more side draws this segment
 VkCommandBuffer uploadCmd();  // the segment's upload command buffer (begun on demand)
 
 // Host-visible memory handed out linearly and recycled once the segments
@@ -177,6 +182,7 @@ struct Image {
     bool lastWrite = false;
     uint64_t lastUse = 0;   // the last serial whose commands used it
     uint64_t lastMain = 0;  // the last serial whose main command buffer used it
+    uint64_t sideSerial = 0;  // the serial whose side command buffer drew into it
     std::unordered_map<uint32_t, VkImageView> views;
     bool owned = true;  // false for swapchain images
 };

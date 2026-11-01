@@ -263,10 +263,7 @@ bool patchSpirv(std::vector<uint32_t>& spv, const SpvInfo& info, EShLanguage sta
     if (stage == EShLangVertex && plan.attribs)
         for (const SpvInfo::Input& in : info.inputs) {
             auto it = plan.attribs->find(in.name);
-            if (it == plan.attribs->end()) {
-                log += "glvk: vertex input '" + in.name + "' has no glBindAttribLocation\n";
-                return false;
-            }
+            if (it == plan.attribs->end()) continue;  // keeps the shader's own layout(location)
             spv[info.decLocation.at(in.var)] = uint32_t(it->second);
         }
     return true;
@@ -485,10 +482,13 @@ void compileLink(const LinkInputs& in, LinkOutput& o) {
             o.uniforms.push_back(u);
         }
         for (const SpvInfo::Input& inp : infos[0].inputs) {
+            // a bound name takes its glBindAttribLocation; otherwise the shader's own layout(location)
             auto it = in.attribs.find(inp.name);
-            if (it == in.attribs.end()) continue;  // reported by patchSpirv
-            o.inputMask |= 1u << it->second;
-            if (inp.integer) o.inputInteger |= 1u << it->second;
+            const uint32_t loc = it != in.attribs.end() ? uint32_t(it->second)
+                                                         : o.spirv[0][infos[0].decLocation.at(inp.var)];
+            if (loc >= 32) continue;
+            o.inputMask |= 1u << loc;
+            if (inp.integer) o.inputInteger |= 1u << loc;
         }
     }
     for (int s = 0; ok && s < 3; s++)

@@ -3572,6 +3572,7 @@ static void shadowMake() {
         glReadBuffer(GL_NONE);
         GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (st != GL_FRAMEBUFFER_COMPLETE) logmsg("shadows: the shadow map's framebuffer is not complete (0x%x)", st);
+        if (glvkDeferTarget) glvkDeferTarget(s_shadowFbo[i], GL_TRUE);  // Vulkan: casts kept apart from the picture's draws
     }
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     g_glc.fbo = s_efbFbo;
@@ -3782,6 +3783,7 @@ static void charCast(const Ranges& ranges, GLenum mode, const ShaderProgram* sp)
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, s_charDepth, 0);
         glDrawBuffer(GL_NONE);
         glReadBuffer(GL_NONE);
+        if (glvkDeferTarget) glvkDeferTarget(s_charFbo, GL_TRUE);
         c.activeUnit = -1;
         s_charFrame = ~0u;
     }

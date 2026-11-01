@@ -1300,6 +1300,8 @@ void shaderSetWarmup(bool on) { s_warmWanted = on; }
 static const char* const kLineVaryings[][2] = {
     {"vec4", "c0"},  {"vec4", "c1"},  {"vec3", "tc0"}, {"vec3", "tc1"}, {"vec3", "tc2"},
     {"vec3", "tc3"}, {"vec3", "tc4"}, {"vec3", "tc5"}, {"vec3", "tc6"}, {"vec3", "tc7"},
+    // the fork's own (wet and sandy Mario, real shadows, lights); a stage without them fails to link
+    {"vec3", "wn"},  {"vec3", "wp"},  {"vec3", "wl"},  {"vec3", "wlc"}, {"vec3", "mp"},
 };
 
 // The vertex shader's outputs renamed (v_ to vl_), as the geometry shader's inputs.

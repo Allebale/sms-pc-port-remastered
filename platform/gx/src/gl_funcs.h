@@ -88,9 +88,13 @@
 
 // Entry points newer than GL 3.3, loaded when the driver has them (null
 // otherwise; macOS stops at 4.1): check before calling.
+// glvk's own (not GL): draws into the framebuffer may be kept apart from the
+// rest (a depth-only map drawn with a LESS test and read later); absent on GL
+typedef void(APIENTRYP PFNGLVKDEFERTARGETPROC)(GLuint framebuffer, GLboolean on);
 #define SMS_GX_GL_OPTIONAL_FUNCS(X) X(PFNGLBUFFERSTORAGEPROC, glBufferStorage)                \
     X(PFNGLGETPROGRAMBINARYPROC, glGetProgramBinary) X(PFNGLPROGRAMBINARYPROC, glProgramBinary) \
-    X(PFNGLPROGRAMPARAMETERIPROC, glProgramParameteri) X(PFNGLMAXSHADERCOMPILERTHREADSKHRPROC, glMaxShaderCompilerThreadsKHR)
+    X(PFNGLPROGRAMPARAMETERIPROC, glProgramParameteri) X(PFNGLMAXSHADERCOMPILERTHREADSKHRPROC, glMaxShaderCompilerThreadsKHR) \
+    X(PFNGLVKDEFERTARGETPROC, glvkDeferTarget)
 
 #define SMS_GX_DECLARE(type, name) extern type gx_##name;
 extern "C++" {
@@ -224,6 +228,7 @@ SMS_GX_GL_OPTIONAL_FUNCS(SMS_GX_ALIAS)
 #define glCompressedTexSubImage2D gx_glCompressedTexSubImage2D
 #define glGetStringi gx_glGetStringi
 #define glBufferStorage gx_glBufferStorage
+#define glvkDeferTarget gx_glvkDeferTarget
 #define glGetProgramBinary gx_glGetProgramBinary
 #define glProgramBinary gx_glProgramBinary
 #define glProgramParameteri gx_glProgramParameteri
