@@ -44,7 +44,9 @@ struct Fence {
 	f32 n[3];
 };
 const int kMostFences = 4096;
-Fence* s_fences;
+// in the program's own memory: allocated as a stage is set up it would be on the stage's heap, freed
+// with the stage, and the next stage's objects written over (that crashed the Pokeys in Bianco Hills)
+Fence s_fences[kMostFences];
 int s_fenceCount;
 
 void collectFences()
@@ -53,8 +55,6 @@ void collectFences()
 	TMapCollisionData* c = gpMapCollisionData;
 	if (!c || !c->unk28)
 		return;
-	if (!s_fences)
-		s_fences = new Fence[kMostFences];
 	for (u32 i = 0; i < c->unk34 && s_fenceCount < kMostFences; i++) {
 		const TBGCheckData& d = c->unk28[i];
 		if (!d.isFence())

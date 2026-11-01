@@ -119,6 +119,10 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - Keep shaders small: big shaders caused stutters. Mario-only code goes only into Mario's program.
 - A texture that is uploaded again gets a fresh GL texture (that fixed stutters too).
 - Long frames (45 ms or more) are logged by default as `hitchFrame`, useful for stutter reports.
+- **Never `new` in an extension's `stageSetup` (or anything during a stage) and keep the pointer for later
+  stages**: the stage's heap is the current one there, freed when the stage ends, and the next stage's objects
+  are then written over. 3D Ladders did that once (`s_fences`) and Pokeys crashed in Bianco Hills and Erto Rock.
+  Use static arrays.
 
 ## Checking your work without running the game
 
