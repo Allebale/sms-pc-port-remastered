@@ -147,3 +147,9 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 God Rays, Cloud Shadows, Moving Clouds, Moving Cloth, Swaying Hanging Things, Grass Stains (and Grass
 Stain Duration; removed on request), Grass Thinned Far Away,
 the Realistic Soft Shadow Edges option, and Softer and Very Soft Shadow Edges.
+
+**Vulkan** (the launcher's renderer choice) was tried on branch `remastered-test-vulkan` (Nov 2026): it runs
+(missing GL entry points, shadow compare samplers, line varyings and the mod layer were fixed there, and shadow
+casts were moved to a side command buffer), but it stayed slower than OpenGL on the RX 9070 XT (OpenGL 110-120 fps,
+Vulkan 35-100). Allebale decided to stay on OpenGL. The branch is kept as it is; nothing from it is on
+`remastered-test` or `remastered`.
