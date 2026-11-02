@@ -165,7 +165,7 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
 - **No double world drawing with Reflect the Level Off**: when the Reflections option Reflect the Level is Off, the stage should not be drawn a second time for the mirror.
 - **Smooth vertex normals**: smooth the shading of low-poly models (averaged vertex normals), so they look less blocky.
-- **First person pipes**: first person (the First Person mod) working in pipes.
+- **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 
 ## Ideas tried and dropped (do not bring back unasked)
 
