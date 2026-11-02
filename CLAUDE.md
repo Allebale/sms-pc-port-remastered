@@ -132,8 +132,8 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   0.12 s for each, one at a time (all handed over at once did not help), while it compiles from source side by side at
   about 0.015 s each. When they are slower than 40 ms each, the rest are not loaded: their keys go to the warm-up
   (`s_slowBinaries`, `s_cacheKeysToWarm`), which compiles them from source as stages load. NVIDIA loads binaries fast
-  and keeps them. The `[startup]` clock in the log (`port_runtime.cpp`, every 2 s for 5 minutes) shows where a start
-  spends its time.
+  and keeps them. The `[startup]` clock (`port_runtime.cpp`, every 2 s for 5 minutes) shows where a start spends its
+  time; it is off unless the environment variable `SMS_STARTUP_CLOCK=1` is set (it filled the log).
 - **Never `new` in an extension's `stageSetup` (or anything during a stage) and keep the pointer for later
   stages**: the stage's heap is the current one there, freed when the stage ends, and the next stage's objects
   are then written over. 3D Ladders did that once (`s_fences`) and Pokeys crashed in Bianco Hills and Erto Rock.

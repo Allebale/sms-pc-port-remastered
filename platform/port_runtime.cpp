@@ -970,14 +970,17 @@ extern "C" void sms_server_init(int argc, char** argv);
 
 #endif
 
-// The startup clock: every 2 seconds for the first 5 minutes, how long the game has been running
-// and the time of day (UTC, as the launcher names its memory card backups), so that the log shows
-// where a slow start spends its time between the lines it already has.
+// The startup clock (SMS_STARTUP_CLOCK=1 only, off otherwise: it fills the log): every 2 seconds for
+// the first 5 minutes, how long the game has been running and the time of day (UTC, as the launcher
+// names its memory card backups), so that the log shows where a slow start spends its time.
 #include <chrono>
 #include <ctime>
 #include <thread>
 static void port_startup_clock(void)
 {
+	const char* on = getenv("SMS_STARTUP_CLOCK");
+	if (!on || !*on || !strcmp(on, "0"))
+		return;
 	const auto start = std::chrono::steady_clock::now();
 	std::thread([start] {
 		for (int s = 0; s <= 300; s += 2) {
