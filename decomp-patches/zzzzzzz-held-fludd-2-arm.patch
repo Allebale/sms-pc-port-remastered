@@ -1,0 +1,49 @@
+Reason: FLUDD held in view (api->held_fludd, zzzzzzz-held-fludd): Mario's right arm, and the hand hung from it, shrunk to a point while it is held, as his head is (MarioHeadCtrl), so it does not swing in front of the view. Without FLUDD held, nothing changes.
+
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -2122,6 +2122,22 @@
+ }
+ #endif
+ 
++#ifdef TARGET_PC
++bool PortFluddHeld(TMario* mario); // FLUDD held in view (ext/modapi/game/modapi_held_fludd.cpp)
++
++// FLUDD held in view: his right arm (and the hand hung from it) shrunk to a point, as his head is
++// (MarioHeadCtrl), so it does not swing in front of the view
++static int PortMarioArmRCtrl(J3DNode*, int param_2)
++{
++	if (param_2 == 0 && PortFluddHeld(gpMarioForCallBack)) {
++		Mtx transform;
++		MTXScale(transform, 0.001f, 0.001f, 0.001f);
++		MTXConcat(J3DSys::mCurrentMtx, transform, J3DSys::mCurrentMtx);
++	}
++	return 1;
++}
++#endif
++
+ void TMario::addCallBack(JDrama::TGraphics* graphics)
+ {
+ 	gpMarioForCallBack      = this;
+@@ -2132,6 +2148,10 @@
+ 	}
+ 
+ 	MarioCBJoint(modelData, mJointIdChnChest)->setCallBack(MarioWaistCtrl);
++#ifdef TARGET_PC
++	if (this == gpMarioOriginal && PortFluddHeld(this))
++		MarioCBJoint(modelData, mJointIdArmR1)->setCallBack(PortMarioArmRCtrl);
++#endif
+ 
+ 	if (0x4B0 > gpMarDirector->unk58 || isUpperPumpingStyle()) {
+ 		if (mMultiMtxEffect != nullptr) {
+@@ -2293,6 +2313,10 @@
+ 	modelData->getJointNodePointer(mJointIdFootR)->setCallBack(nullptr);
+ 	modelData->getJointNodePointer(mJointIdChnFootL)->setCallBack(nullptr);
+ 	modelData->getJointNodePointer(mJointIdFootL)->setCallBack(nullptr);
++#ifdef TARGET_PC
++	if (modelData->getJointNodePointer(mJointIdArmR1)->getCallBack() == PortMarioArmRCtrl)
++		modelData->getJointNodePointer(mJointIdArmR1)->setCallBack(nullptr);
++#endif
+ }
+ 
+ // TODO: 99.4%. The frame is exact (0x328) with the body model read as
