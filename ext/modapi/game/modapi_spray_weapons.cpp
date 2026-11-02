@@ -11,11 +11,18 @@
 // (TModelWaterManager::getParticleAttack gives the game only the lower ones, patch
 // zzzzzzz-held-fludd-4-weapons), so when one reaches an enemy (objectHitDone) it is shoved the
 // drop's way, harder or softer by the weapon, and with "defeat enemies" on, defeated after a few
-// hits (TSmallEnemy::kill, as a stomp). The normal spray (weapon 0) is the game's own: it never
-// shoves or defeats anything. Only small enemies (TSmallEnemy) are shoved or defeated; bosses are not.
+// hits (TSmallEnemy::kill, as a stomp). Shoved into a wall, those the game defeats against walls
+// (Strollin' Stus, rolling) are defeated, as ever. The normal spray (weapon 0) is the game's own
+// stream, its pushes and all: nothing is added to it. Only small enemies (TSmallEnemy) are shoved
+// or defeated; bosses are not.
 #include "port_ext.h"
 
 #include <Enemy/SmallEnemy.hpp>
+#include <Enemy/WalkerEnemy.hpp>
+#include <Enemy/HamuKuri.hpp>
+#include <Enemy/AmiNoko.hpp>
+#include <Enemy/BossTelesaObj.hpp>
+#include <Enemy/Telesa.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <Player/Mario.hpp>
@@ -137,7 +144,15 @@ void afterMovement()
 		JGeometry::TVec3<f32> to(from.x + h.vx * 1.5f, from.y, from.z + h.vz * 1.5f);
 		JGeometry::TVec3<f32> wall;
 		if (gpMap && gpMap->intersectLine(from, to, true, &wall)) {
-			h.vx = h.vz = 0.0f; // against a wall
+			// against a wall: those the game defeats against walls (Strollin' Stus and their
+			// kind, rolling away from the water) are defeated so here too, hard enough
+			THamuKuri* stu = dynamic_cast<THamuKuri*>(e);
+			if (stu && h.vx * h.vx + h.vz * h.vz > 6.0f * 6.0f
+			    && stu->getSpine()->getCurrentNerve() != &TNerveHamuKuriWallDie::theNerve()) {
+				stu->getSpine()->reset();
+				stu->getSpine()->setNext(&TNerveHamuKuriWallDie::theNerve());
+			}
+			h.vx = h.vz = 0.0f;
 			continue;
 		}
 		e->mPosition.x += h.vx;
@@ -166,12 +181,16 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	if (!h)
 		return;
 	const Weapon& k = kWeapons[weapon];
+	// shoved: those that walk about, not those on fences (net Koopas), the boss's bubbles or the
+	// shadow Mario look-alikes; the rooted and flying are not moved, only hit
+	const bool moves = dynamic_cast<TWalkerEnemy*>(e) && !dynamic_cast<TAmiNoko*>(e) && !dynamic_cast<TBubble*>(e)
+	                   && !dynamic_cast<TKageMarioModoki*>(e);
 	const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[drop->mParticleIndex];
 	f32 l = sqrtf(v.x * v.x + v.z * v.z);
 	if (l < 1e-3f) // straight down: away from Mario
 		l = 0.0f;
 	const f32 dx = l > 0.0f ? v.x / l : 0.0f, dz = l > 0.0f ? v.z / l : 0.0f;
-	if (h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
+	if (moves && h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
 		h->vx = dx * k.shove;
 		h->vz = dz * k.shove;
 	}
