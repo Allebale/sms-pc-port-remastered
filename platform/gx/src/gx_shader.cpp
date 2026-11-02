@@ -215,7 +215,13 @@ static std::string genVS(const ShaderKey& k) {
          "  int pm = int(a_mtx.x & 255u);\n"
          "  vec4 p = vec4(a_pos, 1.0);\n";
     // 3D Ladders: a layer of a ladder's card, moved back toward the wall behind it
-    if (k.depthOnly == 5) s += "  p.xyz += u_shell[0].xyz * u_shell[0].w;\n";
+    // (along the corner's own normal when it has one, away from the camera: the layers go behind the
+    // card from either side; else the way given, the card's)
+    if (k.depthOnly == 5)
+        s += "  { int pm0 = int(a_mtx.x & 255u) * 3 + 256;\n"
+             "    vec3 nv = vec3(dot(R3(pm0), a_nrm), dot(R3(pm0 + 3), a_nrm), dot(R3(pm0 + 6), a_nrm));\n"
+             "    vec3 dir = dot(a_nrm, a_nrm) > 0.01 ? normalize(a_nrm) * (nv.z > 0.0 ? -1.0 : 1.0) : u_shell[0].xyz;\n"
+             "    p.xyz += dir * u_shell[0].w; }\n";
     s += "  vec3 vpos = vec3(dot(R4(pm * 4), p), dot(R4(pm * 4 + 4), p), dot(R4(pm * 4 + 8), p));\n"
          "  if (u_sway[0].w > 0.5) vpos = sway(vpos, a_pos, a_nrm);\n"
          "  int nm = 256 + pm * 3;\n"

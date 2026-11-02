@@ -41,5 +41,5 @@ void port_grab_view(float (*view)[4])
 	float at[3];
 	for (int r = 0; r < 3; r++)
 		at[r] = view[r][0] * p[0] + view[r][1] * p[1] + view[r][2] * p[2] + view[r][3];
-	GXPC_GrabProbe(at, 60.0f);
+	GXPC_GrabProbe(at, 400.0f);  // a draw with a corner this near (a ladder card's are at its ends)
 }

@@ -2372,6 +2372,7 @@ static void probeBatch() {
         return nullptr;
     };
     float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    float nearest = 1e30f;  // the nearest vertex to his hands
     const uint32_t n = s_bcount + s_barenaVerts;
     for (uint32_t v = 0; v < n; v++) {
         const uint8_t* vx = vertexAt(v);
@@ -2381,15 +2382,17 @@ static void probeBatch() {
         const uint32_t idx = (s_bfmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx;
         float m[12];
         memcpy(m, &g.xfMem[idx * 4], 48);
+        float d2 = 0.0f;
         for (int r = 0; r < 3; r++) {
             const float c = m[r * 4] * pos[0] + m[r * 4 + 1] * pos[1] + m[r * 4 + 2] * pos[2] + m[r * 4 + 3];
             lo[r] = std::min(lo[r], c);
             hi[r] = std::max(hi[r], c);
+            d2 += (c - s_probe[r]) * (c - s_probe[r]);
         }
+        nearest = std::min(nearest, d2);
     }
-    const float rad = s_probe[3];
-    for (int r = 0; r < 3; r++)
-        if (s_probe[r] < lo[r] - rad || s_probe[r] > hi[r] + rad) return;
+    nearest = std::sqrt(nearest);
+    if (nearest > s_probe[3]) return;  // no corner of it near his hands
     char tex[2][160] = {"none", "none"};
     for (int map = 0; map < 2; map++) {
         const uint8_t* ptr = g.texImage[map];
@@ -2404,9 +2407,11 @@ static void probeBatch() {
         const std::string name = hiresName(ptr, fmt, w, h, ((mode0 >> 5) & 3) != 0, nullptr, 0, false);
         snprintf(tex[map], sizeof tex[map], "%s (format %u)", name.c_str(), fmt);
     }
-    logmsg("grab: drawn there: %.0f x %.0f x %.0f (view), %u vertices, %s, texture 0 %s, texture 1 %s%s",
-           hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], n,
-           (g.bp[BP_CMODE0] & 1) ? "blended" : "solid", tex[0], tex[1],
+    const uint32_t ac = g.bp[BP_ALPHACOMPARE];
+    const bool cutout = !(((ac >> 16) & 7) == 7 && ((ac >> 19) & 7) == 7);  // an alpha test: see-through holes
+    logmsg("grab: drawn there: nearest corner %.0f away, %.0f x %.0f x %.0f, %u vertices, %s%s, texture 0 %s, texture 1 %s%s",
+           nearest, hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], n,
+           (g.bp[BP_CMODE0] & 1) ? "blended" : "solid", cutout ? " with see-through holes" : "", tex[0], tex[1],
            g.charDraw ? ", a character's" : g.shadowTag ? ", Mario's" : "");
     s_probeTold++;
 }
@@ -3547,7 +3552,93 @@ extern "C" void GXPC_LadderRegister(const void* list, unsigned size, float nx, f
     l.back[1] = ny;
     l.back[2] = nz;
 }
-extern "C" void GXPC_LadderClear(void) { s_ladderLists.clear(); }
+// 3D Ladders by texture: a draw whose first texture is a known ladder's (as the texture pack names
+// it; found with the grab log) is drawn again behind itself, as a registered card is. Each texture
+// is named once (by its address, size and format) and remembered for the stage.
+static const char* const kLadderTextures[] = {
+    nullptr,  // (none known yet)
+};
+struct LadderTexKey {
+    const void* ptr;
+    uint32_t img0;
+    bool operator==(const LadderTexKey& o) const { return ptr == o.ptr && img0 == o.img0; }
+};
+struct LadderTexHash {
+    size_t operator()(const LadderTexKey& k) const { return std::hash<const void*>()(k.ptr) ^ k.img0; }
+};
+static std::unordered_map<LadderTexKey, bool, LadderTexHash> s_ladderTex;
+static bool ladderTexture() {
+    const uint8_t* ptr = g.texImage[0];
+    if (!ptr || !kLadderTextures[0]) return false;
+    const uint32_t img0 = g.bp[bpTexReg(BP_TX_IMAGE0, 0)];
+    const LadderTexKey key{ptr, img0};
+    auto it = s_ladderTex.find(key);
+    if (it != s_ladderTex.end()) return it->second;
+    int cw, ch;
+    bool is = false;
+    if (!efbCopyLookup(ptr, &cw, &ch)) {
+        const uint32_t w = (img0 & 0x3FF) + 1, h = ((img0 >> 10) & 0x3FF) + 1, fmt = (img0 >> 20) & 15;
+        const uint32_t mode0 = g.bp[bpTexReg(BP_TX_MODE0, 0)];
+        const std::string name = hiresName(ptr, fmt, w, h, ((mode0 >> 5) & 3) != 0, nullptr, 0, false);
+        for (const char* const* t = kLadderTextures; *t; t++)
+            if (name == *t) is = true;
+        if (is) logmsg("ladders: %s is a ladder's texture (3D Ladders)", name.c_str());
+    }
+    s_ladderTex[key] = is;
+    return is;
+}
+// A ladder's draw again behind itself (3D Ladders by texture): ten layers, each a little further
+// back and darker (depthOnly 5; the vertex shader moves each corner along its own normal, away from
+// the camera, or along the first triangle's when the draw has none).
+template <typename Ranges>
+static void ladderLayers(const Ranges& ranges, GLenum mode, const ShaderProgram* sp, float texW[8], float texH[8]) {
+    // the first triangle's normal, model space (for draws without normals)
+    float nrm[3] = {0.0f, 0.0f, 1.0f};
+    const uint8_t* v[3] = {nullptr, nullptr, nullptr};
+    for (uint32_t i = 0; i < 3; i++) {
+        if (i < s_bcount) v[i] = s_bdata.data + size_t(i) * s_bstride;
+        else
+            for (const BatchSeg& sg : s_segs)
+                if (sg.arena && sg.nverts > i) {
+                    v[i] = sg.verts + size_t(i) * s_bstride;
+                    break;
+                }
+    }
+    if (v[0] && v[1] && v[2]) {
+        float a[3], b[3], c[3];
+        memcpy(a, v[0], 12);
+        memcpy(b, v[1], 12);
+        memcpy(c, v[2], 12);
+        const float e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        const float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        const float l = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (l > 1e-6f) nrm[0] = n[0] / l, nrm[1] = n[1] / l, nrm[2] = n[2] / l;
+    }
+    static const int kLayers = 10;
+    static const float kDepth = 9.0f;  // units
+    g.shellOn = true;
+    for (int i = 1; i <= kLayers; i++) {
+        const float t = float(i) / float(kLayers);
+        g.shell[0] = nrm[0];
+        g.shell[1] = nrm[1];
+        g.shell[2] = nrm[2];
+        g.shell[3] = kDepth * t;
+        g.shell[4] = 1.0f - 0.35f * t;
+        const ShaderProgram* lsp = shaderForCurrentState(0, false);
+        glcUseProgram(lsp->prog);
+        uploadUniforms(lsp, texW, texH);
+        for (const auto& r : ranges) {
+            glcBindVertexArray(r.vao);
+            glDrawElementsBaseVertex(mode, r.count, GL_UNSIGNED_INT, reinterpret_cast<const void*>(r.iOff), r.base);
+        }
+    }
+    g.shellOn = false;
+    glcUseProgram(sp->prog);
+}
+extern "C" void GXPC_LadderClear(void) {
+    s_ladderLists.clear();
+    s_ladderTex.clear();  // a new stage: its textures at other addresses
+}
 extern "C" void GXPC_Ladders3D(int on) { g.ladders3D = on != 0; }
 bool ladderLookup(const void* list, uint32_t size, float back[3]) {
     if (s_ladderLists.empty()) return false;
@@ -4177,6 +4268,10 @@ void flushBatch() {
         }
     }
     if (s_probeArmed && s_bclass == PRIM_TRIS) probeBatch();  // the grab log
+    // 3D Ladders by texture: a ladder's draw again behind itself (not its reflection, not a layer's)
+    if (g.ladders3D && !g.shellOn && s_bclass == PRIM_TRIS && !g.userClipOn && !(g.xfReg[XFR_PROJ + 6] & 1)
+        && ladderTexture())
+        ladderLayers(ranges, mode, sp, texW, texH);
     if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn) charCast(ranges, mode, sp);
     if (g.shadowArmed && s_bclass == PRIM_TRIS && !g.shellOn) {  // a ladder's layers: its card casts once
         const char* why = g.shadowMain ? shadowNoCast() : "not the main camera's view";
