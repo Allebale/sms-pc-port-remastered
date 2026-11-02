@@ -106,13 +106,15 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 	s_forward = forward;
 	s_scale   = scale > 0.05f && scale < 4.0f ? scale : 1.0f;
 	s_aim     = aim > 50.0f ? aim : 1200.0f;
-	if (!s_on)
-		s_placed = s_haveLast = s_haveInView = false;
+	if (!s_on) // (its turn in the view is kept: shown again with the nozzle away, it is held so)
+		s_placed = s_haveLast = false;
 	s_flipAfter = 0;
 	return gpMarioOriginal ? 1 : 0;
 }
 
 // Is this Mario's FLUDD held in view now (drawn even with his models left out)?
+bool PortSprayWeaponChosen(); // modapi_spray_weapons.cpp
+
 bool PortFluddHeld(TMario* mario)
 {
 	if (!s_on || !mario || mario != gpMarioOriginal || mario->onYoshi())
@@ -134,10 +136,14 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	// animation, unk1CEC from 0 out to 1 away), which would turn the whole of it round to face
 	// the view (the nozzle's way is what is turned to the aim). Held at 0 for the next frame:
 	// the idle step adds unk1CF4 to it, and with no delay left (unk1CFA) poses it there.
-	// Pumping (the normal spray), 0 itself: the pump's own animation then.
+	// Pumping, 0 itself: the pump's own animation then. Only with a spray weapon chosen: with the
+	// normal spray the game's idle plays (the gun's turn kept while the nozzle is away, below).
 	const u32 upper = (g->mMario->mUpperState & 0x8000) ? 0 : g->mMario->mUpperState;
-	g->unk1CFA      = 0;
-	g->unk1CEC      = (upper == TMario::UPPER_STATE_PUMPING || upper == TMario::UPPER_STATE_HOLDING_PUMP) ? 0.0f : -g->unk1CF4;
+	if (PortSprayWeaponChosen()) {
+		g->unk1CFA = 0;
+		g->unk1CEC = (upper == TMario::UPPER_STATE_PUMPING || upper == TMario::UPPER_STATE_HOLDING_PUMP) ? 0.0f : -g->unk1CF4;
+	}
+	const bool nozzleAway = g->unk1CEC > 0.0f; // put away, or on its way
 
 	J3DModel* model = g->mFluddModel->getModel();
 	MtxPtr base     = model->getBaseTRMtx();
@@ -203,7 +209,7 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 			for (int c = 0; c < 3; c++)
 				inView[r][c] = v[r][0] * w3[0][c] + v[r][1] * w3[1][c] + v[r][2] * w3[2][c];
 		// during a flip (and a few frames after) the last shown is kept: his body turns right round
-		if (!s_haveInView || !flip) {
+		if (!flip && !nozzleAway) {
 			memcpy(s_inView, inView, sizeof inView);
 			s_haveInView = true;
 		}

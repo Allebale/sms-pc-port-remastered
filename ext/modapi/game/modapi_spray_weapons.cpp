@@ -623,3 +623,6 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 	*made = 0;
 	return true;
 }
+
+// A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
+bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
