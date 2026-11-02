@@ -84,7 +84,7 @@ Saves are never touched by the fork: no file it changes deals with the memory ca
 | 3D Grass and flattening | `ext/core/game/port_grass.cpp` | `gx_render.cpp` (`GXPC_Grass*`), `gx_shader.cpp` (`kGrassVs`, `kGrassFs`) |
 | Moving Vegetation (Off to Very Windy; palm fronds are solid only while a tree is touched: `port_tree_touched`) | `ext/core/game/port_vegetation.cpp`, `decomp-patches/zzzzz-ext-32-vegetation-trees.patch` | `gx_render.cpp` (`GXPC_SwayRegister`), `gx_fifo.cpp` (`callDisplayList`) |
 | Puddles Around Fountains (Reflections page; Off, on in every preset but Original): each arched fountain effect (`TEffectPinnaFunsui`, `TEffectBiancoFunsui`, found in `gpConductor->unk40`) gets a ring of 12 large FLUDD puddles out to where its jets land, the middle dry (one big puddle showed an unseen box round the nozzle through it: FLUDD puddles show what writes only alpha), topped up while Mario is within 4500 and drying in about a minute after (lifetime 60 s divided by Puddle Lifetime's scale). Never flying, so it hits no actor; not on actor-owned ground or goop. Logged as `[puddles] N fountains` | `ext/core/game/port_fountains.cpp` | (FLUDD's puddles, as ever) |
-| 3D Ladders (Off; on in Remastered and the Performance presets): flat ladder and climbable fence cards found by matching the map's flat shapes (J3DShape's bounding box) with `BG_TYPE_CLIMBABLE_FENCE` collision; logged as `[ladders]` | `ext/core/game/port_ladders.cpp` (`GXPC_LadderRegister`, the way to the wall behind) | `gx_fifo.cpp` (10 layers behind the card, deepest first, darker each), `gx_shader.cpp` (`depthOnly == 5`, `u_shell`) |
+| 3D Ladders (Off; on in Remastered and the Performance presets): a draw whose first texture is a known ladder's (`kLadderTextures` in `gx_render.cpp`, found with the grab log; Erto Rock's is `tex1_512x512_00b6be1aafdb87d0_14`) is drawn again ten times behind itself, darker each, so rails and rungs have sides. The older shape matching (flat map shapes on `BG_TYPE_CLIMBABLE_FENCE` collision) found none in Erto Rock (its ladders share a material with the whole level) and stays only as a fallback | `ext/core/game/port_ladders.cpp` (the fallback, `GXPC_LadderRegister`) | `gx_render.cpp` (`ladderTexture`, `ladderLayers`), `gx_fifo.cpp` (the fallback's layers), `gx_shader.cpp` (`depthOnly == 5`, `u_shell`) |
 | Global Illumination (was Fire Lights; fires and Shine Sprites are the lights, `Fire Light Intensity` sets their reach; the saved key is still `firelights`) | `ext/core/game/port_lights.cpp` | `gx_shader.cpp` (`u_plight`) |
 
 Hooks into the game's own code are the `decomp-patches/*.patch` files, applied in name order with
@@ -149,10 +149,7 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 
 ## Planned features
 
-- **Code Quality Review**: review the codebase for correctness, maintainability, performance issues, and unnecessary complexity; fix issues where appropriate.
 - **Faster Game Start**: investigate and reduce game startup time without changing gameplay or introducing regressions.
-- **Frame generation and upscaling** (FSR, DLSS or others).
-- **Disable double world rendering when Reflect the Level is Off**.
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
 
 ## Ideas tried and dropped (do not bring back unasked)
@@ -160,6 +157,7 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 God Rays, Cloud Shadows, Moving Clouds, Moving Cloth, Swaying Hanging Things, Grass Stains (and Grass
 Stain Duration; removed on request), Grass Thinned Far Away,
 the Realistic Soft Shadow Edges option, and Softer and Very Soft Shadow Edges.
+Frame generation and upscaling (FSR, DLSS and others): dropped unless a way is found that works with OpenGL.
 
 **Vulkan** (the launcher's renderer choice) was tried on branch `remastered-test-vulkan` (Nov 2026): it runs
 (missing GL entry points, shadow compare samplers, line varyings and the mod layer were fixed there, and shadow
