@@ -30,6 +30,7 @@ f32 s_right, s_down, s_forward, s_scale = 1.0f, s_aim = 1200.0f;
 Vec s_target;           // where this frame's water goes
 Vec s_viewEye, s_viewWay; // the view this frame (the rifle's aim)
 f32 s_kick;              // a shot's recoil, 0 to 1, settling
+f32 s_bobPhase, s_bobSize, s_bobLift; // the sway as he walks, runs and jumps
 bool s_placed;          // placed this frame (s_target good)
 Mtx s_lastBase;         // the base it was given (the same next frame: not posed again, frozen)
 bool s_haveLast;
@@ -219,6 +220,22 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	for (int r = 0; r < 3; r++) // the view's turn back to the world (its transpose)
 		for (int c = 0; c < 3; c++)
 			turned[r][c] = v[0][r] * s_inView[0][c] + v[1][r] * s_inView[1][c] + v[2][r] * s_inView[2][c];
+
+	// the sway: side to side and up and down with his steps (more as he runs), and a lag up or
+	// down as he jumps and lands, smoothed
+	{
+		const f32 dt    = port_frame_scale(); // 30ths of a second
+		const TMario* m = g->mMario;
+		const f32 speed = sqrtf(m->mVel.x * m->mVel.x + m->mVel.z * m->mVel.z);
+		const bool air  = (m->getStatus() & 0x800) != 0; // MARIO_STATUS_FLAG_JUMPING (in the air)
+		const f32 want  = air ? 0.0f : (speed > 32.0f ? 1.0f : speed / 32.0f);
+		s_bobSize += (want - s_bobSize) * (1.0f - powf(0.85f, dt));
+		s_bobPhase += dt * (0.18f + 0.22f * s_bobSize);
+		const f32 lift = air ? (m->mVel.y > 25.0f ? 25.0f : m->mVel.y < -25.0f ? -25.0f : m->mVel.y) * -0.25f : 0.0f;
+		s_bobLift += (lift - s_bobLift) * (1.0f - powf(0.8f, dt));
+		const f32 side = sinf(s_bobPhase) * 2.6f * s_bobSize, up = fabsf(cosf(s_bobPhase)) * 1.8f * s_bobSize;
+		tip = along(along(tip, side, R), up + s_bobLift, U);
+	}
 
 	// a shot's recoil: the gun kicked back and its nozzle tipped up, settling again
 	if (s_kick > 0.001f) {
