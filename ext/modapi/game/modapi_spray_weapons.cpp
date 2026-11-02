@@ -32,6 +32,7 @@
 #include <Strategic/HitActor.hpp>
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 extern "C" int port_cheat_infinite_fludd;
@@ -63,6 +64,8 @@ const Weapon kWeapons[WEAPONS] = {
 const int kHitWindow = 45; // frames: hits counted together towards a defeat
 const f32 kSlow      = 0.82f;
 
+const char* const kNames[WEAPONS] = {"normal spray", "shotgun", "rifle", "bazooka"};
+int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
 bool s_defeat;  // weapons may defeat enemies
 u32 s_frame;    // frames played (afterMovement)
@@ -200,6 +203,7 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	h->last = s_frame;
 	if (s_defeat && h->hits >= k.toDefeat) {
 		h->hits = 0;
+		fprintf(stderr, "[weapons] an enemy defeated by the %s\n", kNames[weapon]);
 		e->kill(); // as a stomp: its own defeat, coins and all
 	}
 }
@@ -224,52 +228,78 @@ struct Register {
 // weapons may defeat enemies
 extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
-	s_weapon = weapon > NORMAL && weapon < WEAPONS ? weapon : NORMAL;
-	s_defeat = (flags & 1) != 0;
+	const int now     = weapon > NORMAL && weapon < WEAPONS ? weapon : NORMAL;
+	const bool defeat = (flags & 1) != 0;
+	if (now != s_weapon || defeat != s_defeat)
+		fprintf(stderr, "[weapons] %s, defeating enemies %s\n", kNames[now], defeat ? "on" : "off");
+	s_weapon = now;
+	s_defeat = defeat;
 	return 1;
 }
 
-// In place of the spray nozzle's emit (TNozzleBase::emit, patch zzzzzzz-held-fludd-4-weapons): true
-// when a weapon fires instead (or waits to), false for the game's own stream.
-bool PortSprayWeaponEmit(TNozzleBase* n, int emitter)
+// Every request for water drops (TModelWaterManager::emitRequest, patch
+// zzzzzzz-held-fludd-4-weapons): true when it is the player's spray, a weapon chosen, and the
+// weapon fires instead (or waits to), `*made` then what the request is to return (0: the stream's
+// own water use and kick are not taken; the weapon takes its own). Asked at the request, not in
+// the nozzle, as a game's own FLUDD code (Super Mario Eclipse's engine) may replace the nozzle's.
+bool s_firing; // our own requests, let through
+bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 {
-	if (s_weapon == NORMAL || !n || !n->mFludd)
+	if (s_firing || s_weapon == NORMAL || !gpModelWaterManager)
 		return false;
-	TWaterGun* g = n->mFludd;
-	if (!PortFluddHeld(g->mMario) || g->mCurrentNozzle != TWaterGun::Spray || g->getCurrentNozzle() != n)
+	TMario* m = gpMarioOriginal;
+	TWaterGun* g = m ? m->mWaterGun : 0;
+	if (!g || !PortFluddHeld(m) || g->mCurrentNozzle != TWaterGun::Spray)
 		return false;
-	if (emitter != 0 || g->mCurrentWater <= 0 || n->unk378 == 0.0f || s_frame < s_ready)
+	// the spray's own: from its nozzle (not Yoshi's juice, a puddle's splash, an enemy's water)
+	const JGeometry::TVec3<f32>& at = asked.mPos.value;
+	const f32 dx = at.x - g->mEmitPos[0].x, dy = at.y - g->mEmitPos[0].y, dz = at.z - g->mEmitPos[0].z;
+	if (dx * dx + dy * dy + dz * dz > 40.0f * 40.0f)
+		return false;
+	*made = 0;
+	if (g->mCurrentWater <= 0 || s_frame < s_ready)
 		return true;
-	const Weapon& k = kWeapons[s_weapon];
-	s_ready         = s_frame + (u32)k.every;
+	const Weapon& k   = kWeapons[s_weapon];
+	s_ready           = s_frame + (u32)k.every;
+	TNozzleBase* n    = g->getCurrentNozzle();
 
-	TWaterEmitInfo* info = g->mEmitInfo;
-	n->emitCommon(0, info); // where, which way (the view's aim), and the stream's own drop
-	const JGeometry::TVec3<f32> way = info->mDir.value;
+	TWaterEmitInfo copy(asked); // the request's, changed for each shot (on the stack: no heap)
+	TWaterEmitInfo* info = &copy;
+	info->mNum.set(1);
+	info->mAlive.set(asked.mAlive.get());
+	info->mType.set(asked.mType.get());
+	info->mPos.value = asked.mPos.value;
+	info->mV.value   = asked.mV.value;
+	const JGeometry::TVec3<f32> way = asked.mDir.value;
 	const f32 pow  = n->mEmitParams.mEmitPow.get() * k.pow;
 	const s16 base = n->mEmitParams.mAttack.get();
-	info->mNum.set(1);
 	info->mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (s_weapon << kTagShift)));
 	info->mSize.set(n->mEmitParams.mSize.get() * k.size);
-	info->mHitRadius.set(info->mHitRadius.get() * k.hit);
-	info->mHitHeight.set(info->mHitHeight.get() * k.hit);
+	info->mSizeTremble.set(0.0f);
+	info->mHitRadius.set(asked.mHitRadius.get() * k.hit);
+	info->mHitHeight.set(asked.mHitHeight.get() * k.hit);
 	info->mDirTremble.set(0.0f);
 	info->mPowTremble.set(0.0f);
-	info->mFlag.set(0x40);
-	int made = 0;
+	info->mFlag.set(asked.mFlag.get());
+	int shot = 0;
+	s_firing = true;
 	for (int i = 0; i < k.drops; i++) {
 		JGeometry::TVec3<f32> d = way;
 		scatter(d, k.spread);
 		info->mDir.value = d;
 		info->mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
-		made += gpModelWaterManager->emitRequest(*info) ? 1 : 0;
+		shot += gpModelWaterManager->emitRequest(*info) ? 1 : 0;
 	}
-	if (!made)
+	s_firing = false;
+	if (!shot)
 		return true;
-	if (!(port_cheat_infinite_fludd && g->getMario()->isMario()))
+	if (s_told != s_weapon) {
+		fprintf(stderr, "[weapons] %s fired (%d drops)\n", kNames[s_weapon], shot);
+		s_told = s_weapon;
+	}
+	if (!(port_cheat_infinite_fludd && m->isMario()))
 		g->depleteWater(k.water * (n->mEmitParams.mDecRate.get() > 0 ? n->mEmitParams.mDecRate.get() : 1));
-	TMario* m = g->getMario(); // the kick, back along the shot
-	m->mVel.x -= way.x * k.recoil;
+	m->mVel.x -= way.x * k.recoil; // the kick, back along the shot
 	m->mVel.z -= way.z * k.recoil;
 	return true;
 }
