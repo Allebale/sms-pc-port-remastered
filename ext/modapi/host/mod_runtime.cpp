@@ -772,6 +772,10 @@ void dropRegistrations(SmsMod* m)
 		m->aims = false;
 		modg_player_set_aim(0, 0.0f, 0.0f);
 	}
+	if (m->holdsFludd) { // FLUDD back on his back
+		m->holdsFludd = false;
+		modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+	}
 	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
 		m->hiddenParts = 0;
 		applyHiddenParts();
@@ -1136,6 +1140,18 @@ int apiReflectSet(SmsMod* mod, int option, int value)
 
 const SmsReflectionsApi s_reflections = {sizeof(SmsReflectionsApi), apiReflectSet, port_reflect_option_get,
                                          port_reflect_option_range};
+
+// ------------------------------------------------------------------ FLUDD held in view (combined-plus)
+// ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one unloads
+
+int apiHeldFluddSet(int on, float right, float down, float forward, float scale, float aim)
+{
+	if (SmsMod* m = current())
+		m->holdsFludd = on != 0;
+	return modg_held_fludd_set(on, right, down, forward, scale, aim);
+}
+
+const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet};
 
 // ------------------------------------------------------------------ the API: multiplayer
 
@@ -1679,6 +1695,7 @@ const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files, &s_reflections,
+	&s_heldFludd,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)
