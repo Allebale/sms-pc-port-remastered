@@ -1678,7 +1678,7 @@ const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
-	nullptr /* reflections: Remastered builds only */, &s_heldFludd,
+	&s_heldFludd,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)
