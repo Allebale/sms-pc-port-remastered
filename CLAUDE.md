@@ -163,6 +163,7 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 ## Planned features
 
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
+- **No double world drawing with Reflect the Level Off**: when the Reflections option Reflect the Level is Off, the stage should not be drawn a second time for the mirror.
 
 ## Ideas tried and dropped (do not bring back unasked)
 
