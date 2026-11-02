@@ -130,6 +130,15 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	s_placed = false;
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
 		return;
+	// its nozzle kept out, as the gun: idle, the game puts it away after a moment (the "house"
+	// animation, unk1CEC from 0 out to 1 away), which would turn the whole of it round to face
+	// the view (the nozzle's way is what is turned to the aim). Held at 0 for the next frame:
+	// the idle step adds unk1CF4 to it, and with no delay left (unk1CFA) poses it there.
+	// Pumping (the normal spray), 0 itself: the pump's own animation then.
+	const u32 upper = (g->mMario->mUpperState & 0x8000) ? 0 : g->mMario->mUpperState;
+	g->unk1CFA      = 0;
+	g->unk1CEC      = (upper == TMario::UPPER_STATE_PUMPING || upper == TMario::UPPER_STATE_HOLDING_PUMP) ? 0.0f : -g->unk1CF4;
+
 	J3DModel* model = g->mFluddModel->getModel();
 	MtxPtr base     = model->getBaseTRMtx();
 	if (s_haveLast && memcmp(base, s_lastBase, sizeof(Mtx)) == 0) {
