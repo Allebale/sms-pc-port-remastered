@@ -127,6 +127,13 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - **3D Ladders by texture** (`kLadderTextures` in `gx_render.cpp`, `ladderTexture`, `ladderLayers`): a draw whose
   first texture is listed there is drawn again ten times behind itself (each corner moved along its own normal, away
   from the camera). Add a ladder's texture name from the grab log to that list.
+- **Startup time** (done Nov 2026: from about 3 minutes to about 6 seconds into Delfino Plaza on Allebale's AMD card):
+  the shader cache (`programCacheLoad`, `gx_shader.cpp`) times its first 12 program binaries; AMD's driver takes about
+  0.12 s for each, one at a time (all handed over at once did not help), while it compiles from source side by side at
+  about 0.015 s each. When they are slower than 40 ms each, the rest are not loaded: their keys go to the warm-up
+  (`s_slowBinaries`, `s_cacheKeysToWarm`), which compiles them from source as stages load. NVIDIA loads binaries fast
+  and keeps them. The `[startup]` clock in the log (`port_runtime.cpp`, every 2 s for 5 minutes) shows where a start
+  spends its time.
 - **Never `new` in an extension's `stageSetup` (or anything during a stage) and keep the pointer for later
   stages**: the stage's heap is the current one there, freed when the stage ends, and the next stage's objects
   are then written over. 3D Ladders did that once (`s_fences`) and Pokeys crashed in Bianco Hills and Erto Rock.
@@ -149,14 +156,6 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 
 ## Planned features
 
-- **Faster Game Start**: investigate and reduce game startup time without changing gameplay or introducing regressions.
-  Found (Nov 2026, the `[startup]` clock in the log, `port_runtime.cpp`): about 3 minutes of a start were the shader
-  cache (`programCacheLoad`, `gx_shader.cpp`): 1150 program binaries, each waited for (AMD's driver takes about
-  0.15 s for one; handing them over all at once did not help: 172 s). Its compiles from source in parallel take about
-  0.015 s each, so now the first 12 binaries are timed and, if slower than 40 ms each, the rest are not loaded but
-  their keys go to the warm-up, which compiles them from source in the background as stages load
-  (`s_slowBinaries`, `s_cacheKeysToWarm`; not written to the file again). Logged as `shader cache: this driver takes
-  N ms...` and `... loaded in X s, N to compile from source`.
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
 
 ## Ideas tried and dropped (do not bring back unasked)
