@@ -1,15 +1,13 @@
 // Puddles Around Fountains (port_puddles.h): the stage's arched fountains (the Pinna and Bianco
 // fountain effects, TEffectPinnaFunsui and TEffectBiancoFunsui: their jets are only a particle
-// effect, so they leave no water) drop FLUDD's own water round themselves where their jets come
-// down, a few drops a second while Mario is near. They land as FLUDD's do and make its puddles,
-// with their reflections, ripples, lifetime and all.
+// effect, so they leave no water) each get one big puddle under them, as wide as where their jets
+// come down: one of FLUDD's own puddles (TModelWaterManager's particle, made lying on the ground,
+// state 2, very large), with its reflections, ripples and all. While Mario is near, the fountain
+// keeps it topped up; once he goes, it dries in about a minute.
 //
-// The drops are FLUDD's particles (TModelWaterManager), made already lying on the ground (state 2,
-// a puddle), as its own become when they land: never flying, so they hit no one (only flying ones
-// are checked against actors: TObjHitCheck::checkWater), and only on ground no actor owns (a puddle
-// sprays what owns its ground) and away from goop (a puddle cleans what it lies on). A fountain's
-// puddles once sprayed a Pokey's head in Bianco Hills and crashed the game. They take at most a third
-// of FLUDD's particles, so that FLUDD always has the rest.
+// Made lying on the ground, never flying, so it hits no one (only flying ones are checked against
+// actors: TObjHitCheck::checkWater), and only on ground no actor owns (a puddle sprays what owns its
+// ground) and away from goop (a puddle cleans what it lies on).
 #include "port_ext.h"
 #include "port_puddles.h"
 
@@ -30,8 +28,8 @@ namespace {
 
 const int kMost        = 16;      // fountains in a stage
 const f32 kNearMario   = 4500.0f; // only while Mario is this near
-const f32 kDropsPerSec = 4.0f;    // each fountain's
 const f32 kTicksPerSec = 30.0f;
+const f32 kPuddleSeconds = 60.0f; // a fountain's puddle dries this long after it is last fed
 
 struct Fountain {
 	JDrama::TActor* actor;
@@ -39,14 +37,6 @@ struct Fountain {
 };
 Fountain s_fountains[kMost];
 int s_count;
-f32 s_due[kMost];
-u32 s_rand = 4242u;
-
-f32 rand01()
-{
-	s_rand = s_rand * 1664525u + 1013904223u;
-	return (f32)(s_rand >> 8) * (1.0f / 16777216.0f);
-}
 
 void stageSetup()
 {
@@ -61,43 +51,59 @@ void stageSetup()
 			s_fountains[s_count].actor = p;
 			s_fountains[s_count].inner = 260.0f;
 			s_fountains[s_count].outer = 520.0f;
-			s_due[s_count++]           = 0.0f;
+			s_count++;
 		} else if (TEffectBiancoFunsui* b = dynamic_cast<TEffectBiancoFunsui*>(o)) {
 			s_fountains[s_count].actor = b;
 			s_fountains[s_count].inner = 200.0f;
 			s_fountains[s_count].outer = 450.0f;
-			s_due[s_count++]           = 0.0f;
+			s_count++;
 		}
 	}
 	fprintf(stderr, "[puddles] %d fountains in this stage\n", s_count);
 }
 
-// One drop of FLUDD's water low over the ground at (x, z) by the fountain at y.
-void drop(TModelWaterManager* w, f32 x, f32 y, f32 z)
+// The fountain's one big puddle: found by where it lies and its size (it moves only as indices do,
+// when the manager packs its particles), or -1.
+int findPuddle(TModelWaterManager* w, const Fountain& fo, f32 size)
 {
-	if (!gpMap)
+	const JGeometry::TVec3<f32>& p = fo.actor->mPosition;
+	for (int i = 0; i < (int)w->mParticleCount; i++) {
+		if ((w->mParticleFlagSOA[i] & 0xf) != 2 || w->mParticleAttackSOA[i] != 0 || w->mParticleSizeSOA[i] < size * 0.9f)
+			continue;
+		const f32 dx = w->mParticlePositionSOA[i].x - p.x, dz = w->mParticlePositionSOA[i].z - p.z;
+		if (dx * dx + dz * dz < 40.0f * 40.0f)
+			return i;
+	}
+	return -1;
+}
+
+// The fountain's big puddle made, lying on the ground under it, if the ground there is the stage's
+// own, flat, not water and not goop.
+void makePuddle(TModelWaterManager* w, const Fountain& fo, f32 size, f32 life)
+{
+	if (!gpMap || (int)w->mParticleCount >= (int)w->unk10)
 		return;
+	const JGeometry::TVec3<f32>& p = fo.actor->mPosition;
 	const TBGCheckData* floor = 0;
-	const f32 g = gpMap->checkGroundIgnoreWaterThrough(x, y + 200.0f, z, &floor);
+	const f32 g = gpMap->checkGroundIgnoreWaterThrough(p.x, p.y + 100.0f, p.z, &floor);
 	if (!floor || !floor->isLegal() || floor->isWaterSurface() || floor->isPool() || floor->mActor
-	    || floor->getNormal().y < 0.7f || g < y - 300.0f || g > y + 200.0f)
-		return;  // no flat ground of the stage's own there near the fountain's height, or water
+	    || floor->getNormal().y < 0.7f || g < p.y - 300.0f)
+		return;
 	TWaterParticleType* type = w->mWaterParticleTypes[0];
 	const f32 clean = type ? type->mCleanSize.get() * 32.0f : 64.0f;
 	if (gpPollution) {  // no goop where it would clean it
 		static const f32 kAround[5][2] = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 		for (int k = 0; k < 5; k++)
-			if (gpPollution->isPolluted(x + kAround[k][0] * clean, g, z + kAround[k][1] * clean))
+			if (gpPollution->isPolluted(p.x + kAround[k][0] * clean, g, p.z + kAround[k][1] * clean))
 				return;
 	}
 	const int i = w->mParticleCount;
-	w->mParticleLifetimeSOA[i] = 255.0f;  // as emitRequest's default (Puddle Lifetime scales its drying)
-	w->mParticleFlagSOA[i]     = 2;       // a puddle on the ground, as a landed drop
-	w->mParticleAttackSOA[i]   = 0;       // harms nothing
-	w->mParticlePositionSOA[i].set(x, g, z);
+	w->mParticleLifetimeSOA[i] = life;
+	w->mParticleFlagSOA[i]     = 2;  // a puddle on the ground, as a landed drop
+	w->mParticleAttackSOA[i]   = 0;  // harms nothing (and marks it as the fountain's)
+	w->mParticlePositionSOA[i].set(p.x, g, p.z);
 	w->mParticleVelocitySOA[i].set(0.0f, 0.0f, 0.0f);
-	// as large as a landed drop (a landing grows it by its type's magnify)
-	w->mParticleSizeSOA[i] = (17.0f + 8.0f * rand01()) * (type ? type->mMagnify.get() : 1.0f);
+	w->mParticleSizeSOA[i] = size;
 	w->mParticleTypeSOA[i] = 0;
 	w->unk2914[i]          = floor;
 	w->unk2514[i]          = 0;
@@ -110,23 +116,25 @@ void afterMovement()
 	TMario* m             = gpMarioOriginal;
 	if (!s_count || !w || !m || !port_fountain_puddles())
 		return;
-	const int budget = (int)w->unk10 / 3;
+	TWaterParticleType* type = w->mWaterParticleTypes[0];
+	const f32 magnify = type ? type->mMagnify.get() : 1.0f;
+	// about a minute to dry once the fountain stops topping it up (Mario gone): the puddles dry
+	// Puddle Lifetime's times slower, one a tick
+	const int scale = port_puddle_life_scale() > 1 ? port_puddle_life_scale() : 1;
+	const f32 life  = kPuddleSeconds * kTicksPerSec / (f32)scale;
 	for (int f = 0; f < s_count; f++) {
 		const Fountain& fo = s_fountains[f];
 		const JGeometry::TVec3<f32>& p = fo.actor->mPosition;
 		const f32 dx = p.x - m->mPosition.x, dz = p.z - m->mPosition.z;
 		if (dx * dx + dz * dz > kNearMario * kNearMario)
 			continue;
-		s_due[f] += kDropsPerSec / kTicksPerSec;
-		for (; s_due[f] >= 1.0f; s_due[f] -= 1.0f) {
-			if ((int)w->mParticleCount >= budget || (int)w->mParticleCount >= (int)w->unk10)
-				break;
-			const f32 a = rand01() * 6.2831853f;
-			const f32 r = fo.inner + (fo.outer - fo.inner) * rand01();
-			drop(w, p.x + sinf(a) * r, p.y, p.z + cosf(a) * r);
-		}
-		if (s_due[f] > 4.0f)
-			s_due[f] = 4.0f;
+		// as wide as where its jets come down: a landed drop of size 21 is about 85 units across
+		const f32 size = 21.0f * magnify * fo.outer / 85.0f;
+		const int i = findPuddle(w, fo, size);
+		if (i >= 0)
+			w->mParticleLifetimeSOA[i] = life;  // still fed by the fountain
+		else
+			makePuddle(w, fo, size, life);
 	}
 }
 
