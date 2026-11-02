@@ -29,6 +29,7 @@ namespace {
 const int kMost        = 16;      // fountains in a stage
 const f32 kNearMario   = 4500.0f; // only while Mario is this near
 const f32 kTicksPerSec = 30.0f;
+const f32 kPuddleWider   = 1.9f;  // the puddle out to where the jets end (measured on screen)
 const f32 kPuddleSeconds = 60.0f; // a fountain's puddle dries this long after it is last fed
 
 struct Fountain {
@@ -129,7 +130,8 @@ void afterMovement()
 		if (dx * dx + dz * dz > kNearMario * kNearMario)
 			continue;
 		// as wide as where its jets come down: a landed drop of size 21 is about 85 units across
-		const f32 size = 21.0f * magnify * fo.outer / 85.0f;
+		// (seen in Erto Rock: that reached about half way to where the jets end, so twice that)
+		const f32 size = 21.0f * magnify * fo.outer / 85.0f * kPuddleWider;
 		const int i = findPuddle(w, fo, size);
 		if (i >= 0)
 			w->mParticleLifetimeSOA[i] = life;  // still fed by the fountain

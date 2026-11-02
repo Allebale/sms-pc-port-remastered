@@ -2338,10 +2338,11 @@ static bool s_probeArmed;
 static float s_probe[4];  // view space, radius
 static int s_probeTold;
 static uint32_t s_probeFrame;
-static void probeFrameEnd() {  // one frame's draws only
-    if (s_probeArmed && GXPC_FrameCount() != s_probeFrame) {
+static int s_probeChecked;
+static void probeFrameEnd() {  // the frame's draws only (the camera may be set the frame before they are drawn)
+    if (s_probeArmed && GXPC_FrameCount() > s_probeFrame + 1) {
         s_probeArmed = false;
-        logmsg("grab: %d draws there (end of the list)", s_probeTold);
+        logmsg("grab: %d draws there, of %d 3D draws looked at (end of the list)", s_probeTold, s_probeChecked);
     }
 }
 extern "C" void GXPC_GrabProbe(const float* at, float radius) {
@@ -2350,12 +2351,14 @@ extern "C" void GXPC_GrabProbe(const float* at, float radius) {
     s_probe[3] = radius;
     s_probeArmed = true;
     s_probeTold = 0;
+    s_probeChecked = 0;
     s_probeFrame = GXPC_FrameCount();
 }
 static void probeBatch() {
     probeFrameEnd();
     if (!s_probeArmed) return;
-    if (s_probeTold >= 16 || (g.xfReg[XFR_PROJ + 6] & 1) || g.userClipOn) return;  // the 3D view's own draws
+    if (s_probeTold >= 24 || (g.xfReg[XFR_PROJ + 6] & 1) || g.userClipOn) return;  // the 3D view's own draws
+    s_probeChecked++;
     const VtxFmtLayout& l = vtxFmtLayout(s_bfmt);
     const uint32_t defIdx = g.xfReg[XFR_MATIDX_A] & 63;
     auto vertexAt = [](uint32_t v) -> const uint8_t* {
