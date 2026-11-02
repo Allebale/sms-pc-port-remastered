@@ -68,6 +68,7 @@ int modg_player_set_yaw(float degrees); // API 1.5 beta 8
 int modg_player_set_aim(int on, float yaw, float pitch); // API 1.5 beta 8
 int modg_player_set_hidden_parts(uint32_t parts);        // API 1.5 beta 8
 int modg_held_fludd_set(int on, float right, float down, float forward, float scale, float aim); // combined-plus
+int modg_spray_weapon_set(int weapon, int flags); // combined-plus
 
 int modg_camera_get(SmsCamera* out);
 

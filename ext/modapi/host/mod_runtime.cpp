@@ -775,6 +775,7 @@ void dropRegistrations(SmsMod* m)
 	if (m->holdsFludd) { // FLUDD back on his back
 		m->holdsFludd = false;
 		modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
 	}
 	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
 		m->hiddenParts = 0;
@@ -1151,7 +1152,15 @@ int apiHeldFluddSet(int on, float right, float down, float forward, float scale,
 	return modg_held_fludd_set(on, right, down, forward, scale, aim);
 }
 
-const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet};
+// set_weapon: back to the normal spray when the mod unloads (with FLUDD let go)
+int apiSprayWeaponSet(int weapon, int flags)
+{
+	if (SmsMod* m = current())
+		m->holdsFludd = m->holdsFludd || weapon != SMS_SPRAY_NORMAL;
+	return modg_spray_weapon_set(weapon, flags);
+}
+
+const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet};
 
 // ------------------------------------------------------------------ the API: multiplayer
 

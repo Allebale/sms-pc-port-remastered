@@ -1,0 +1,39 @@
+Reason: FLUDD's spray weapons (api->held_fludd->set_weapon, ext/modapi/game/modapi_spray_weapons.cpp): while a first-person mod holds FLUDD in view with a weapon chosen, the spray nozzle fires that weapon's drops instead of its stream. Their drops carry the weapon in their attack's upper bits; the game is given only the lower ones (getParticleAttack), so an enemy's damage is the game's own. Without a weapon chosen, nothing changes.
+
+--- a/include/Player/ModelWaterManager.hpp
++++ b/include/Player/ModelWaterManager.hpp
+@@ -136,7 +136,13 @@
+ 	}
+ 	s16 getParticleAttack(TWaterHitActor* hit)
+ 	{
++#ifdef TARGET_PC
++		// the lower bits: a spray weapon's drop carries the weapon above them
++		// (ext/modapi/game/modapi_spray_weapons.cpp)
++		return (s16)(mParticleAttackSOA[hit->mParticleIndex] & 0xff);
++#else
+ 		return mParticleAttackSOA[hit->mParticleIndex];
++#endif
+ 	}
+ 	int getFlagBottom4Bits(int i) const { return mParticleFlagSOA[i] & 0xf; }
+ 	void setFlagBottom4Bits(int i, int flag)
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -460,8 +460,18 @@
+ // (90.3), emitInfo named after emitCommon's argument read (92.8).
+ // c-m12: our dead set is F=10 P=4 inline=7 named=3 (iro.py), retail +46
+ // words; a named s16/u16/int face angle or named sin/cos keeps one sraw (96.0).
++#ifdef TARGET_PC
++// FLUDD's spray weapons (ext/modapi/game/modapi_spray_weapons.cpp)
++bool PortSprayWeaponEmit(TNozzleBase* nozzle, int emitter);
++#endif
++
+ void TNozzleBase::emit(int param_1)
+ {
++#ifdef TARGET_PC
++	// a first-person mod's spray weapon fires instead of the stream (or waits to)
++	if (PortSprayWeaponEmit(this, param_1))
++		return;
++#endif
+ 	if (mFludd->mCurrentWater > 0 && unk378 != 0.0f) {
+ 		TWaterEmitInfo* emitInfo = mFludd->mEmitInfo;
+ 		emitCommon(param_1, emitInfo);
