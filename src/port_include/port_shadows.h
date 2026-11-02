@@ -39,10 +39,6 @@ int port_ao_quality(void);
 int port_ao_half_rate(void);
 // Mario Ambient Occlusion: how much of his own shade Mario keeps, 0 (at first: none, no halo) to 1
 float port_ao_mario(void);
-// Character Ambient Occlusion: how much of their own shade the people and enemies keep, 0 to 1 (1: all)
-float port_ao_characters(void);
-// ...to the renderer (registered characters' draws, known as Round Shadows knows them)
-void GXPC_AOCharacters(float keep);
 // Ambient Occlusion Near Grass: 0 kept, 1 off the grassy ground, 2 off all near 3D Grass but characters
 int port_ao_grass(void);
 // The renderer's: armed for the main camera's view this frame (applied as its 3D scene ends).

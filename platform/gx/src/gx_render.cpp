@@ -2727,9 +2727,7 @@ uniform vec2 u_es;   // the EFB's size: the picture's own mapping, widescreen an
 uniform vec4 u_ao;   // fine strength, large strength, fade start, fade end (units from the camera)
 uniform vec4 u_q;    // x: samples for each (4 to 8: Ambient Occlusion Quality)
 uniform vec4 u_gr;   // AO Near Grass: x 1 the ground (u_gmask is this frame's), 2 all but characters
-                     // (u_gtop's map and u_gchar are); y how near the ground; z how much of their
-                     // shade the characters keep (Character Ambient Occlusion; u_gchar is this frame's
-                     // when below 1)
+                     // (u_gtop's map and u_gchar are); y how near the ground
 uniform sampler2D u_gmask;  // the ground under and round 3D Grass's blades: its view z (0: none)
 uniform sampler2D u_gtopmap;  // All But Characters: the ground round the blades from above, its height
 uniform vec4 u_gtop;          // ...its corner (x, z), 1 / its span
@@ -2877,11 +2875,6 @@ void main() {
   if (u_ao.x > 0.0) ao *= 1.0 - u_ao.x * occlusion(P, N, T, B, 40.0, jit, ez, tilt);
   if (u_ao.y > 0.0) ao *= 1.0 - u_ao.y * occlusion(P, N, T, B, 200.0, jit, ez, tilt);
   float fade = (1.0 - smoothstep(u_ao.z, u_ao.w, dist)) * (1.0 - clear);
-  // Character Ambient Occlusion: a character's pixel (its depth is the picture's here) keeps this much
-  if (u_gr.z < 0.999) {
-    float cd = textureLod(u_gchar, v_uv, 0.0).r;
-    if (cd < 0.999999 && abs(viewZ(cd) - viewZ(textureLod(u_depth, v_uv, 0.0).r)) < 3.0 + dist * 0.004) fade *= u_gr.z;
-  }
   o_color = vec4(clamp(mix(1.0, ao, fade), 0.0, 1.0));
 }
 )";
@@ -3058,14 +3051,6 @@ static GLuint s_aoNoChar() {
     return tex;
 }
 static int s_aoGrassOn;  // Ambient Occlusion Near Grass (GXPC_AOGrass): 0 kept, 1 the ground, 2 all but characters
-// Character Ambient Occlusion (GXPC_AOCharacters): how much of their shade the characters keep (1 all).
-// Below 1, their draws go into the characters' depth map too (charCast), and the shade on their pixels
-// is scaled: low-poly faces met at sharp creases the shade read as deep corners (blocky dark patches).
-static float s_aoCharKeep = 1.0f;
-extern "C" void GXPC_AOCharacters(float keep) {
-    s_aoCharKeep = keep < 0.0f ? 0.0f : keep > 1.0f ? 1.0f : keep;
-    g.charMask = s_aoGrassOn == 2 || s_aoCharKeep < 1.0f;
-}
 static float s_aoInv[12];  // the main camera's view to the world (rows)
 extern "C" void GXPC_AOGrass(int mode, const float (*view)[4]) {
     s_aoGrassOn = mode < 0 ? 0 : mode > 2 ? 2 : mode;
@@ -3075,7 +3060,7 @@ extern "C" void GXPC_AOGrass(int mode, const float (*view)[4]) {
             s_aoInv[r * 4 + 0] = view[0][r], s_aoInv[r * 4 + 1] = view[1][r], s_aoInv[r * 4 + 2] = view[2][r];
             s_aoInv[r * 4 + 3] = -(view[0][r] * view[0][3] + view[1][r] * view[1][3] + view[2][r] * view[2][3]);
         }
-    g.charMask = s_aoGrassOn == 2 || s_aoCharKeep < 1.0f;
+    g.charMask = s_aoGrassOn == 2;
 }
 
 extern "C" void GXPC_AOFrame(int mode, float strength, float distance, int view, int quality, int halfRate) {
@@ -3461,8 +3446,7 @@ void aoApply() {
     // All But Characters: the map from above (this frame's), and the characters' depth (this
     // frame's, or none: then nothing is told apart as a character)
     const bool gtop  = s_aoGrassOn == 2 && s_grassTopFrame == frame;
-    const bool charAo = s_aoCharKeep < 1.0f;
-    const bool gchar = (gtop || charAo) && s_charFrame == frame && s_charW == W && s_charH == H;
+    const bool gchar = gtop && s_charFrame == frame && s_charW == W && s_charH == H;
     glActiveTexture(GL_TEXTURE0 + kAoTopUnit);
     glBindTexture(GL_TEXTURE_2D, gtop ? s_grassTopTex : 0);
     glBindSampler(kAoTopUnit, 0);
@@ -3471,7 +3455,7 @@ void aoApply() {
     glBindSampler(kAoCharUnit, 0);
     glUniform4fv(s_aoTTop, 1, s_grassTop);
     glUniform4fv(s_aoTInv, 3, s_aoInv);
-    const float gr[4] = {gtop ? 2.0f : gmask ? 1.0f : 0.0f, 18.0f, gchar && charAo ? s_aoCharKeep : 1.0f, 0.0f};
+    const float gr[4] = {gtop ? 2.0f : gmask ? 1.0f : 0.0f, 18.0f, 0.0f, 0.0f};
     glUniform4fv(s_aoTGr, 1, gr);
     glUniform4fv(s_aoTG, 1, gu);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -3985,8 +3969,7 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
 // pixels are theirs (their depth there is the picture's). Cleared as the frame's first is drawn.
 template <typename Ranges>
 static void charCast(const Ranges& ranges, GLenum mode, const ShaderProgram* sp) {
-    // Mario's own draw only for All But Characters (Character Ambient Occlusion is the characters')
-    if (!g.charMask || !g.aoArmed || g.userClipOn || !((g.shadowTag && s_aoGrassOn == 2) || g.shadowNoCast)) return;
+    if (!g.charMask || !g.aoArmed || g.userClipOn || !(g.shadowTag || g.shadowNoCast)) return;
     if (memcmp(g.projection, g.aoProj, sizeof g.aoProj) != 0) return;  // not the main camera's view
     const int W = scaled(s_efbW), H = scaled(EFB_H);
     GlCache& c = g_glc;

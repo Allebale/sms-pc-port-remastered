@@ -87,7 +87,6 @@ int s_aoStrength = 1;     // Ambient Occlusion Strength: into kAoStrengths
 int s_aoDistance = 1;     // Ambient Occlusion Distance: into kAoDistances
 int s_aoQuality = 1;      // Ambient Occlusion Quality: 0 low, 1 medium, 2 high
 int s_aoMario = 0;        // Mario Ambient Occlusion: into kAoMarios (0 none at first: no halo)
-int s_aoChars = 3;        // Character Ambient Occlusion: into kAoMarios (3 Full: as before)
 int s_aoGrass = 0;        // Ambient Occlusion Near Grass: 0 kept (as it was), 1 off the grassy ground, 2 off all round it but characters
 int s_aoHalfRate = 0;     // Ambient Occlusion Update Rate: 0 every frame, 1 every other frame
 int s_depthView = 0;      // Depth Buffer View: 0 off, 1 depth, 2 faces, 3 both, 4 the shade alone
@@ -286,8 +285,6 @@ void load() {
             s_aoMario = value ? 0 : 3;  // the setting before (On: none of his)
         } else if (sscanf(line, " ambientocclusionmario = %d", &value) == 1) {
             s_aoMario = value < 0 ? 0 : value > 3 ? 3 : value;
-        } else if (sscanf(line, " ambientocclusioncharacters = %d", &value) == 1) {
-            s_aoChars = value < 0 ? 0 : value > 3 ? 3 : value;
         } else if (sscanf(line, " ambientocclusiongrass = %d", &value) == 1) {
             s_aoGrass = value < 0 ? 0 : value > 2 ? 2 : value;
         } else if (sscanf(line, " ambientocclusionrate = %d", &value) == 1) {
@@ -437,8 +434,6 @@ void save() {
     fprintf(f, "ambientocclusionrate = %d\n", s_aoHalfRate);
     fprintf(f, "# ambientocclusionmario: how much Mario shades round him: 0 none (no halo), 1 low, 2 medium, 3 full.\n");
     fprintf(f, "ambientocclusionmario = %d\n", s_aoMario);
-    fprintf(f, "# ambientocclusioncharacters: how much shade the people and enemies keep on themselves: 0 none, 1 low, 2 medium, 3 full (as before).\n");
-    fprintf(f, "ambientocclusioncharacters = %d\n", s_aoChars);
     fprintf(f, "# ambientocclusiongrass: the shade near 3D Grass: 0 kept, 1 off the grassy ground, 2 off everything near it but characters.\n");
     fprintf(f, "ambientocclusiongrass = %d\n", s_aoGrass);
     fprintf(f, "# vegetation: plants sway, bend from Mario and FLUDD's water: 0 off through 4 very windy.\n");
@@ -649,18 +644,6 @@ const char* aoMarioName(int i) { return kAoMarioNames[i < 0 || i > 3 ? 0 : i]; }
 int aoMarioGet() {
     load();
     return s_aoMario;
-}
-int aoCharsGet() {
-    load();
-    return s_aoChars;
-}
-int aoCharsSet(int i) {
-    if (i < 0 || i > 3) return 0;
-    load();
-    s_aoChars = i;
-    save();
-    port_log("[ao] Character Ambient Occlusion changed: %s\n", kAoMarioNames[i]);
-    return 1;
 }
 int aoMarioSet(int i) {
     if (i < 0 || i > 3) return 0;
@@ -1252,7 +1235,6 @@ const EffectValue kEffects[] = {
     {"Ambient Occlusion Quality", {"Medium", "High", "Low", "Medium"}},
     {"Ambient Occlusion Update Rate", {"Every Frame", "Every Other Frame", "Every Other Frame", "Every Frame"}},
     {"Mario Ambient Occlusion", {"None", "Low", "Low", "None"}},
-    {"Character Ambient Occlusion", {"Full", "Low", "Low", "Full"}},
     {"Ambient Occlusion Near Grass", {"Kept", "Ground Only", "Kept", "Kept"}},
 };
 const char* const kEffectPresetNames[] = {"Original", "Remastered", "Performance", "Ultra Performance", "Custom"};
@@ -1420,9 +1402,6 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 118, "Ambient Occlusion Update Rate",
      "Every Other Frame works the shade out half as often, faster. It can trail a little when the camera turns fast.", 0, nullptr,
      aoRateCount, aoRateName, aoRateGet, aoRateSet},
-    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 118, "Character Ambient Occlusion",
-     "How much shade people and enemies keep on themselves. Lower hides blocky patches.", 0, nullptr,
-     aoMarioCount, aoMarioName, aoCharsGet, aoCharsSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 118, "Mario Ambient Occlusion",
      "How much shade Mario makes round him and on himself. None has no dark ring. Others keep their own.", 0, nullptr,
      aoMarioCount, aoMarioName, aoMarioGet, aoMarioSet},
@@ -1631,10 +1610,6 @@ float port_ao_distance(void) {
     return kAoDistances[s_aoDistance < 0 || s_aoDistance > 3 ? 1 : s_aoDistance];
 }
 int port_depth_view(void) { return s_depthView; }
-float port_ao_characters(void) {
-    load();
-    return kAoMarios[s_aoChars < 0 || s_aoChars > 3 ? 3 : s_aoChars];
-}
 float port_ao_mario(void) {
     load();
     return kAoMarios[s_aoMario < 0 || s_aoMario > 3 ? 0 : s_aoMario];
