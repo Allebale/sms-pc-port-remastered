@@ -1,4 +1,4 @@
-// FLUDD held in view (api->held_fludd, combined-plus SDK): for a first-person camera, the game's own
+// FLUDD held in view (api->held_fludd, First Person SDK): for a first-person camera, the game's own
 // FLUDD model is moved each frame in front of the view, held like a gun, its nozzle's tip at the
 // mod's place (right, down and forward of the camera) and pointing at the middle of the view, a
 // point `aim` units ahead. The water comes out of the nozzle there, towards that point.

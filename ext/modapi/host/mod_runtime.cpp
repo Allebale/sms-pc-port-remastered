@@ -1116,7 +1116,7 @@ const char* apiNativeBuild(void)
 
 const SmsNativeApi s_native = {sizeof(SmsNativeApi), apiNativeBuild, modg_native};
 
-// ------------------------------------------------------------------ FLUDD held in view (combined-plus)
+// ------------------------------------------------------------------ FLUDD held in view (first person)
 // ext/modapi/game/modapi_held_fludd.cpp and modapi_spray_weapons.cpp: the mod that holds it, so
 // it goes back (and the normal spray with it) when that one unloads
 

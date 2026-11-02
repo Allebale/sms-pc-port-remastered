@@ -1,4 +1,4 @@
-// FLUDD's spray weapons (api->held_fludd->set_weapon, combined-plus SDK): while a first-person mod
+// FLUDD's spray weapons (api->held_fludd->set_weapon, First Person SDK): while a first-person mod
 // holds FLUDD in view (modapi_held_fludd.cpp), the spray may fire as a weapon instead of its
 // stream. Still water, FLUDD's own drops, only fired another way (Allebale's numbers):
 //
