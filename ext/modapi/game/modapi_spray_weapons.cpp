@@ -87,6 +87,8 @@ const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
 bool s_firing; // our own requests, let through
+f32 s_lastShotAt;     // when the last shot went (the gun's pump)
+int s_lastShotWeapon;
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -502,6 +504,8 @@ void fire()
 	if (!made)
 		return;
 	PortFluddHeldKick(k.kick);
+	s_lastShotAt     = s_time;
+	s_lastShotWeapon = s_weapon;
 	if (s_weapon == BAZOOKA) {
 		s_bazookaShot = shot;
 		s_bazookaSeen = false;
@@ -626,3 +630,12 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
+
+// How far through its pump the gun is after the last shot (0 to 1), or -1 past it: the held gun's
+// animation (modapi_held_fludd.cpp), a pump only as a weapon fires.
+f32 PortSprayWeaponShotPhase()
+{
+	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : s_lastShotWeapon == SHOTGUN ? 0.35f : 0.25f;
+	const f32 t   = s_time - s_lastShotAt;
+	return s_lastShotAt > 0.0f && t >= 0.0f && t < len ? t / len : -1.0f;
+}

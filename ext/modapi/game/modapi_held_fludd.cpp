@@ -114,6 +114,7 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 
 // Is this Mario's FLUDD held in view now (drawn even with his models left out)?
 bool PortSprayWeaponChosen(); // modapi_spray_weapons.cpp
+f32 PortSprayWeaponShotPhase();
 
 bool PortFluddHeld(TMario* mario)
 {
@@ -136,14 +137,12 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	// animation, unk1CEC from 0 out to 1 away), which would turn the whole of it round to face
 	// the view (the nozzle's way is what is turned to the aim). Held at 0 for the next frame:
 	// the idle step adds unk1CF4 to it, and with no delay left (unk1CFA) poses it there.
-	// Pumping, 0 itself: the pump's own animation then. Only with a spray weapon chosen: with the
-	// normal spray the game's idle plays (the gun's turn kept while the nozzle is away, below).
+	// Pumping, 0 itself: the pump's own animation then (the normal spray). With a spray weapon
+	// chosen its animation is set below, still but for a pump as it fires.
 	const u32 upper = (g->mMario->mUpperState & 0x8000) ? 0 : g->mMario->mUpperState;
-	if (PortSprayWeaponChosen()) {
-		g->unk1CFA = 0;
-		g->unk1CEC = (upper == TMario::UPPER_STATE_PUMPING || upper == TMario::UPPER_STATE_HOLDING_PUMP) ? 0.0f : -g->unk1CF4;
-	}
-	const bool nozzleAway = g->unk1CEC > 0.0f; // put away, or on its way
+	g->unk1CFA      = 0;
+	g->unk1CEC      = (upper == TMario::UPPER_STATE_PUMPING || upper == TMario::UPPER_STATE_HOLDING_PUMP) ? 0.0f : -g->unk1CF4;
+	const bool nozzleAway = g->unk1CEC > 0.0f; // put away, or on its way (should the game's own do it)
 
 	J3DModel* model = g->mFluddModel->getModel();
 	MtxPtr base     = model->getBaseTRMtx();
@@ -256,7 +255,17 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	const Vec saved = scale;
 	scale.x *= k, scale.y *= k, scale.z *= k;
 	model->setBaseTRMtx(nb);
-	model->calc();
+	if (PortSprayWeaponChosen()) {
+		// a weapon's: still, nozzle out (the put-away animation at its start), but for one pump
+		// as it fires
+		const f32 phase = PortSprayWeaponShotPhase();
+		g->mFluddModel->setBck(phase >= 0.0f ? "wg_pump" : "wg_house");
+		if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
+			ctrl->setRate(0.0f);
+			ctrl->setFrame(phase >= 0.0f ? phase * ctrl->getEnd() : 0.0f);
+		}
+	}
+	g->mFluddModel->calc(); // posed there with its animation
 	scale = saved;
 	if (MActor* nozzle = g->getCurrentNozzle()->getMActor()) {
 		nozzle->getModel()->setBaseTRMtx(model->getAnmMtx(g->unk1CD8));
