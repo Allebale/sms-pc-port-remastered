@@ -48,6 +48,7 @@
 extern "C" int port_cheat_infinite_fludd;
 bool PortFluddHeld(TMario* mario);
 bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward);
+void PortFluddHeldKick(f32 amount);
 
 namespace {
 
@@ -70,12 +71,14 @@ struct Weapon {
 	f32 lift;      // and thrown up, the same units
 	int toDefeat;  // shots to defeat (with defeat enemies on), within kHitWindow
 	f32 burst;     // a burst's radius where it first hits (0 none)
+	f32 kick;      // the held gun's recoil, 0 to 1
+	bool straight; // flies dead straight to what the crosshair is on, no fall, no end to its reach
 };
 const Weapon kWeapons[WEAPONS] = {
-	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                             // normal: the game's own
-	{8, 0.75f, 0.35f, 1.25f, 1.2f, 0.14f, 1.5f, 12, 6.0f, 9.0f, 0.0f, 2, 0},     // shotgun
-	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 3.0f, 6, 3.0f, 26.0f, 0.0f, 1, 0},         // rifle
-	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 10.0f, 30, 16.0f, 34.0f, 38.0f, 1, 400.0f}, // bazooka
+	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
+	{8, 0.75f, 0.35f, 1.25f, 1.2f, 0.14f, 1.5f, 12, 6.0f, 9.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
+	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 3.0f, 6, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
+	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 10.0f, 30, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
@@ -85,6 +88,7 @@ bool s_trigger;      // R held (the mod keeps it from the game while a weapon is
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
 void followBazooka();
+void followStraight();
 const char* const kNames[WEAPONS] = {"normal spray", "shotgun", "rifle", "bazooka"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -163,6 +167,7 @@ void afterMovement()
 	const f32 keep = powf(kSlow, dt);
 	if (s_weapon != NORMAL && s_trigger && s_time >= s_ready)
 		fire();
+	followStraight();
 	followBazooka();
 	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
 		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_PO_NORMAL_NOZZLE_IMI, &gpMarioOriginal->mWaterGun->getEmitPos0(), nullptr, 1.0f, 0, 0,
@@ -254,7 +259,7 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 		if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 			continue;
 		const f32 x = e->mPosition.x - at.x, y = e->mPosition.y - at.y, z = e->mPosition.z - at.z;
-		if (x * x + y * y + z * z > r * r)
+		if (x * x + z * z > r * r || fabsf(y) > 400.0f) // across the ground, and not far above or below
 			continue;
 		const f32 l = sqrtf(x * x + z * z);
 		hitEnemy(e, weapon, shot, l > 1.0f ? x / l : 0.0f, l > 1.0f ? z / l : 0.0f);
@@ -275,7 +280,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		n += burstIn(*it, weapon, shot, at, r);
 	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
 		n += burstIn(*it, weapon, shot, at, r);
-	fprintf(stderr, "[weapons] the bazooka burst, %d enemies in it\n", n);
+	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies in it\n", at.x, at.y, at.z, n);
 }
 
 // a drop reached something: if it is a weapon's and an enemy, shoved (and maybe defeated)
@@ -364,10 +369,13 @@ TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec
 	return best;
 }
 
+int s_straightShot;  // the rifle's or bazooka's drops in straight flight (their shot)
+JGeometry::TVec3<f32> s_straightWay, s_straightFrom;
+f32 s_straightFar, s_straightSpeed;
 int s_bazookaShot;   // the bazooka's drop in flight (its shot), to burst where it lands
 JGeometry::TVec3<f32> s_bazookaAt;
 bool s_bazookaSeen;
-const f32 kRifleReach = 12000.0f;
+const f32 kRifleReach = 60000.0f; // as far as the stage goes
 
 // A shot, the moment the weapon is ready while R is held (afterMovement).
 void fire()
@@ -390,17 +398,24 @@ void fire()
 	n->emitCommon(0, &info);
 	const JGeometry::TVec3<f32> from = info.mPos.value;
 	JGeometry::TVec3<f32> way        = info.mDir.value;
-	if (s_weapon == RIFLE) {
-		// hitscan: what is under the crosshair is hit now, and the drops fly to it
+	if (k.straight) {
+		// what the crosshair is on: the rifle hits it now (hitscan); both send their drops dead
+		// straight to it (followStraight)
 		JGeometry::TVec3<f32> at;
 		TSmallEnemy* e = rifleTarget(eye, f, kRifleReach, &at);
-		if (e)
-			hitEnemy(e, RIFLE, shot, f.x / (sqrtf(f.x * f.x + f.z * f.z) + 1e-4f), f.z / (sqrtf(f.x * f.x + f.z * f.z) + 1e-4f));
+		const f32 fl   = sqrtf(f.x * f.x + f.z * f.z) + 1e-4f;
+		if (e && s_weapon == RIFLE)
+			hitEnemy(e, RIFLE, shot, f.x / fl, f.z / fl);
 		JGeometry::TVec3<f32> d(at.x - from.x, at.y - from.y, at.z - from.z);
 		const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
 		if (l > 1.0f)
 			way.set(d.x / l, d.y / l, d.z / l);
-		fprintf(stderr, "[weapons] the rifle hit %s %.0f away\n", e ? "an enemy" : "nothing", sqrtf((at.x - eye.x) * (at.x - eye.x) + (at.y - eye.y) * (at.y - eye.y) + (at.z - eye.z) * (at.z - eye.z)));
+		s_straightShot = shot;
+		s_straightWay  = way;
+		s_straightFrom = from;
+		s_straightFar  = l + 200.0f; // past what it is aimed at, then it falls as any drop
+		s_straightSpeed = 0.0f;
+		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon], e ? "an enemy" : "nothing", l);
 	}
 	const f32 pow  = n->mEmitParams.mEmitPow.get() * k.pow;
 	const s16 base = n->mEmitParams.mAttack.get();
@@ -426,6 +441,7 @@ void fire()
 	s_firing = false;
 	if (!made)
 		return;
+	PortFluddHeldKick(k.kick);
 	if (s_weapon == BAZOOKA) {
 		s_bazookaShot = shot;
 		s_bazookaSeen = false;
@@ -439,6 +455,33 @@ void fire()
 		g->depleteWater(k.water * (n->mEmitParams.mDecRate.get() > 0 ? n->mEmitParams.mDecRate.get() : 1));
 	m->mVel.x -= way.x * k.recoil; // the kick, back along the shot
 	m->mVel.z -= way.z * k.recoil;
+}
+
+// The rifle's and bazooka's drops: kept flying dead straight at the speed they set off with (the
+// game's fall taken back out each frame) and alive, until past what they were aimed at.
+void followStraight()
+{
+	if (!s_straightShot || !gpModelWaterManager)
+		return;
+	TModelWaterManager* w = gpModelWaterManager;
+	int flying = 0;
+	for (int i = 0; i < (int)w->mParticleCount; i++) {
+		if (((w->mParticleAttackSOA[i] >> kTagShift) & 0x7f) != s_straightShot || (w->mParticleFlagSOA[i] & 0xf) != 1)
+			continue;
+		const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+		const f32 x = p.x - s_straightFrom.x, y = p.y - s_straightFrom.y, z = p.z - s_straightFrom.z;
+		if (x * x + y * y + z * z > s_straightFar * s_straightFar)
+			continue; // past it: falls as any drop
+		JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
+		if (s_straightSpeed <= 0.0f)
+			s_straightSpeed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+		v.set(s_straightWay.x * s_straightSpeed, s_straightWay.y * s_straightSpeed, s_straightWay.z * s_straightSpeed);
+		if (w->mParticleLifetimeSOA[i] < 30.0f)
+			w->mParticleLifetimeSOA[i] = 30.0f; // no end to its reach
+		flying++;
+	}
+	if (!flying && s_straightSpeed > 0.0f)
+		s_straightShot = 0;
 }
 
 // The bazooka's drop: followed until it lands or is gone, then it bursts there (if it hit no

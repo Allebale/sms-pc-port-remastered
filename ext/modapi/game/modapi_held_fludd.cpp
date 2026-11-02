@@ -20,6 +20,7 @@
 
 #include <math.h>
 #include <string.h>
+#include "port_framerate.h"
 
 namespace {
 
@@ -28,6 +29,7 @@ f32 s_right, s_down, s_forward, s_scale = 1.0f, s_aim = 1200.0f;
 
 Vec s_target;           // where this frame's water goes
 Vec s_viewEye, s_viewWay; // the view this frame (the rifle's aim)
+f32 s_kick;              // a shot's recoil, 0 to 1, settling
 bool s_placed;          // placed this frame (s_target good)
 Mtx s_lastBase;         // the base it was given (the same next frame: not posed again, frozen)
 bool s_haveLast;
@@ -204,6 +206,22 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		for (int c = 0; c < 3; c++)
 			turned[r][c] = v[0][r] * s_inView[0][c] + v[1][r] * s_inView[1][c] + v[2][r] * s_inView[2][c];
 
+	// a shot's recoil: the gun kicked back and its nozzle tipped up, settling again
+	if (s_kick > 0.001f) {
+		const f32 a = s_kick * 0.35f, c = cosf(a), sn = sinf(a), t = 1.0f - c;
+		const f32 x = R.x, y = R.y, z = R.z; // about the view's right
+		const f32 rr[3][3] = {{t * x * x + c, t * x * y - sn * z, t * x * z + sn * y},
+		                      {t * x * y + sn * z, t * y * y + c, t * y * z - sn * x},
+		                      {t * x * z - sn * y, t * y * z + sn * x, t * z * z + c}};
+		f32 kicked[3][3];
+		for (int r = 0; r < 3; r++)
+			for (int c2 = 0; c2 < 3; c2++)
+				kicked[r][c2] = rr[r][0] * turned[0][c2] + rr[r][1] * turned[1][c2] + rr[r][2] * turned[2][c2];
+		memcpy(turned, kicked, sizeof kicked);
+		tip = along(along(tip, -s_kick * 14.0f, F), s_kick * 3.0f, U);
+		s_kick *= powf(0.78f, port_frame_scale());
+	}
+
 	// the new place: the tip (at the mod's scale, from the base) where the mod put it
 	const f32 k     = s_scale;
 	const Vec rel   = {k * (at.x - origin.x), k * (at.y - origin.y), k * (at.z - origin.z)};
@@ -267,4 +285,11 @@ bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forwar
 	eye->set(s_viewEye.x, s_viewEye.y, s_viewEye.z);
 	forward->set(s_viewWay.x, s_viewWay.y, s_viewWay.z);
 	return true;
+}
+
+// A shot's recoil for the held gun (the spray weapons): 0 to 1.
+void PortFluddHeldKick(f32 amount)
+{
+	if (amount > s_kick)
+		s_kick = amount > 1.0f ? 1.0f : amount;
 }
