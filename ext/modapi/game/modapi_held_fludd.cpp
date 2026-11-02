@@ -243,3 +243,14 @@ bool PortFluddHeldWay(TWaterGun* g, const JGeometry::TVec3<f32>& from, JGeometry
 	way->set(d.x, d.y, d.z);
 	return true;
 }
+
+// While FLUDD is held in view, the back flip's and side flip's animations (TMario::setAnimation)
+// are a double jump's instead: his body would turn over in front of the view.
+bool PortFluddHeldNoFlip(TMario* mario, int anm_id)
+{
+	if (!s_on || !mario || mario != gpMarioOriginal || mario->onYoshi())
+		return false;
+	const u32 status = mario->getStatus();
+	return (status == MARIO_STATUS_BACK_JUMP && anm_id == 0xF7)
+	       || (status == MARIO_STATUS_U_TURN_JUMP && anm_id == TMario::ANIM_TJMP1);
+}
