@@ -151,6 +151,28 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		s_placed = true; // not posed again this frame (Mario frozen): where it was
 		return;
 	}
+	// still, nozzle out (the put-away animation at its start), unless water comes out: the
+	// normal spray's pump as the game has it while it sprays; a weapon's one pump as it fires.
+	// (Otherwise the game may pump it along with Mario's arm: Super Mario Eclipse keeps him
+	// holding the pump.)
+	const bool weapon = PortSprayWeaponChosen();
+	const bool overridden = weapon || !g->isEmitting();
+	const f32 phase = weapon ? PortSprayWeaponShotPhase() : -1.0f;
+	if (overridden) { // the still pose first (the gun's turn is worked out from it)
+		g->mFluddModel->setBck("wg_house");
+		if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
+			ctrl->setRate(0.0f);
+			ctrl->setFrame(0.0f);
+		}
+	}
+	// posed so on his back first: the nozzle's way, turned to the aim below, is then this pose's
+	if (overridden) {
+		g->mFluddModel->calc();
+		if (MActor* nozzle = g->getCurrentNozzle()->getMActor()) {
+			nozzle->getModel()->setBaseTRMtx(model->getAnmMtx(g->unk1CD8));
+			nozzle->getModel()->calc();
+		}
+	}
 	MtxPtr em = g->getEmitMtx(0);
 	if (!em)
 		return;
@@ -272,14 +294,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	const Vec saved = scale;
 	scale.x *= k, scale.y *= k, scale.z *= k;
 	model->setBaseTRMtx(nb);
-	if (PortSprayWeaponChosen()) {
-		// a weapon's: still, nozzle out (the put-away animation at its start), but for one pump
-		// as it fires
-		const f32 phase = PortSprayWeaponShotPhase();
-		g->mFluddModel->setBck(phase >= 0.0f ? "wg_pump" : "wg_house");
+	if (overridden && phase >= 0.0f) { // a weapon's pump as it fires
+		g->mFluddModel->setBck("wg_pump");
 		if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
 			ctrl->setRate(0.0f);
-			ctrl->setFrame(phase >= 0.0f ? phase * ctrl->getEnd() : 0.0f);
+			ctrl->setFrame(phase * ctrl->getEnd());
 		}
 	}
 	g->mFluddModel->calc(); // posed there with its animation
