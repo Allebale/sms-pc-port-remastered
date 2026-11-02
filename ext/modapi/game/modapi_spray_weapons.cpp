@@ -34,6 +34,9 @@
 #include <Player/NozzleBase.hpp>
 #include <Player/WaterGun.hpp>
 #include <Strategic/HitActor.hpp>
+#include <Enemy/EnemyManager.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/SoundEffects.hpp>
 #include <Strategic/LiveManager.hpp>
 #include <Enemy/Conductor.hpp>
 #include "port_framerate.h"
@@ -44,6 +47,7 @@
 
 extern "C" int port_cheat_infinite_fludd;
 bool PortFluddHeld(TMario* mario);
+bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward);
 
 namespace {
 
@@ -76,6 +80,11 @@ const Weapon kWeapons[WEAPONS] = {
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
+bool s_firing; // our own requests, let through
+bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
+f32 s_soundUntil;    // the spray's sound, for a moment after a shot
+void fire();
+void followBazooka();
 const char* const kNames[WEAPONS] = {"normal spray", "shotgun", "rifle", "bazooka"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -152,6 +161,12 @@ void afterMovement()
 	const f32 dt = port_frame_scale(); // 30ths of a second this frame
 	s_time += dt / 30.0f;
 	const f32 keep = powf(kSlow, dt);
+	if (s_weapon != NORMAL && s_trigger && s_time >= s_ready)
+		fire();
+	followBazooka();
+	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
+		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_PO_NORMAL_NOZZLE_IMI, &gpMarioOriginal->mWaterGun->getEmitPos0(), nullptr, 1.0f, 0, 0,
+		                                     nullptr, 0, 4);
 	for (int i = 0; i < kMostHits; i++) {
 		Hit& h = s_hits[i];
 		if (!h.enemy || (h.vx * h.vx + h.vz * h.vz) < 0.09f)
@@ -228,29 +243,38 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	}
 }
 
-// The bazooka's burst where its drop first hits: every small enemy near, thrown away from it.
+// The small enemies of one manager within the burst, each hit (a shot counts once for each).
+int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>& at, f32 r)
+{
+	if (!mgr)
+		return 0;
+	int n = 0;
+	for (int i = 0; i < mgr->getObjNum(); i++) {
+		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
+		if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+			continue;
+		const f32 x = e->mPosition.x - at.x, y = e->mPosition.y - at.y, z = e->mPosition.z - at.z;
+		if (x * x + y * y + z * z > r * r)
+			continue;
+		const f32 l = sqrtf(x * x + z * z);
+		hitEnemy(e, weapon, shot, l > 1.0f ? x / l : 0.0f, l > 1.0f ? z / l : 0.0f);
+		n++;
+	}
+	return n;
+}
+
+// The bazooka's burst where its drop first hits an enemy or lands: every small enemy near,
+// thrown away from it.
 void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 {
 	const f32 r = kWeapons[weapon].burst;
 	if (!gpConductor)
 		return;
-	int n = 0;
-	for (JGadget::TList<JDrama::TViewObj*>::iterator it = gpConductor->unk40.begin(); it != gpConductor->unk40.end(); ++it) {
-		TLiveManager* mgr = dynamic_cast<TLiveManager*>(*it);
-		if (!mgr)
-			continue;
-		for (int i = 0; i < mgr->getObjNum(); i++) {
-			TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
-			if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
-				continue;
-			const f32 x = e->mPosition.x - at.x, y = e->mPosition.y - at.y, z = e->mPosition.z - at.z;
-			if (x * x + y * y + z * z > r * r)
-				continue;
-			const f32 l = sqrtf(x * x + z * z);
-			hitEnemy(e, weapon, shot, l > 1.0f ? x / l : 0.0f, l > 1.0f ? z / l : 0.0f);
-			n++;
-		}
-	}
+	int n = 0; // the stage's enemy managers (unk20), then its other managers (unk10)
+	for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+		n += burstIn(*it, weapon, shot, at, r);
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		n += burstIn(*it, weapon, shot, at, r);
 	fprintf(stderr, "[weapons] the bazooka burst, %d enemies in it\n", n);
 }
 
@@ -283,6 +307,164 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	hitEnemy(e, weapon, shot, l > 1e-3f ? v.x / l : 0.0f, l > 1e-3f ? v.z / l : 0.0f);
 }
 
+// The rifle's aim: the first small enemy (or other actor) along the view, short of the map's
+// walls, within its reach; true with where it is hit.
+f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, THitActor* a, f32 most)
+{
+	const f32 r  = a->getDamageRadius() > a->getAttackRadius() ? a->getDamageRadius() : a->getAttackRadius();
+	const f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
+	const f32 rad = (r > 30.0f ? r : 30.0f) + 15.0f;
+	const f32 cx = a->mPosition.x - eye.x, cy = a->mPosition.y + 0.5f * hh - eye.y, cz = a->mPosition.z - eye.z;
+	const f32 t = cx * f.x + cy * f.y + cz * f.z;
+	if (t < 0.0f || t > most)
+		return -1.0f;
+	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
+	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f); // a body's height counts as near
+	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
+	return d2 <= rad * rad ? t : -1.0f;
+}
+
+TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* at)
+{
+	f32 most = reach;
+	JGeometry::TVec3<f32> end(eye.x + f.x * reach, eye.y + f.y * reach, eye.z + f.z * reach), wall;
+	if (gpMap && gpMap->intersectLine(eye, end, true, &wall)) {
+		const f32 x = wall.x - eye.x, y = wall.y - eye.y, z = wall.z - eye.z;
+		most = sqrtf(x * x + y * y + z * z);
+	}
+	TSmallEnemy* best = 0;
+	f32 bestT         = most;
+	if (gpConductor) {
+		for (int list = 0; list < 2; list++) {
+			JGadget::TList<TLiveManager*> none;
+			if (list == 0) {
+				for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+					for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+						TSmallEnemy* e = dynamic_cast<TSmallEnemy*>((*it)->getObj(i));
+						if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+							continue;
+						const f32 t = alongRay(eye, f, e, bestT);
+						if (t >= 0.0f && t < bestT)
+							bestT = t, best = e;
+					}
+			} else {
+				for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+					for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+						TSmallEnemy* e = dynamic_cast<TSmallEnemy*>((*it)->getObj(i));
+						if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+							continue;
+						const f32 t = alongRay(eye, f, e, bestT);
+						if (t >= 0.0f && t < bestT)
+							bestT = t, best = e;
+					}
+			}
+		}
+	}
+	at->set(eye.x + f.x * bestT, eye.y + f.y * bestT, eye.z + f.z * bestT);
+	return best;
+}
+
+int s_bazookaShot;   // the bazooka's drop in flight (its shot), to burst where it lands
+JGeometry::TVec3<f32> s_bazookaAt;
+bool s_bazookaSeen;
+const f32 kRifleReach = 12000.0f;
+
+// A shot, the moment the weapon is ready while R is held (afterMovement).
+void fire()
+{
+	TMario* m    = gpMarioOriginal;
+	TWaterGun* g = m ? m->mWaterGun : 0;
+	if (!g || !gpModelWaterManager || !PortFluddHeld(m) || g->mCurrentNozzle != TWaterGun::Spray || g->mCurrentWater <= 0)
+		return;
+	TNozzleBase* n = g->getCurrentNozzle();
+	JGeometry::TVec3<f32> eye, f;
+	if (!n || !PortFluddHeldView(&eye, &f))
+		return;
+	const Weapon& k = kWeapons[s_weapon];
+	s_ready         = s_time + k.every;
+	s_shot          = s_shot % 7 + 1;
+	const int shot  = s_weapon | (s_shot << (kShotShift - kTagShift));
+
+	// the drop the stream would make, from the gun's nozzle towards the middle of the view
+	TWaterEmitInfo info(*g->mEmitInfo);
+	n->emitCommon(0, &info);
+	const JGeometry::TVec3<f32> from = info.mPos.value;
+	JGeometry::TVec3<f32> way        = info.mDir.value;
+	if (s_weapon == RIFLE) {
+		// hitscan: what is under the crosshair is hit now, and the drops fly to it
+		JGeometry::TVec3<f32> at;
+		TSmallEnemy* e = rifleTarget(eye, f, kRifleReach, &at);
+		if (e)
+			hitEnemy(e, RIFLE, shot, f.x / (sqrtf(f.x * f.x + f.z * f.z) + 1e-4f), f.z / (sqrtf(f.x * f.x + f.z * f.z) + 1e-4f));
+		JGeometry::TVec3<f32> d(at.x - from.x, at.y - from.y, at.z - from.z);
+		const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+		if (l > 1.0f)
+			way.set(d.x / l, d.y / l, d.z / l);
+		fprintf(stderr, "[weapons] the rifle hit %s %.0f away\n", e ? "an enemy" : "nothing", sqrtf((at.x - eye.x) * (at.x - eye.x) + (at.y - eye.y) * (at.y - eye.y) + (at.z - eye.z) * (at.z - eye.z)));
+	}
+	const f32 pow  = n->mEmitParams.mEmitPow.get() * k.pow;
+	const s16 base = n->mEmitParams.mAttack.get();
+	info.mNum.set(1);
+	info.mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (shot << kTagShift)));
+	info.mAlive.set((s16)(info.mAlive.get() * k.alive));
+	info.mSize.set(n->mEmitParams.mSize.get() * k.size);
+	info.mSizeTremble.set(0.0f);
+	info.mHitRadius.set(info.mHitRadius.get() * k.hit);
+	info.mHitHeight.set(info.mHitHeight.get() * k.hit);
+	info.mDirTremble.set(0.0f);
+	info.mPowTremble.set(0.0f);
+	info.mFlag.set(0x40);
+	int made = 0;
+	s_firing = true;
+	for (int i = 0; i < k.drops; i++) {
+		JGeometry::TVec3<f32> d = way;
+		scatter(d, k.spread);
+		info.mDir.value = d;
+		info.mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
+		made += gpModelWaterManager->emitRequest(info) ? 1 : 0;
+	}
+	s_firing = false;
+	if (!made)
+		return;
+	if (s_weapon == BAZOOKA) {
+		s_bazookaShot = shot;
+		s_bazookaSeen = false;
+	}
+	s_soundUntil = s_time + (s_weapon == BAZOOKA ? 0.45f : s_weapon == SHOTGUN ? 0.3f : 0.15f);
+	if (s_told != s_weapon) {
+		fprintf(stderr, "[weapons] %s fired (%d drops)\n", kNames[s_weapon], made);
+		s_told = s_weapon;
+	}
+	if (!(port_cheat_infinite_fludd && m->isMario()))
+		g->depleteWater(k.water * (n->mEmitParams.mDecRate.get() > 0 ? n->mEmitParams.mDecRate.get() : 1));
+	m->mVel.x -= way.x * k.recoil; // the kick, back along the shot
+	m->mVel.z -= way.z * k.recoil;
+}
+
+// The bazooka's drop: followed until it lands or is gone, then it bursts there (if it hit no
+// enemy on the way).
+void followBazooka()
+{
+	if (!s_bazookaShot || !gpModelWaterManager)
+		return;
+	TModelWaterManager* w = gpModelWaterManager;
+	for (int i = 0; i < (int)w->mParticleCount; i++) {
+		if (((w->mParticleAttackSOA[i] >> kTagShift) & 0x7f) != s_bazookaShot)
+			continue;
+		s_bazookaAt   = w->mParticlePositionSOA[i];
+		s_bazookaSeen = true;
+		if ((w->mParticleFlagSOA[i] & 0xf) == 2) // landed
+			break;
+		return; // still flying
+	}
+	if (s_bazookaSeen && s_burst != s_bazookaShot) {
+		s_burst = s_bazookaShot;
+		burst(BAZOOKA, s_bazookaShot, s_bazookaAt);
+	}
+	if (s_bazookaSeen || s_time > s_ready)
+		s_bazookaShot = 0;
+}
+
 PortExtension s_extension;
 
 struct Register {
@@ -299,83 +481,38 @@ struct Register {
 
 } // namespace
 
+
+
 // api->held_fludd->set_weapon (mod_runtime.cpp): 0 normal, 1 shotgun, 2 rifle, 3 bazooka; flags 1:
-// weapons may defeat enemies
+// weapons may defeat enemies, 2: R is held (the mod keeps R from the game while a weapon is chosen,
+// so its own spray, pump and sound never start; the weapon fires on its own clock)
 extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
 	const int now     = weapon > NORMAL && weapon < WEAPONS ? weapon : NORMAL;
 	const bool defeat = (flags & 1) != 0;
 	if (now != s_weapon || defeat != s_defeat)
 		fprintf(stderr, "[weapons] %s, defeating enemies %s\n", kNames[now], defeat ? "on" : "off");
-	s_weapon = now;
-	s_defeat = defeat;
+	s_weapon  = now;
+	s_defeat  = defeat;
+	s_trigger = (flags & 2) != 0;
 	return 1;
 }
 
 // Every request for water drops (TModelWaterManager::emitRequest, patch
-// zzzzzzz-held-fludd-4-weapons): true when it is the player's spray, a weapon chosen, and the
-// weapon fires instead (or waits to), `*made` then what the request is to return (0: the stream's
-// own water use and kick are not taken; the weapon takes its own). Asked at the request, not in
-// the nozzle, as a game's own FLUDD code (Super Mario Eclipse's engine) may replace the nozzle's.
-bool s_firing; // our own requests, let through
+// zzzzzzz-held-fludd-4-weapons): with a weapon chosen, the player's spray makes none of its own
+// (should R reach the game at all); the weapon's shots are let through.
 bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 {
 	if (s_firing || s_weapon == NORMAL || !gpModelWaterManager)
 		return false;
-	TMario* m = gpMarioOriginal;
+	TMario* m    = gpMarioOriginal;
 	TWaterGun* g = m ? m->mWaterGun : 0;
 	if (!g || !PortFluddHeld(m) || g->mCurrentNozzle != TWaterGun::Spray)
 		return false;
-	// the spray's own: from its nozzle (not Yoshi's juice, a puddle's splash, an enemy's water)
 	const JGeometry::TVec3<f32>& at = asked.mPos.value;
 	const f32 dx = at.x - g->mEmitPos[0].x, dy = at.y - g->mEmitPos[0].y, dz = at.z - g->mEmitPos[0].z;
 	if (dx * dx + dy * dy + dz * dz > 40.0f * 40.0f)
 		return false;
 	*made = 0;
-	if (g->mCurrentWater <= 0 || s_time < s_ready)
-		return true;
-	const Weapon& k   = kWeapons[s_weapon];
-	s_ready           = s_time + k.every;
-	s_shot            = s_shot % 7 + 1;
-	TNozzleBase* n    = g->getCurrentNozzle();
-
-	TWaterEmitInfo copy(asked); // the request's, changed for each shot (on the stack: no heap)
-	TWaterEmitInfo* info = &copy;
-	info->mNum.set(1);
-	info->mType.set(asked.mType.get());
-	info->mPos.value = asked.mPos.value;
-	info->mV.value   = asked.mV.value;
-	const JGeometry::TVec3<f32> way = asked.mDir.value;
-	const f32 pow  = n->mEmitParams.mEmitPow.get() * k.pow;
-	const s16 base = n->mEmitParams.mAttack.get();
-	info->mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (s_weapon << kTagShift) | (s_shot << kShotShift)));
-	info->mAlive.set((s16)(asked.mAlive.get() * k.alive));
-	info->mSize.set(n->mEmitParams.mSize.get() * k.size);
-	info->mSizeTremble.set(0.0f);
-	info->mHitRadius.set(asked.mHitRadius.get() * k.hit);
-	info->mHitHeight.set(asked.mHitHeight.get() * k.hit);
-	info->mDirTremble.set(0.0f);
-	info->mPowTremble.set(0.0f);
-	info->mFlag.set(asked.mFlag.get());
-	int shot = 0;
-	s_firing = true;
-	for (int i = 0; i < k.drops; i++) {
-		JGeometry::TVec3<f32> d = way;
-		scatter(d, k.spread);
-		info->mDir.value = d;
-		info->mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
-		shot += gpModelWaterManager->emitRequest(*info) ? 1 : 0;
-	}
-	s_firing = false;
-	if (!shot)
-		return true;
-	if (s_told != s_weapon) {
-		fprintf(stderr, "[weapons] %s fired (%d drops)\n", kNames[s_weapon], shot);
-		s_told = s_weapon;
-	}
-	if (!(port_cheat_infinite_fludd && m->isMario()))
-		g->depleteWater(k.water * (n->mEmitParams.mDecRate.get() > 0 ? n->mEmitParams.mDecRate.get() : 1));
-	m->mVel.x -= way.x * k.recoil; // the kick, back along the shot
-	m->mVel.z -= way.z * k.recoil;
 	return true;
 }

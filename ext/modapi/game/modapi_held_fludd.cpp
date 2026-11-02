@@ -27,6 +27,7 @@ bool s_on;
 f32 s_right, s_down, s_forward, s_scale = 1.0f, s_aim = 1200.0f;
 
 Vec s_target;           // where this frame's water goes
+Vec s_eye, s_forward;   // the view this frame (the rifle's aim)
 bool s_placed;          // placed this frame (s_target good)
 Mtx s_lastBase;         // the base it was given (the same next frame: not posed again, frozen)
 bool s_haveLast;
@@ -148,6 +149,8 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	eye          = along(eye, v[2][3], F);
 	Vec tip      = along(along(along(eye, s_right, R), -s_down, U), s_forward, F);
 	s_target     = along(eye, s_aim, F);
+	s_eye        = eye;
+	s_forward    = F;
 	Vec toTarget = {s_target.x - tip.x, s_target.y - tip.y, s_target.z - tip.z};
 	if (!unit(toTarget))
 		toTarget = F;
@@ -253,4 +256,15 @@ bool PortFluddHeldNoFlip(TMario* mario, int anm_id)
 	const u32 status = mario->getStatus();
 	return (status == MARIO_STATUS_BACK_JUMP && anm_id == 0xF7)
 	       || (status == MARIO_STATUS_U_TURN_JUMP && anm_id == TMario::ANIM_TJMP1);
+}
+
+// The view this frame, while FLUDD is held in it (the spray weapons' aim): the eye and the way
+// it looks (a unit vector).
+bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward)
+{
+	if (!s_placed)
+		return false;
+	eye->set(s_eye.x, s_eye.y, s_eye.z);
+	forward->set(s_forward.x, s_forward.y, s_forward.z);
+	return true;
 }
