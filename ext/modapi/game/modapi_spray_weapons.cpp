@@ -1,20 +1,24 @@
 // FLUDD's spray weapons (api->held_fludd->set_weapon, combined-plus SDK): while a first-person mod
-// holds FLUDD in view (modapi_held_fludd.cpp), the spray nozzle may fire as a weapon instead of
-// its stream. Still water, FLUDD's own drops, only fired another way:
+// holds FLUDD in view (modapi_held_fludd.cpp), the spray may fire as a weapon instead of its
+// stream. Still water, FLUDD's own drops, only fired another way (Allebale's numbers):
 //
-//   Shotgun  a spread of 8 drops at once, short reach, a strong shove
-//   Rifle    3 fast drops in a line, far and straight, a light shove
-//   Bazooka  one huge slow drop, a very strong shove, cleans a wide patch
+//              shot                               reach      shove                 to defeat  every
+//   Shotgun    8 drops in a spread                close      light                 2 shots    1.5 s
+//   Rifle      3 fast drops in a line             very long  strong                1 shot     3 s
+//   Bazooka    one huge drop, bursting on a hit   long       very strong, thrown   1 shot     10 s
+//                                                            up into the air        (all in its burst)
 //
-// Each fires while R is held, again once it is ready (its own rate), using the tank's water
-// as so many drops of the stream would. Their drops carry the weapon in their attack's upper bits
+// Each fires while R is held, again once it is ready, using the tank's water as so many drops of
+// the stream would. Their drops carry the weapon and the shot in their attack's upper bits
 // (TModelWaterManager::getParticleAttack gives the game only the lower ones, patch
 // zzzzzzz-held-fludd-4-weapons), so when one reaches an enemy (objectHitDone) it is shoved the
-// drop's way, harder or softer by the weapon, and with "defeat enemies" on, defeated after a few
-// hits (TSmallEnemy::kill, as a stomp). Shoved into a wall, those the game defeats against walls
-// (Strollin' Stus, rolling) are defeated, as ever. The normal spray (weapon 0) is the game's own
-// stream, its pushes and all: nothing is added to it. Only small enemies (TSmallEnemy) are shoved
-// or defeated; bosses are not.
+// drop's way, and with "defeat enemies" on, defeated after so many shots (TSmallEnemy::kill, as a
+// stomp; a shot's drops count once). The bazooka's drop bursts where it first hits: every small
+// enemy near is thrown and (with defeat on) defeated. Shoved into a wall, those the game defeats
+// against walls (Strollin' Stus) are defeated, as ever. The normal spray (weapon 0) is the game's
+// own stream, its pushes and all: nothing is added to it. Only small enemies (TSmallEnemy) are
+// shoved or defeated; bosses are not. Times are in seconds and shoves in the game's 30-a-second
+// units, whatever the frame rate (port_frame_scale).
 #include "port_ext.h"
 
 #include <Enemy/SmallEnemy.hpp>
@@ -30,6 +34,9 @@
 #include <Player/NozzleBase.hpp>
 #include <Player/WaterGun.hpp>
 #include <Strategic/HitActor.hpp>
+#include <Strategic/LiveManager.hpp>
+#include <Enemy/Conductor.hpp>
+#include "port_framerate.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -43,33 +50,40 @@ namespace {
 enum { NORMAL = 0, SHOTGUN = 1, RIFLE = 2, BAZOOKA = 3, WEAPONS = 4 };
 const int kTagShift = 8; // the weapon in a drop's attack, above the game's own (1 to 255)
 
+const int kShotShift = 12; // and the shot (1 to 7, round again), above the weapon
+
 struct Weapon {
 	int drops;     // at once
-	f32 pow;       // times the stream's speed
+	f32 pow;       // times the stream's speed (reach)
+	f32 alive;     // times the stream's drop life (reach)
 	f32 size;      // times the stream's drop size
 	f32 hit;       // times its reach (hit radius and height)
 	f32 spread;    // radians either way (a random cone)
-	int every;     // frames between shots
+	f32 every;     // seconds between shots
 	int water;     // the tank's water used per shot, in the stream's drops
 	f32 recoil;    // Mario pushed back
-	f32 shove;     // an enemy pushed, units a frame (slowing down)
-	int toDefeat;  // hits to defeat (with defeat enemies on), within kHitWindow
+	f32 shove;     // an enemy pushed, units a 30th of a second (slowing down)
+	f32 lift;      // and thrown up, the same units
+	int toDefeat;  // shots to defeat (with defeat enemies on), within kHitWindow
+	f32 burst;     // a burst's radius where it first hits (0 none)
 };
 const Weapon kWeapons[WEAPONS] = {
-	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                      // normal: the game's own
-	{8, 0.95f, 1.25f, 1.2f, 0.13f, 22, 12, 6.0f, 20.0f, 4},  // shotgun
-	{3, 1.9f, 0.7f, 1.0f, 0.0f, 9, 4, 1.5f, 9.0f, 2},       // rifle
-	{1, 1.15f, 4.0f, 3.0f, 0.0f, 45, 30, 14.0f, 34.0f, 1},  // bazooka
+	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                             // normal: the game's own
+	{8, 0.75f, 0.35f, 1.25f, 1.2f, 0.14f, 1.5f, 12, 6.0f, 9.0f, 0.0f, 2, 0},     // shotgun
+	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 3.0f, 6, 3.0f, 26.0f, 0.0f, 1, 0},         // rifle
+	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 10.0f, 30, 16.0f, 34.0f, 38.0f, 1, 400.0f}, // bazooka
 };
-const int kHitWindow = 45; // frames: hits counted together towards a defeat
-const f32 kSlow      = 0.82f;
+const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
+const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
 const char* const kNames[WEAPONS] = {"normal spray", "shotgun", "rifle", "bazooka"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
 bool s_defeat;  // weapons may defeat enemies
-u32 s_frame;    // frames played (afterMovement)
-u32 s_ready;    // the frame the next shot may go
+f32 s_time;     // seconds played (afterMovement)
+f32 s_ready;    // when the next shot may go
+int s_shot;     // the last shot's number (1 to 7)
+int s_burst;    // the last shot (weapon and number) that burst
 u32 s_seed = 12345u;
 
 f32 random01()
@@ -103,7 +117,8 @@ struct Hit {
 	TSmallEnemy* enemy;
 	f32 vx, vz;
 	int hits;
-	u32 last;
+	int lastShot; // the shot (weapon and number) last counted: a shot's drops count once
+	f32 last;     // when
 };
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
@@ -114,7 +129,7 @@ Hit* hitOf(TSmallEnemy* e)
 	for (int i = 0; i < kMostHits; i++) {
 		if (s_hits[i].enemy == e)
 			return &s_hits[i];
-		if (!slot && (!s_hits[i].enemy || s_frame - s_hits[i].last > 300))
+		if (!slot && (!s_hits[i].enemy || s_time - s_hits[i].last > 10.0f))
 			slot = &s_hits[i];
 	}
 	if (!slot)
@@ -127,13 +142,16 @@ Hit* hitOf(TSmallEnemy* e)
 void stageSetup()
 {
 	memset(s_hits, 0, sizeof s_hits);
-	s_ready = 0;
+	s_ready = 0.0f;
+	s_burst = 0;
 }
 
 // the shoves, each frame: along the ground, stopped by a wall, slowing down
 void afterMovement()
 {
-	s_frame++;
+	const f32 dt = port_frame_scale(); // 30ths of a second this frame
+	s_time += dt / 30.0f;
+	const f32 keep = powf(kSlow, dt);
 	for (int i = 0; i < kMostHits; i++) {
 		Hit& h = s_hits[i];
 		if (!h.enemy || (h.vx * h.vx + h.vz * h.vz) < 0.09f)
@@ -143,8 +161,9 @@ void afterMovement()
 			h.vx = h.vz = 0.0f;
 			continue;
 		}
+		const f32 mx = h.vx * dt, mz = h.vz * dt;
 		JGeometry::TVec3<f32> from(e->mPosition.x, e->mPosition.y + 40.0f, e->mPosition.z);
-		JGeometry::TVec3<f32> to(from.x + h.vx * 1.5f, from.y, from.z + h.vz * 1.5f);
+		JGeometry::TVec3<f32> to(from.x + mx * 1.5f + h.vx * 0.5f, from.y, from.z + mz * 1.5f + h.vz * 0.5f);
 		JGeometry::TVec3<f32> wall;
 		if (gpMap && gpMap->intersectLine(from, to, true, &wall)) {
 			// against a wall: those the game defeats against walls (Strollin' Stus and their
@@ -158,11 +177,81 @@ void afterMovement()
 			h.vx = h.vz = 0.0f;
 			continue;
 		}
-		e->mPosition.x += h.vx;
-		e->mPosition.z += h.vz;
-		h.vx *= kSlow;
-		h.vz *= kSlow;
+		e->mPosition.x += mx;
+		e->mPosition.z += mz;
+		h.vx *= keep;
+		h.vz *= keep;
 	}
+}
+
+// shoved: those that walk about, not those on fences (net Koopas), the boss's bubbles or the
+// shadow Mario look-alikes; the rooted and flying are not moved, only hit
+bool moves(TSmallEnemy* e)
+{
+	return dynamic_cast<TWalkerEnemy*>(e) && !dynamic_cast<TAmiNoko*>(e) && !dynamic_cast<TBubble*>(e)
+	       && !dynamic_cast<TKageMarioModoki*>(e);
+}
+
+// An enemy hit by a weapon's shot (`shot`: weapon and number), shoved along (dx, dz) and maybe
+// thrown up, and with defeat on, defeated after the weapon's shots.
+void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
+{
+	if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+	Hit* h = hitOf(e);
+	if (!h)
+		return;
+	const Weapon& k = kWeapons[weapon];
+	const bool fresh = h->lastShot != shot; // this shot's first drop to reach it
+	if (moves(e) && h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
+		h->vx = dx * k.shove;
+		h->vz = dz * k.shove;
+	}
+	if (fresh && k.lift > 0.0f && moves(e)) { // thrown into the air: the game's own fall brings it down
+		JGeometry::TVec3<f32> v = e->getVelocity();
+		v.y = k.lift;
+		e->setVelocity(v);
+		e->mPosition.y += 8.0f;
+		e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	}
+	if (!fresh)
+		return;
+	if (s_time - h->last > kHitWindow)
+		h->hits = 0;
+	h->hits++;
+	h->lastShot = shot;
+	h->last     = s_time;
+	if (s_defeat && h->hits >= k.toDefeat) {
+		h->hits = 0;
+		fprintf(stderr, "[weapons] an enemy defeated by the %s\n", kNames[weapon]);
+		e->kill(); // as a stomp: its own defeat, coins and all
+	}
+}
+
+// The bazooka's burst where its drop first hits: every small enemy near, thrown away from it.
+void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
+{
+	const f32 r = kWeapons[weapon].burst;
+	if (!gpConductor)
+		return;
+	int n = 0;
+	for (JGadget::TList<JDrama::TViewObj*>::iterator it = gpConductor->unk40.begin(); it != gpConductor->unk40.end(); ++it) {
+		TLiveManager* mgr = dynamic_cast<TLiveManager*>(*it);
+		if (!mgr)
+			continue;
+		for (int i = 0; i < mgr->getObjNum(); i++) {
+			TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
+			if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+				continue;
+			const f32 x = e->mPosition.x - at.x, y = e->mPosition.y - at.y, z = e->mPosition.z - at.z;
+			if (x * x + y * y + z * z > r * r)
+				continue;
+			const f32 l = sqrtf(x * x + z * z);
+			hitEnemy(e, weapon, shot, l > 1.0f ? x / l : 0.0f, l > 1.0f ? z / l : 0.0f);
+			n++;
+		}
+	}
+	fprintf(stderr, "[weapons] the bazooka burst, %d enemies in it\n", n);
 }
 
 // a drop reached something: if it is a weapon's and an enemy, shoved (and maybe defeated)
@@ -174,38 +263,24 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	TModelWaterManager* w = gpModelWaterManager;
 	if (!drop || drop->mParticleIndex < 0 || drop->mParticleIndex >= (int)w->mParticleCount)
 		return;
-	const int weapon = (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0xf;
+	const int tag    = w->mParticleAttackSOA[drop->mParticleIndex];
+	const int weapon = (tag >> kTagShift) & 0xf;
+	const int shot   = (tag >> kTagShift) & 0x7f; // weapon and number
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return; // the normal spray, or any other water: the game's own
 	TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
-	if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD))
+	if (!e)
 		return;
-	Hit* h = hitOf(e);
-	if (!h)
+	if (kWeapons[weapon].burst > 0.0f) {
+		if (s_burst != shot) { // once a shot, where it first hits an enemy
+			s_burst = shot;
+			burst(weapon, shot, w->mParticlePositionSOA[drop->mParticleIndex]);
+		}
 		return;
-	const Weapon& k = kWeapons[weapon];
-	// shoved: those that walk about, not those on fences (net Koopas), the boss's bubbles or the
-	// shadow Mario look-alikes; the rooted and flying are not moved, only hit
-	const bool moves = dynamic_cast<TWalkerEnemy*>(e) && !dynamic_cast<TAmiNoko*>(e) && !dynamic_cast<TBubble*>(e)
-	                   && !dynamic_cast<TKageMarioModoki*>(e);
+	}
 	const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[drop->mParticleIndex];
-	f32 l = sqrtf(v.x * v.x + v.z * v.z);
-	if (l < 1e-3f) // straight down: away from Mario
-		l = 0.0f;
-	const f32 dx = l > 0.0f ? v.x / l : 0.0f, dz = l > 0.0f ? v.z / l : 0.0f;
-	if (moves && h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
-		h->vx = dx * k.shove;
-		h->vz = dz * k.shove;
-	}
-	if (s_frame - h->last > (u32)kHitWindow)
-		h->hits = 0;
-	h->hits++;
-	h->last = s_frame;
-	if (s_defeat && h->hits >= k.toDefeat) {
-		h->hits = 0;
-		fprintf(stderr, "[weapons] an enemy defeated by the %s\n", kNames[weapon]);
-		e->kill(); // as a stomp: its own defeat, coins and all
-	}
+	const f32 l = sqrtf(v.x * v.x + v.z * v.z);
+	hitEnemy(e, weapon, shot, l > 1e-3f ? v.x / l : 0.0f, l > 1e-3f ? v.z / l : 0.0f);
 }
 
 PortExtension s_extension;
@@ -257,23 +332,24 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 	if (dx * dx + dy * dy + dz * dz > 40.0f * 40.0f)
 		return false;
 	*made = 0;
-	if (g->mCurrentWater <= 0 || s_frame < s_ready)
+	if (g->mCurrentWater <= 0 || s_time < s_ready)
 		return true;
 	const Weapon& k   = kWeapons[s_weapon];
-	s_ready           = s_frame + (u32)k.every;
+	s_ready           = s_time + k.every;
+	s_shot            = s_shot % 7 + 1;
 	TNozzleBase* n    = g->getCurrentNozzle();
 
 	TWaterEmitInfo copy(asked); // the request's, changed for each shot (on the stack: no heap)
 	TWaterEmitInfo* info = &copy;
 	info->mNum.set(1);
-	info->mAlive.set(asked.mAlive.get());
 	info->mType.set(asked.mType.get());
 	info->mPos.value = asked.mPos.value;
 	info->mV.value   = asked.mV.value;
 	const JGeometry::TVec3<f32> way = asked.mDir.value;
 	const f32 pow  = n->mEmitParams.mEmitPow.get() * k.pow;
 	const s16 base = n->mEmitParams.mAttack.get();
-	info->mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (s_weapon << kTagShift)));
+	info->mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (s_weapon << kTagShift) | (s_shot << kShotShift)));
+	info->mAlive.set((s16)(asked.mAlive.get() * k.alive));
 	info->mSize.set(n->mEmitParams.mSize.get() * k.size);
 	info->mSizeTremble.set(0.0f);
 	info->mHitRadius.set(asked.mHitRadius.get() * k.hit);
