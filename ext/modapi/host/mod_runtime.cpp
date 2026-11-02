@@ -767,6 +767,11 @@ void dropRegistrations(SmsMod* m)
 		m->aims = false;
 		modg_player_set_aim(0, 0.0f, 0.0f);
 	}
+	if (m->holdsFludd) { // FLUDD back on his back, the normal spray
+		m->holdsFludd = false;
+		modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
+	}
 	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
 		m->hiddenParts = 0;
 		applyHiddenParts();
@@ -1110,6 +1115,26 @@ const char* apiNativeBuild(void)
 }
 
 const SmsNativeApi s_native = {sizeof(SmsNativeApi), apiNativeBuild, modg_native};
+
+// ------------------------------------------------------------------ FLUDD held in view (combined-plus)
+// ext/modapi/game/modapi_held_fludd.cpp and modapi_spray_weapons.cpp: the mod that holds it, so
+// it goes back (and the normal spray with it) when that one unloads
+
+int apiHeldFluddSet(int on, float right, float down, float forward, float scale, float aim)
+{
+	if (SmsMod* m = current())
+		m->holdsFludd = on != 0;
+	return modg_held_fludd_set(on, right, down, forward, scale, aim);
+}
+
+int apiSprayWeaponSet(int weapon, int flags)
+{
+	if (SmsMod* m = current())
+		m->holdsFludd = m->holdsFludd || weapon != SMS_SPRAY_NORMAL;
+	return modg_spray_weapon_set(weapon, flags);
+}
+
+const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet};
 
 // ------------------------------------------------------------------ the API: multiplayer
 
@@ -1653,6 +1678,7 @@ const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
+	nullptr /* reflections: Remastered builds only */, &s_heldFludd,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)

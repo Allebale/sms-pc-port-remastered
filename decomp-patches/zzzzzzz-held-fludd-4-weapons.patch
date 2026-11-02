@@ -1,0 +1,42 @@
+Reason: FLUDD's spray weapons (api->held_fludd->set_weapon, ext/modapi/game/modapi_spray_weapons.cpp): while a first-person mod holds FLUDD in view with a weapon chosen, the spray's requests for drops (emitRequest) fire that weapon's drops instead (asked there, not in the nozzle, which Super Mario Eclipse's engine replaces). Their drops carry the weapon in their attack's upper bits; the game is given only the lower ones (getParticleAttack), so an enemy's damage is the game's own. Without a weapon chosen, nothing changes.
+
+--- a/include/Player/ModelWaterManager.hpp
++++ b/include/Player/ModelWaterManager.hpp
+@@ -136,7 +136,13 @@
+ 	}
+ 	s16 getParticleAttack(TWaterHitActor* hit)
+ 	{
++#ifdef TARGET_PC
++		// the lower bits: a spray weapon's drop carries the weapon above them
++		// (ext/modapi/game/modapi_spray_weapons.cpp)
++		return (s16)(mParticleAttackSOA[hit->mParticleIndex] & 0xff);
++#else
+ 		return mParticleAttackSOA[hit->mParticleIndex];
++#endif
+ 	}
+ 	int getFlagBottom4Bits(int i) const { return mParticleFlagSOA[i] & 0xf; }
+ 	void setFlagBottom4Bits(int i, int flag)
+--- a/src/Player/ModelWaterManager.cpp
++++ b/src/Player/ModelWaterManager.cpp
+@@ -341,8 +341,21 @@
+ 	unk2514[mParticleCount] = nullptr;
+ }
+ 
++#ifdef TARGET_PC
++// FLUDD's spray weapons (ext/modapi/game/modapi_spray_weapons.cpp)
++bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made);
++#endif
++
+ u8 TModelWaterManager::emitRequest(const TWaterEmitInfo& param_1)
+ {
++#ifdef TARGET_PC
++	{
++		// a first-person mod's spray weapon fires instead of the stream's drops (or waits to)
++		int made;
++		if (PortSprayWeaponRequest(param_1, &made))
++			return (u8)made;
++	}
++#endif
+ 	int particlesToSpawn = param_1.mNum.get();
+ 	if (particlesToSpawn == 0)
+ 		return 0;

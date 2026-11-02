@@ -4,5 +4,5 @@
 	branch = main
 [submodule "sdk"]
 	path = sdk
-	url = https://github.com/chasem-dev/sms-mod-sdk.git
-	branch = main
+	url = https://github.com/Allebale/sms-mod-sdk-modtesting.git
+	branch = combined-plus
