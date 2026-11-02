@@ -2330,6 +2330,84 @@ static void screenExtent(float sx, float cx, float* outLo, float* outHi) {
     *outHi = hi;
 }
 
+// The grab log (GXPC_GrabProbe, from port_grab.cpp): as Mario takes hold of something (a fence, a
+// ladder, a bar), the next frame's draws whose box (in the camera's view) reaches within `radius`
+// of his hands are logged with their textures (as the texture pack names them), so that a ladder's
+// texture can be known.
+static bool s_probeArmed;
+static float s_probe[4];  // view space, radius
+static int s_probeTold;
+static uint32_t s_probeFrame;
+static void probeFrameEnd() {  // one frame's draws only
+    if (s_probeArmed && GXPC_FrameCount() != s_probeFrame) {
+        s_probeArmed = false;
+        logmsg("grab: %d draws there (end of the list)", s_probeTold);
+    }
+}
+extern "C" void GXPC_GrabProbe(const float* at, float radius) {
+    if (!at) return;
+    memcpy(s_probe, at, 3 * sizeof(float));
+    s_probe[3] = radius;
+    s_probeArmed = true;
+    s_probeTold = 0;
+    s_probeFrame = GXPC_FrameCount();
+}
+static void probeBatch() {
+    probeFrameEnd();
+    if (!s_probeArmed) return;
+    if (s_probeTold >= 16 || (g.xfReg[XFR_PROJ + 6] & 1) || g.userClipOn) return;  // the 3D view's own draws
+    const VtxFmtLayout& l = vtxFmtLayout(s_bfmt);
+    const uint32_t defIdx = g.xfReg[XFR_MATIDX_A] & 63;
+    auto vertexAt = [](uint32_t v) -> const uint8_t* {
+        if (v < s_bcount) return s_bdata.data + size_t(v) * s_bstride;
+        v -= s_bcount;
+        for (const BatchSeg& sg : s_segs) {
+            if (!sg.arena) continue;
+            if (v < sg.nverts) return sg.verts + size_t(v) * s_bstride;
+            v -= sg.nverts;
+        }
+        return nullptr;
+    };
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    const uint32_t n = s_bcount + s_barenaVerts;
+    for (uint32_t v = 0; v < n; v++) {
+        const uint8_t* vx = vertexAt(v);
+        if (!vx) break;
+        float pos[3];
+        memcpy(pos, vx, 12);
+        const uint32_t idx = (s_bfmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx;
+        float m[12];
+        memcpy(m, &g.xfMem[idx * 4], 48);
+        for (int r = 0; r < 3; r++) {
+            const float c = m[r * 4] * pos[0] + m[r * 4 + 1] * pos[1] + m[r * 4 + 2] * pos[2] + m[r * 4 + 3];
+            lo[r] = std::min(lo[r], c);
+            hi[r] = std::max(hi[r], c);
+        }
+    }
+    const float rad = s_probe[3];
+    for (int r = 0; r < 3; r++)
+        if (s_probe[r] < lo[r] - rad || s_probe[r] > hi[r] + rad) return;
+    char tex[2][160] = {"none", "none"};
+    for (int map = 0; map < 2; map++) {
+        const uint8_t* ptr = g.texImage[map];
+        if (!ptr) continue;
+        const uint32_t img0 = g.bp[bpTexReg(BP_TX_IMAGE0, map)], mode0 = g.bp[bpTexReg(BP_TX_MODE0, map)];
+        const uint32_t w = (img0 & 0x3FF) + 1, h = ((img0 >> 10) & 0x3FF) + 1, fmt = (img0 >> 20) & 15;
+        int cw, ch;
+        if (efbCopyLookup(ptr, &cw, &ch)) {
+            snprintf(tex[map], sizeof tex[map], "a copy of the picture");
+            continue;
+        }
+        const std::string name = hiresName(ptr, fmt, w, h, ((mode0 >> 5) & 3) != 0, nullptr, 0, false);
+        snprintf(tex[map], sizeof tex[map], "%s (format %u)", name.c_str(), fmt);
+    }
+    logmsg("grab: drawn there: %.0f x %.0f x %.0f (view), %u vertices, %s, texture 0 %s, texture 1 %s%s",
+           hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], n,
+           (g.bp[BP_CMODE0] & 1) ? "blended" : "solid", tex[0], tex[1],
+           g.charDraw ? ", a character's" : g.shadowTag ? ", Mario's" : "");
+    s_probeTold++;
+}
+
 // A centring offset (game x) moved to the nearest whole pixel of the scaled EFB. At a fractional
 // internal resolution s_ox alone can put a centred draw's edges on pixel centres (107 x 1.5 =
 // 160.5 at 16:9 with FSR 1 Performance at 1440p), where which pixels it covers and which texel
@@ -4095,6 +4173,7 @@ void flushBatch() {
             i = j;
         }
     }
+    if (s_probeArmed && s_bclass == PRIM_TRIS) probeBatch();  // the grab log
     if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn) charCast(ranges, mode, sp);
     if (g.shadowArmed && s_bclass == PRIM_TRIS && !g.shellOn) {  // a ladder's layers: its card casts once
         const char* why = g.shadowMain ? shadowNoCast() : "not the main camera's view";

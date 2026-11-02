@@ -119,6 +119,10 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - Keep shaders small: big shaders caused stutters. Mario-only code goes only into Mario's program.
 - A texture that is uploaded again gets a fresh GL texture (that fixed stutters too).
 - Long frames (45 ms or more) are logged by default as `hitchFrame`, useful for stutter reports.
+- **The grab log** (`ext/core/game/port_grab.cpp`, `GXPC_GrabProbe` in `gx_render.cpp`): as Mario takes hold of
+  something, `[grab]` lines give his status, the wall's collision type (0x10A: a climbable fence) and the next frame's
+  draws near his hands with their textures (`hiresName`, as the texture pack names them; CI textures without the
+  palette part). Use it to find a ladder's texture.
 - **Never `new` in an extension's `stageSetup` (or anything during a stage) and keep the pointer for later
   stages**: the stage's heap is the current one there, freed when the stage ends, and the next stage's objects
   are then written over. 3D Ladders did that once (`s_fences`) and Pokeys crashed in Bianco Hills and Erto Rock.

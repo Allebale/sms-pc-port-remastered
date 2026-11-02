@@ -141,6 +141,9 @@ void port_wet_drip(float x, float y, float z, float vx, float vy, float vz, floa
 // Puddles Around Fountains: 1 when the arched fountains leave FLUDD's puddles where their jets come
 // down (ext/core/game/port_fountains.cpp).
 int port_fountain_puddles(void);
+// The grab log (ext/core/game/port_grab.cpp), once a frame from the main camera's view: as Mario
+// takes hold of something, what it is and the textures drawn at his hands.
+void port_grab_view(float (*view)[4]);
 // 3D Ladders: 1 when flat ladders and climbable fences get depth (ext/core/game/port_ladders.cpp).
 int port_ladders_3d(void);
 
