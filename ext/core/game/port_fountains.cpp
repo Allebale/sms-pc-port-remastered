@@ -30,7 +30,8 @@ const int kMost        = 16;      // fountains in a stage
 const f32 kNearMario   = 4500.0f; // only while Mario is this near
 const f32 kTicksPerSec = 30.0f;
 const f32 kPuddleWider   = 1.9f;  // the puddle out to where the jets end (measured on screen)
-const f32 kPuddleSeconds = 60.0f; // a fountain's puddle dries this long after it is last fed
+const f32 kPuddleSeconds = 60.0f;
+const int kRing          = 12;    // puddles round each fountain // a fountain's puddle dries this long after it is last fed
 
 struct Fountain {
 	JDrama::TActor* actor;
@@ -65,14 +66,13 @@ void stageSetup()
 
 // The fountain's one big puddle: found by where it lies and its size (it moves only as indices do,
 // when the manager packs its particles), or -1.
-int findPuddle(TModelWaterManager* w, const Fountain& fo, f32 size)
+int findPuddle(TModelWaterManager* w, const JGeometry::TVec3<f32>& p, f32 size)
 {
-	const JGeometry::TVec3<f32>& p = fo.actor->mPosition;
 	for (int i = 0; i < (int)w->mParticleCount; i++) {
 		if ((w->mParticleFlagSOA[i] & 0xf) != 2 || w->mParticleAttackSOA[i] != 0 || w->mParticleSizeSOA[i] < size * 0.9f)
 			continue;
 		const f32 dx = w->mParticlePositionSOA[i].x - p.x, dz = w->mParticlePositionSOA[i].z - p.z;
-		if (dx * dx + dz * dz < 40.0f * 40.0f)
+		if (dx * dx + dz * dz < 20.0f * 20.0f)
 			return i;
 	}
 	return -1;
@@ -80,11 +80,10 @@ int findPuddle(TModelWaterManager* w, const Fountain& fo, f32 size)
 
 // The fountain's big puddle made, lying on the ground under it, if the ground there is the stage's
 // own, flat, not water and not goop.
-void makePuddle(TModelWaterManager* w, const Fountain& fo, f32 size, f32 life)
+void makePuddle(TModelWaterManager* w, const JGeometry::TVec3<f32>& p, f32 size, f32 life)
 {
 	if (!gpMap || (int)w->mParticleCount >= (int)w->unk10)
 		return;
-	const JGeometry::TVec3<f32>& p = fo.actor->mPosition;
 	const TBGCheckData* floor = 0;
 	const f32 g = gpMap->checkGroundIgnoreWaterThrough(p.x, p.y + 100.0f, p.z, &floor);
 	if (!floor || !floor->isLegal() || floor->isWaterSurface() || floor->isPool() || floor->mActor
@@ -129,14 +128,22 @@ void afterMovement()
 		const f32 dx = p.x - m->mPosition.x, dz = p.z - m->mPosition.z;
 		if (dx * dx + dz * dz > kNearMario * kNearMario)
 			continue;
-		// as wide as where its jets come down: a landed drop of size 21 is about 85 units across
-		// (seen in Erto Rock: that reached about half way to where the jets end, so twice that)
-		const f32 size = 21.0f * magnify * fo.outer / 85.0f * kPuddleWider;
-		const int i = findPuddle(w, fo, size);
-		if (i >= 0)
-			w->mParticleLifetimeSOA[i] = life;  // still fed by the fountain
-		else
-			makePuddle(w, fo, size, life);
+		// a ring of puddles out to where its jets come down, the middle by the nozzle left dry: an
+		// unseen part of the fountain (a box round its nozzle) showed through one big puddle there.
+		// A landed drop of size 21 is about 85 units across, and one big puddle (kPuddleWider) reached
+		// the jets' ends: each of the ring's is 0.3 of that, kRing of them round at 0.82 of it (dry within about half).
+		const f32 whole = 21.0f * magnify * fo.outer / 85.0f * kPuddleWider;
+		const f32 size  = whole * 0.30f;
+		for (int k = 0; k < kRing; k++) {
+			const f32 a = (f32)k * (6.2831853f / (f32)kRing);
+			const f32 r = fo.outer * 0.82f;
+			JGeometry::TVec3<f32> at(p.x + sinf(a) * r, p.y, p.z + cosf(a) * r);
+			const int i = findPuddle(w, at, size);
+			if (i >= 0)
+				w->mParticleLifetimeSOA[i] = life;  // still fed by the fountain
+			else
+				makePuddle(w, at, size, life);
+		}
 	}
 }
 
