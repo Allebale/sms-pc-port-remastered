@@ -31,6 +31,7 @@ bool s_placed;          // placed this frame (s_target good)
 Mtx s_lastBase;         // the base it was given (the same next frame: not posed again, frozen)
 bool s_haveLast;
 f32 s_inView[3][3];     // its last good turn in the view's own frame
+f32 s_rest[3][3];       // that turn followed slowly (a flip gets far from it)
 bool s_haveInView;
 int s_offFrames;         // frames its turn has been far from the last
 
@@ -184,23 +185,25 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		for (int r = 0; r < 3; r++)
 			for (int c = 0; c < 3; c++)
 				inView[r][c] = v[r][0] * w3[0][c] + v[r][1] * w3[1][c] + v[r][2] * w3[2][c];
-		// how far it is from the last: the angle of the turn between them (trace of A B^T)
-		f32 tr = 0.0f;
+		// A rest turn follows it only a fifth of the way each frame. Near the rest turn (running's
+		// bob, the pump), it is shown as it is; a flip (about 18 degrees a frame) soon gets more
+		// than 25 degrees from it, and the last shown is kept until it comes back.
+		f32 tr = 0.0f; // the angle of the turn between it and the rest (trace of A B^T)
 		for (int r = 0; r < 3; r++)
 			for (int c = 0; c < 3; c++)
-				tr += inView[r][c] * s_inView[r][c];
-		// followed only a fifth of the way each frame: a flip (about 18 degrees a frame) soon gets
-		// more than 25 degrees ahead of it and is no longer followed
+				tr += inView[r][c] * s_rest[r][c];
 		const bool close = (tr - 1.0f) * 0.5f > 0.90f; // within about 25 degrees
 		if (!s_haveInView || ++s_offFrames > 45) {
 			memcpy(s_inView, inView, sizeof inView);
+			memcpy(s_rest, inView, sizeof inView);
 			s_haveInView = true;
 			s_offFrames  = 0;
 		} else if (close) {
+			memcpy(s_inView, inView, sizeof inView);
 			for (int r = 0; r < 3; r++)
 				for (int c = 0; c < 3; c++)
-					s_inView[r][c] += (inView[r][c] - s_inView[r][c]) * 0.2f;
-			orthonormal(s_inView);
+					s_rest[r][c] += (inView[r][c] - s_rest[r][c]) * 0.2f;
+			orthonormal(s_rest);
 			s_offFrames = 0;
 		}
 	} else if (s_haveInView) {
