@@ -35,7 +35,7 @@ Read this first. It is what earlier sessions learned working with Allebale on th
 | Testing branch | branch `remastered-test` |
 | Safety copies | `fallback`, `fallback-2`, `fallback-3` (older versions of the main build). Make a new `fallback-N` before big changes. |
 | Kept-aside experiments | `ambient-occlusion`, `hanging-things` (Swaying Hanging Things, removed), `ao-thin-option` (local only, never pushed), `character-ambient-occlusion` (Character Ambient Occlusion: None to Full shade on people and enemies, against blocky patches on low-poly ones; for Allebale to try later, not on `remastered-test`) |
-| First Person beta | branch `first-person-beta`: Chase's beta and only the First Person mod's game side (FLUDD held in view, FLUDD weapons), no Remastered features (its four `zzzzzzz-held-fludd*` patches are made against Chase's own patches; `api->reflections` is left empty there). Bring Chase's updates in as for `remastered-test` |
+| First Person beta | branch `first-person-beta`: Chase's beta and only the First Person mod's game side (FLUDD held in view, FLUDD weapons), no Remastered features (its four `zzzzzzz-held-fludd*` patches are made against Chase's own patches; its sdk is the SDK fork's `first-person-beta` branch: Chase's SDK with only `held_fludd`, a reserved empty slot where `reflections` is, so the mod finds `held_fludd` in both builds). Bring Chase's updates in as for `remastered-test` |
 | First Person mod | `Allebale/sms-first-person-mod` (the launcher uses its GitHub releases) |
 | SDK fork | `Allebale/sms-mod-sdk-modtesting`, branch `combined-plus` |
 | Chase's port (upstream, read only) | `chasem-dev/sms-pc-port`, branch `main` (the launcher's Beta builds the newest commit there) |
