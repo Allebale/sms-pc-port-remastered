@@ -3556,7 +3556,8 @@ extern "C" void GXPC_LadderRegister(const void* list, unsigned size, float nx, f
 // it; found with the grab log) is drawn again behind itself, as a registered card is. Each texture
 // is named once (by its address, size and format) and remembered for the stage.
 static const char* const kLadderTextures[] = {
-    nullptr,  // (none known yet)
+    "tex1_512x512_00b6be1aafdb87d0_14",  // Erto Rock's blue ladders (six cards, solid with see-through holes)
+    nullptr,
 };
 struct LadderTexKey {
     const void* ptr;
