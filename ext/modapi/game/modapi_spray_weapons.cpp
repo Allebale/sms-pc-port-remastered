@@ -3,7 +3,7 @@
 // stream. Still water, FLUDD's own drops, only fired another way (Allebale's numbers):
 //
 //              shot                               reach      shove                 to defeat  every
-//   Shotgun    8 drops in a spread                close      light                 2 shots    1.5 s
+//   Shotgun    8 drops in a spread                medium     light                 2 shots    1.5 s
 //   Rifle      3 fast drops in a line             very long  strong                1 shot     3 s
 //   Bazooka    one huge drop, bursting on a hit   long       very strong, thrown   1 shot     10 s
 //                                                            up into the air        (all in its burst)
@@ -76,7 +76,7 @@ struct Weapon {
 };
 const Weapon kWeapons[WEAPONS] = {
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
-	{8, 0.75f, 0.35f, 1.25f, 1.2f, 0.14f, 1.5f, 12, 6.0f, 9.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
+	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.5f, 12, 6.0f, 9.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
 	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 3.0f, 6, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
 	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 10.0f, 30, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
