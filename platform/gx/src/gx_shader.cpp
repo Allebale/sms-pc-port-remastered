@@ -969,9 +969,15 @@ static bool programKeyValid(const ProgramKey& key) {
     return k.numTexGens <= 8 && k.numChans <= 3 && k.numStages >= 1 && k.numStages <= 16 && k.numInd <= 4;
 }
 
-// Loads the cached programs (on the GL thread, at the first draw).
+// Loads the cached programs (on the GL thread, at the first draw). Each program's binary is handed to
+// the driver first and only asked whether it took afterwards (all of them, then their answers): asked
+// at once, each one waited for the driver to finish it before the next began, and on AMD's driver
+// (which builds a binary up again, about 0.15 s each) the 1150 cached took three minutes at start.
+// Handed over together, with the driver's own compile threads on (KHR_parallel_shader_compile), they
+// are built side by side.
 static void programCacheLoad() {
     s_cacheState = 0;
+    const auto t0 = std::chrono::steady_clock::now();
     if (!glGetProgramBinary || !glProgramBinary || !glProgramParameteri) return;
     GLint formats = 0;
     glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
@@ -990,6 +996,23 @@ static void programCacheLoad() {
         s_cachePath = base + (vk ? "/gx-programs-vk-" : "/gx-programs-") + (sizeof(void*) == 8 ? "64.bin" : "32.bin");
     }
     const uint64_t driver = driverId();
+    // the driver's compile threads, before the binaries go to it (warmSetup asks again for its compiles)
+    if (glMaxShaderCompilerThreadsKHR) {
+        GLint n = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+        for (GLint i = 0; i < n; i++) {
+            const char* x = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, GLuint(i)));
+            if (x && (!strcmp(x, "GL_KHR_parallel_shader_compile") || !strcmp(x, "GL_ARB_parallel_shader_compile"))) {
+                glMaxShaderCompilerThreadsKHR(0xFFFFFFFFu);
+                break;
+            }
+        }
+    }
+    struct Pending {
+        GLuint p;
+        ProgramKey key;
+    };
+    std::vector<Pending> pending;
     unsigned loaded = 0, stale = 0;
     bool keep = false;  // the file is this driver's: append to it
     bool corrupt = false;
@@ -1025,23 +1048,34 @@ static void programCacheLoad() {
                     stale++;
                     continue;
                 }
-                GLuint p = glCreateProgram();
-                bindAttributes(p);
-                glProgramBinary(p, GLenum(format), bin.data(), GLsizei(len));
-                GLint ok = 0;
-                glGetProgramiv(p, GL_LINK_STATUS, &ok);
-                if (!ok) {
-                    glDeleteProgram(p);
+                bool twice = false;  // the same key twice in the file: the first kept
+                for (const Pending& q : pending)
+                    if (!memcmp(&q.key, &key, sizeof key)) twice = true;
+                if (twice) {
                     stale++;
                     continue;
                 }
-                ShaderProgram& sp = s_programs[key];
-                sp.id = 0;
-                setupProgram(p, sp);
-                loaded++;
+                GLuint p = glCreateProgram();
+                bindAttributes(p);
+                glProgramBinary(p, GLenum(format), bin.data(), GLsizei(len));  // not waited for here
+                pending.push_back(Pending{p, key});
             }
         }
         fclose(in);
+    }
+    // ...then their answers
+    for (const Pending& q : pending) {
+        GLint ok = 0;
+        glGetProgramiv(q.p, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            glDeleteProgram(q.p);
+            stale++;
+            continue;
+        }
+        ShaderProgram& sp = s_programs[q.key];
+        sp.id = 0;
+        setupProgram(q.p, sp);
+        loaded++;
     }
     if (stale > 64 && stale > loaded) keep = false;  // mostly unusable (repeated or rejected): start over
     if (corrupt) keep = false;
@@ -1059,7 +1093,8 @@ static void programCacheLoad() {
         fwrite(head, sizeof head, 1, s_cacheOut);
     }
     s_cacheState = 1;
-    if (keep) logmsg("shader cache: %u programs loaded, %u skipped (%s)", loaded, stale, s_cachePath.c_str());
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (keep) logmsg("shader cache: %u programs loaded in %.1f s, %u skipped (%s)", loaded, secs, stale, s_cachePath.c_str());
     else if (corrupt) logmsg("shader cache: damaged after %u programs, made anew (%s)", loaded, s_cachePath.c_str());
     else logmsg("shader cache: new (%s)", s_cachePath.c_str());
 }
