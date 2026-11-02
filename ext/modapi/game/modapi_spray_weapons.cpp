@@ -185,7 +185,7 @@ void afterMovement()
 		JGeometry::TVec3<f32> from(e->mPosition.x, e->mPosition.y + 40.0f, e->mPosition.z);
 		JGeometry::TVec3<f32> to(from.x + mx * 1.5f + h.vx * 0.5f, from.y, from.z + mz * 1.5f + h.vz * 0.5f);
 		JGeometry::TVec3<f32> wall;
-		if (gpMap && gpMap->intersectLine(from, to, true, &wall)) {
+		if (gpMap && (!gpMap->isInArea(to.x, to.z) || gpMap->intersectLine(from, to, true, &wall))) {
 			// against a wall: those the game defeats against walls (Strollin' Stus and their
 			// kind, rolling away from the water) are defeated so here too, hard enough
 			THamuKuri* stu = dynamic_cast<THamuKuri*>(e);
@@ -331,12 +331,25 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 
 TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* at)
 {
-	f32 most = reach;
-	JGeometry::TVec3<f32> end(eye.x + f.x * reach, eye.y + f.y * reach, eye.z + f.z * reach), wall;
-	if (gpMap && gpMap->intersectLine(eye, end, true, &wall)) {
-		const f32 x = wall.x - eye.x, y = wall.y - eye.y, z = wall.z - eye.z;
-		most = sqrtf(x * x + y * y + z * z);
+	// the map's walls and ground along it, a piece at a time and only inside the stage (a line
+	// far out of it crashes the map's lookup)
+	f32 most = 0.0f;
+	const f32 kPiece = 2000.0f;
+	while (gpMap && most < reach) {
+		const f32 next = most + kPiece < reach ? most + kPiece : reach;
+		JGeometry::TVec3<f32> a(eye.x + f.x * most, eye.y + f.y * most, eye.z + f.z * most);
+		JGeometry::TVec3<f32> b(eye.x + f.x * next, eye.y + f.y * next, eye.z + f.z * next), wall;
+		if (!gpMap->isInArea(a.x, a.z) || !gpMap->isInArea(b.x, b.z))
+			break;
+		if (gpMap->intersectLine(a, b, true, &wall)) {
+			const f32 x = wall.x - eye.x, y = wall.y - eye.y, z = wall.z - eye.z;
+			most = sqrtf(x * x + y * y + z * z);
+			break;
+		}
+		most = next;
 	}
+	if (most < 1.0f)
+		most = 1.0f;
 	TSmallEnemy* best = 0;
 	f32 bestT         = most;
 	if (gpConductor) {
@@ -469,6 +482,10 @@ void followStraight()
 		if (((w->mParticleAttackSOA[i] >> kTagShift) & 0x7f) != s_straightShot || (w->mParticleFlagSOA[i] & 0xf) != 1)
 			continue;
 		const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+		if (gpMap && !gpMap->isInArea(p.x, p.z)) {
+			w->mParticleLifetimeSOA[i] = 0.0f; // out of the stage: gone
+			continue;
+		}
 		const f32 x = p.x - s_straightFrom.x, y = p.y - s_straightFrom.y, z = p.z - s_straightFrom.z;
 		if (x * x + y * y + z * z > s_straightFar * s_straightFar)
 			continue; // past it: falls as any drop
