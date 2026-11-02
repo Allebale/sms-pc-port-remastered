@@ -3,9 +3,9 @@
 // stream. Still water, FLUDD's own drops, only fired another way (Allebale's numbers):
 //
 //              shot                               reach      shove                 to defeat  every
-//   Shotgun    8 drops in a spread                medium     light                 2 shots    1.5 s
-//   Rifle      3 fast drops in a line             very long  strong                1 shot     3 s
-//   Bazooka    one huge drop, bursting on a hit   long       very strong, thrown   1 shot     10 s
+//   Shotgun    8 drops in a spread                medium     light                 2 shots    1 s
+//   Rifle      3 fast drops in a line             very long  strong                1 shot     2 s
+//   Bazooka    one huge drop, bursting on a hit   long       very strong, thrown   1 shot     5 s
 //                                                            up into the air        (all in its burst)
 //
 // Each fires while R is held, again once it is ready, using the tank's water as so many drops of
@@ -36,6 +36,9 @@
 #include <Strategic/HitActor.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <MSound/MSound.hpp>
+#include <Player/SplashManager.hpp>
+#include <System/EmitterViewObj.hpp>
+#include <System/Particles.hpp>
 #include <MSound/SoundEffects.hpp>
 #include <Strategic/LiveManager.hpp>
 #include <Enemy/Conductor.hpp>
@@ -76,9 +79,9 @@ struct Weapon {
 };
 const Weapon kWeapons[WEAPONS] = {
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
-	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.5f, 12, 6.0f, 9.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
-	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 3.0f, 6, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
-	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 10.0f, 30, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
+	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 12, 6.0f, 9.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
+	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 2.0f, 6, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
+	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 30, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
@@ -248,6 +251,48 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	}
 }
 
+// The bazooka's water explosion where it bursts: the game's water-hit sprays and splashes round
+// it, a ring of FLUDD's drops thrown out and up (they wet what they reach), and a bang.
+void explode(const JGeometry::TVec3<f32>& at, f32 r)
+{
+	if (gpMarioParticleManager) {
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &at, 0, nullptr);
+		for (int i = 0; i < 6; i++) {
+			const f32 a = (f32)i * (6.2831853f / 6.0f);
+			JGeometry::TVec3<f32> p(at.x + sinf(a) * r * 0.35f, at.y + 30.0f, at.z + cosf(a) * r * 0.35f);
+			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &p, 0, nullptr);
+		}
+	}
+	if (gpSplashManager)
+		for (int i = 0; i < 8; i++) {
+			const f32 a = (f32)i * (6.2831853f / 8.0f);
+			gpSplashManager->newSplash(JGeometry::TVec3<f32>(at.x + sinf(a) * r * 0.5f, at.y, at.z + cosf(a) * r * 0.5f), 12.0f);
+		}
+	TMario* m    = gpMarioOriginal;
+	TWaterGun* g = m ? m->mWaterGun : 0;
+	if (g && g->mEmitInfo && gpModelWaterManager) {
+		TWaterEmitInfo info(*g->mEmitInfo);
+		info.mNum.set(1);
+		info.mAttack.set(1);
+		info.mV.value.set(0.0f, 0.0f, 0.0f);
+		info.mDirTremble.set(0.05f);
+		info.mPowTremble.set(0.2f);
+		info.mSize.set(info.mSize.get() * 1.5f);
+		info.mFlag.set(0x40);
+		s_firing = true;
+		for (int i = 0; i < 24; i++) {
+			const f32 a = (f32)i * (6.2831853f / 24.0f), up = 0.55f + 0.35f * random01();
+			info.mPos.value.set(at.x, at.y + 40.0f, at.z);
+			info.mDir.value.set(sinf(a) * (1.0f - up * 0.6f), up, cosf(a) * (1.0f - up * 0.6f));
+			info.mPow.set(30.0f + 25.0f * random01());
+			gpModelWaterManager->emitRequest(info);
+		}
+		s_firing = false;
+	}
+	if (SMSGetMSound())
+		SMSGetMSound()->startSoundActor(MSD_SE_PO_WFLOWER_EXPLOSION, &at, 0, nullptr, 0, 4);
+}
+
 // The small enemies of one manager within the burst, each hit (a shot counts once for each).
 int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>& at, f32 r)
 {
@@ -280,6 +325,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		n += burstIn(*it, weapon, shot, at, r);
 	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
 		n += burstIn(*it, weapon, shot, at, r);
+	explode(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies in it\n", at.x, at.y, at.z, n);
 }
 
@@ -318,11 +364,12 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 {
 	const f32 r  = a->getDamageRadius() > a->getAttackRadius() ? a->getDamageRadius() : a->getAttackRadius();
 	const f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
-	const f32 rad = (r > 30.0f ? r : 30.0f) + 15.0f;
+	const f32 rad0 = (r > 30.0f ? r : 30.0f) + 15.0f;
 	const f32 cx = a->mPosition.x - eye.x, cy = a->mPosition.y + 0.5f * hh - eye.y, cz = a->mPosition.z - eye.z;
 	const f32 t = cx * f.x + cy * f.y + cz * f.z;
 	if (t < 0.0f || t > most)
 		return -1.0f;
+	const f32 rad = rad0 + t * 0.015f; // a little kinder far away (75 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
 	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f); // a body's height counts as near
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
