@@ -31,9 +31,8 @@ bool s_placed;          // placed this frame (s_target good)
 Mtx s_lastBase;         // the base it was given (the same next frame: not posed again, frozen)
 bool s_haveLast;
 f32 s_inView[3][3];     // its last good turn in the view's own frame
-f32 s_rest[3][3];       // that turn followed slowly (a flip gets far from it)
 bool s_haveInView;
-int s_offFrames;         // frames its turn has been far from the last
+int s_flipAfter;         // frames left to keep it still after a flip
 
 // J3DModel's base scale is protected: read and set through a class of its own
 struct ModelScale : J3DModel {
@@ -70,23 +69,27 @@ bool frame(const Vec& forward, const Vec& roughUp, Vec out[3])
 	return true;
 }
 
-// a turn's columns made unit and square to each other again (after blending two)
-void orthonormal(f32 m[3][3])
+// A flip or spin: his body turned right round (MarioStatus.hpp), and 5 frames after one
+bool flipping(TMario* m)
 {
-	// (each column keeps its length and the third its side: the joint's own scale and mirroring)
-	Vec x = {m[0][0], m[1][0], m[2][0]}, y = {m[0][1], m[1][1], m[2][1]};
-	const Vec z0 = {m[0][2], m[1][2], m[2][2]};
-	const f32 lx = sqrtf(dot(x, x)), ly = sqrtf(dot(y, y)), lz = sqrtf(dot(z0, z0));
-	if (!unit(x))
-		return;
-	y = along(y, -dot(x, y), x);
-	if (!unit(y))
-		return;
-	Vec z = cross(x, y);
-	const f32 side = dot(z, z0) < 0.0f ? -lz : lz;
-	const Vec col[3] = {{x.x * lx, x.y * lx, x.z * lx}, {y.x * ly, y.y * ly, y.z * ly}, {z.x * side, z.y * side, z.z * side}};
-	for (int c = 0; c < 3; c++)
-		m[0][c] = col[c].x, m[1][c] = col[c].y, m[2][c] = col[c].z;
+	switch (m->getStatus()) {
+	case MARIO_STATUS_ULTRA_JUMP:        // the triple jump's flip
+	case MARIO_STATUS_BACK_JUMP:         // back flip
+	case MARIO_STATUS_U_TURN_JUMP:       // side flip
+	case MARIO_STATUS_ROTATE_BROAD_JUMP:
+	case MARIO_STATUS_WIRE_ROLL_JUMP:
+	case MARIO_STATUS_LEFT_ROTATE_JUMP:  // spin jumps
+	case MARIO_STATUS_RIGHT_ROTATE_JUMP:
+		s_flipAfter = 5;
+		return true;
+	default:
+		break;
+	}
+	if (s_flipAfter > 0) {
+		s_flipAfter--;
+		return true;
+	}
+	return false;
 }
 
 } // namespace
@@ -102,7 +105,7 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 	s_aim     = aim > 50.0f ? aim : 1200.0f;
 	if (!s_on)
 		s_placed = s_haveLast = s_haveInView = false;
-	s_offFrames = 0;
+	s_flipAfter = 0;
 	return gpMarioOriginal ? 1 : 0;
 }
 
@@ -161,11 +164,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		return;
 
 	// the new turn, kept in the view's frame: the nozzle's way to the aim, its roll against the up
-	// kept. Taken only while it stays near the last one: a back flip, side flip or spin turns his
-	// body (and FLUDD on it) right round, and the gun is not to turn with him, so then (and with
-	// the nozzle near straight up or down: climbing, hanging) the last one is kept. Should it stay
-	// far off for a second and a half (he lies another way now), it is taken.
-	const Vec up = {0.0f, 1.0f, 0.0f};
+	// kept. During a back flip, side flip, triple jump or spin (his body, and FLUDD on it, turned
+	// right round), and with the nozzle near straight up or down (climbing, hanging), the last one
+	// is kept, so the gun does not turn with him.
+	const bool flip = flipping(g->mMario);
+	const Vec up    = {0.0f, 1.0f, 0.0f};
 	Vec a[3], b[3];
 	if (fabsf(way.y) < 0.8f && frame(way, up, a) && frame(toTarget, U, b)) {
 		f32 g3[3][3]; // b's rows from a's: sum of b_i a_i^T
@@ -185,29 +188,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		for (int r = 0; r < 3; r++)
 			for (int c = 0; c < 3; c++)
 				inView[r][c] = v[r][0] * w3[0][c] + v[r][1] * w3[1][c] + v[r][2] * w3[2][c];
-		// A rest turn follows it only a fifth of the way each frame. Near the rest turn (running's
-		// bob, the pump), it is shown as it is; a flip (about 18 degrees a frame) soon gets more
-		// than 25 degrees from it, and the last shown is kept until it comes back.
-		f32 tr = 0.0f; // the angle of the turn between it and the rest (trace of A B^T)
-		for (int r = 0; r < 3; r++)
-			for (int c = 0; c < 3; c++)
-				tr += inView[r][c] * s_rest[r][c];
-		const bool close = (tr - 1.0f) * 0.5f > 0.90f; // within about 25 degrees
-		if (!s_haveInView || ++s_offFrames > 45) {
+		// during a flip (and a few frames after) the last shown is kept: his body turns right round
+		if (!s_haveInView || !flip) {
 			memcpy(s_inView, inView, sizeof inView);
-			memcpy(s_rest, inView, sizeof inView);
 			s_haveInView = true;
-			s_offFrames  = 0;
-		} else if (close) {
-			memcpy(s_inView, inView, sizeof inView);
-			for (int r = 0; r < 3; r++)
-				for (int c = 0; c < 3; c++)
-					s_rest[r][c] += (inView[r][c] - s_rest[r][c]) * 0.2f;
-			orthonormal(s_rest);
-			s_offFrames = 0;
 		}
-	} else if (s_haveInView) {
-		s_offFrames = 0;
 	}
 	if (!s_haveInView)
 		return;
