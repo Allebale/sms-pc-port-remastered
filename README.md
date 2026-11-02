@@ -325,6 +325,7 @@ The default keys are laid out for keyboard and mouse, with mouse look on:
 | Load the newest save state | F6 |
 | Radar's full map, open / close (`radar = on`) | M, or a controller's Back/Select button |
 | Radar's zoom, next step (`radar = on`) | D-pad up (1) |
+| Next character (archives in `mods/characters/`) | F4 |
 | Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc, or the pause menu's Quit Game |
 
 Esc asks before quitting, so a stray press does not lose unsaved progress: Cancel is picked to begin with, Left/Right (or the d-pad) moves between Quit and Cancel, and the mouse works too; the game keeps running behind the prompt but reads no input. Closing the window still quits straight away.
@@ -350,7 +351,7 @@ It hides in cutscenes, conversations and the pause menu. `radar_zoom` sets how f
 D-pad up (1 on the keyboard) steps its zoom through 100%, 50%, 25% and 200% of `radar_zoom`, showing the reach under it for a moment.
 **M**, or a controller's Back (View, Select, Share) button, opens the full map: the whole stage over the dimmed game, as wide as the screen, with the area's name, Mario's arrow and the same Shines and blue coins, to the game's own map screen sounds. The game goes on under it, so Mario can still be steered; the same button closes it. It is the `MAP` control in `bindings.txt`.
 In multiplayer the other players are smaller white arrows, turning the way each faces; on the radar one beyond its reach waits at its edge, fainter, in their direction, and on the full map each has their name under their arrow.
-The maps are pictures of every stage from straight above, made from the disc by `tools/radar/gen_maps.py` (in `assets/maps`, one per stage, matched to the stage by its collision); a stage without one, a mod's, has no radar.
+The maps are pictures of every stage from straight above, made from the disc by `tools/radar/gen_maps.py` (in `assets/maps`, one per stage, matched to the stage by its collision, and by its scene where stages share one); a stage without one, a mod's, has no radar.
 Super Mario Eclipse's stages have theirs in a pack made from its disc, which `tools/mods/get.py eclipse` installs with it in `mods/maps/eclipse` (`get.py eclipse-maps` alone); the game reads every pack in `mods/maps` besides `assets/maps`.
 In Eclipse the radar and the full map show its Shines past the game's 120 as got or not, and the full map names its areas as its pause menu does.
 ### Settings menu
@@ -370,7 +371,7 @@ A few take effect later: the **frame rate** from the next area (it is chosen as 
 
 A save state is the game at one moment: in a level, F5 or L1 + R1 (LB + RB) saves it. The pause menu shows those buttons at its top right with **LOAD SAVE STATE**: press them there to open the list of states, newest first, with a picture of each; A loads one, Y deletes it, B goes back. F6 loads the newest without the menu. The buttons show as your keyboard or controller shows them, from the launcher's button prompt pictures (their names without the launcher).
 Loading a state saved by the same build of the game puts everything back as it was, Mario, enemies, the camera, the music, in place and at once. A state from another build (an update, someone else's game, another word size) cannot be put back that way; it takes you to its level and episode and puts Mario where he was, with his health, FLUDD's water and nozzle, and the progress the state had (Shines, coins, lives). The list marks those states "position".
-States are files (`*.smsstate`) in a `savestates` folder beside the memory card folder (`~/.local/share/sms-port/savestates` by default; `SMS_SAVE_STATE_DIR` or `save_state_dir` sets another); share one by sending the file. Loading a state takes you to its progress too, so saving to the memory card afterwards saves that. Saving a state does not touch the memory card.
+States are files (`*.smsstate`) in a `savestates` folder beside the memory card folder (`~/.local/share/sms-port/savestates` by default; `SMS_SAVE_STATE_DIR` or `save_state_dir` sets another); share one by sending the file. Loading a state takes you to its progress too, so saving to the memory card afterwards saves that. Saving a state does not touch the memory card. A state keeps you as the character you play as now (mods/characters), whoever it was saved as.
 How states work, and their limits: [docs/SAVE-STATES.md](docs/SAVE-STATES.md).
 
 ### Multiplayer

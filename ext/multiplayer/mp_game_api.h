@@ -232,6 +232,8 @@ int mpg_target(int* area, int* episode);
 int mpg_in_target(void);
 // Host: a client got a Shine; leave as if we had (once per Shine).
 int mpg_take_shine_exit(void);
+// Host: whether that is waiting (mpg_take_shine_exit would take it), left waiting.
+int mpg_shine_exit_waiting(void);
 // Host: a client got a blue coin: its slot + 1 (the host is asked to save,
 // as the game asks the player who gets one), else 0. Once per report.
 int mpg_take_blue_save(void);
@@ -278,6 +280,8 @@ int mpg_next_clean(float* x, float* y, float* z, float* size);
 void mpg_shine_get(int eventId, const float pos[3], int yaw);
 // The next Shine another player touched; 0 when there is none.
 int mpg_next_shine_get(int* slot, int* eventId, float pos[3], int* yaw);
+// Whether one is waiting (mpg_next_shine_get would give it), left waiting.
+int mpg_shine_get_waiting(void);
 
 // Host: setting off for another area (episode 0xFF: the game decides on
 // arrival); the others start their own trip there at once.
@@ -301,6 +305,8 @@ void mpg_travel_done(void);
 // game started (its size; 0 when there is none).
 void mpg_demo(const void* data, size_t size);
 size_t mpg_next_demo(int* slot, void* data, size_t size);
+// Whether one is waiting (mpg_next_demo would give it), left waiting.
+int mpg_demo_waiting(void);
 
 // Bosses (game/mp_boss.cpp): the host's boss state, sent with the enemies
 // (at most 200 bytes), and the hits the others land on their copies (on which
@@ -502,6 +508,14 @@ const char* mpg_display_name(int slot);
 // or "" (0) for Mario's own; mpg_looks_version changes whenever one does.
 uint32_t mpg_looks_version(void);
 int mpg_look(int slot, char* out, int size);
+// Players' characters (the launcher's, mods/characters): each player's own,
+// which they send the host and the host passes on. mpg_set_character says
+// ours (a pack's id, "" or null for Mario), each frame or when it changes;
+// mpg_player_character gives `slot`'s (1), or "" (0) for Mario;
+// mpg_characters_version changes whenever one does.
+void mpg_set_character(const char* id);
+int mpg_player_character(int slot, char* out, int size);
+uint32_t mpg_characters_version(void);
 // Host: `slot`'s look forced by a server mod, in every game (theirs too) and
 // for newcomers, until set again; null gives them their own back.
 int mpg_server_set_look(int slot, const char* look);

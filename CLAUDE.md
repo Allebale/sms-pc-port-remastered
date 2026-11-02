@@ -51,6 +51,12 @@ Fetch `https://github.com/chasem-dev/sms-pc-port.git main`, merge it into `remas
 conflicts by **keeping both** Chase's change and the fork's, compile-check, push, and let Allebale test
 before it goes to `remastered`.
 
+If the `sdk` submodule conflicts (Chase moved to a new SDK), merge Chase's SDK commit into
+`Allebale/sms-mod-sdk-modtesting` `combined-plus` (keep the fork's `reflections` as the last `SmsApi`
+member), push it, and point `sdk` at that merge (`git update-index --cacheinfo 160000,<sha>,sdk`).
+Then dry-run every `decomp-patches/*.patch` in C-locale name order on a copy of `decomp/`: Chase's
+patch numbers can collide with the fork's (both had `ext-31` and `ext-32`); different names still apply.
+
 ### If the launcher fails with `EPERM: operation not permitted, rename ...sms-pc-port.releases...`
 
 Windows (usually the antivirus scanning new files, or an Explorer window) held the launcher's download
