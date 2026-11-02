@@ -32,6 +32,7 @@ Mtx s_lastBase;         // the base it was given (the same next frame: not posed
 bool s_haveLast;
 f32 s_inView[3][3];     // its last good turn in the view's own frame
 bool s_haveInView;
+int s_offFrames;         // frames its turn has been far from the last
 
 // J3DModel's base scale is protected: read and set through a class of its own
 struct ModelScale : J3DModel {
@@ -68,6 +69,25 @@ bool frame(const Vec& forward, const Vec& roughUp, Vec out[3])
 	return true;
 }
 
+// a turn's columns made unit and square to each other again (after blending two)
+void orthonormal(f32 m[3][3])
+{
+	// (each column keeps its length and the third its side: the joint's own scale and mirroring)
+	Vec x = {m[0][0], m[1][0], m[2][0]}, y = {m[0][1], m[1][1], m[2][1]};
+	const Vec z0 = {m[0][2], m[1][2], m[2][2]};
+	const f32 lx = sqrtf(dot(x, x)), ly = sqrtf(dot(y, y)), lz = sqrtf(dot(z0, z0));
+	if (!unit(x))
+		return;
+	y = along(y, -dot(x, y), x);
+	if (!unit(y))
+		return;
+	Vec z = cross(x, y);
+	const f32 side = dot(z, z0) < 0.0f ? -lz : lz;
+	const Vec col[3] = {{x.x * lx, x.y * lx, x.z * lx}, {y.x * ly, y.y * ly, y.z * ly}, {z.x * side, z.y * side, z.z * side}};
+	for (int c = 0; c < 3; c++)
+		m[0][c] = col[c].x, m[1][c] = col[c].y, m[2][c] = col[c].z;
+}
+
 } // namespace
 
 // api->held_fludd->set (mod_runtime.cpp)
@@ -81,6 +101,7 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 	s_aim     = aim > 50.0f ? aim : 1200.0f;
 	if (!s_on)
 		s_placed = s_haveLast = s_haveInView = false;
+	s_offFrames = 0;
 	return gpMarioOriginal ? 1 : 0;
 }
 
@@ -138,8 +159,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	if (!unit(way))
 		return;
 
-	// the new turn (world): the nozzle's way to the aim, its roll against the up kept
-	f32 turned[3][3];
+	// the new turn, kept in the view's frame: the nozzle's way to the aim, its roll against the up
+	// kept. Taken only while it stays near the last one: a back flip, side flip or spin turns his
+	// body (and FLUDD on it) right round, and the gun is not to turn with him, so then (and with
+	// the nozzle near straight up or down: climbing, hanging) the last one is kept. Should it stay
+	// far off for a second and a half (he lies another way now), it is taken.
 	const Vec up = {0.0f, 1.0f, 0.0f};
 	Vec a[3], b[3];
 	if (fabsf(way.y) < 0.8f && frame(way, up, a) && frame(toTarget, U, b)) {
@@ -153,21 +177,41 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 				for (int c = 0; c < 3; c++)
 					g3[r][c] += bi[r] * ai[c];
 		}
+		f32 w3[3][3], inView[3][3];
 		for (int r = 0; r < 3; r++)
 			for (int c = 0; c < 3; c++)
-				turned[r][c] = g3[r][0] * rot[0][c] + g3[r][1] * rot[1][c] + g3[r][2] * rot[2][c];
-		// kept in the view's frame, for when the nozzle points up or down
+				w3[r][c] = g3[r][0] * rot[0][c] + g3[r][1] * rot[1][c] + g3[r][2] * rot[2][c];
 		for (int r = 0; r < 3; r++)
 			for (int c = 0; c < 3; c++)
-				s_inView[r][c] = v[r][0] * turned[0][c] + v[r][1] * turned[1][c] + v[r][2] * turned[2][c];
-		s_haveInView = true;
+				inView[r][c] = v[r][0] * w3[0][c] + v[r][1] * w3[1][c] + v[r][2] * w3[2][c];
+		// how far it is from the last: the angle of the turn between them (trace of A B^T)
+		f32 tr = 0.0f;
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 3; c++)
+				tr += inView[r][c] * s_inView[r][c];
+		// followed only a fifth of the way each frame: a flip (about 18 degrees a frame) soon gets
+		// more than 25 degrees ahead of it and is no longer followed
+		const bool close = (tr - 1.0f) * 0.5f > 0.90f; // within about 25 degrees
+		if (!s_haveInView || ++s_offFrames > 45) {
+			memcpy(s_inView, inView, sizeof inView);
+			s_haveInView = true;
+			s_offFrames  = 0;
+		} else if (close) {
+			for (int r = 0; r < 3; r++)
+				for (int c = 0; c < 3; c++)
+					s_inView[r][c] += (inView[r][c] - s_inView[r][c]) * 0.2f;
+			orthonormal(s_inView);
+			s_offFrames = 0;
+		}
 	} else if (s_haveInView) {
-		for (int r = 0; r < 3; r++) // the view's turn back to the world (its transpose)
-			for (int c = 0; c < 3; c++)
-				turned[r][c] = v[0][r] * s_inView[0][c] + v[1][r] * s_inView[1][c] + v[2][r] * s_inView[2][c];
-	} else {
-		return;
+		s_offFrames = 0;
 	}
+	if (!s_haveInView)
+		return;
+	f32 turned[3][3];
+	for (int r = 0; r < 3; r++) // the view's turn back to the world (its transpose)
+		for (int c = 0; c < 3; c++)
+			turned[r][c] = v[0][r] * s_inView[0][c] + v[1][r] * s_inView[1][c] + v[2][r] * s_inView[2][c];
 
 	// the new place: the tip (at the mod's scale, from the base) where the mod put it
 	const f32 k     = s_scale;
