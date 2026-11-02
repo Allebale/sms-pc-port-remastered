@@ -152,8 +152,11 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - **Faster Game Start**: investigate and reduce game startup time without changing gameplay or introducing regressions.
   Found (Nov 2026, the `[startup]` clock in the log, `port_runtime.cpp`): about 3 minutes of a start were the shader
   cache (`programCacheLoad`, `gx_shader.cpp`): 1150 program binaries, each waited for (AMD's driver takes about
-  0.15 s for one). Now all are handed over first and their answers asked after, with the driver's compile threads on;
-  the log says how long it took (`shader cache: N programs loaded in X s`).
+  0.15 s for one; handing them over all at once did not help: 172 s). Its compiles from source in parallel take about
+  0.015 s each, so now the first 12 binaries are timed and, if slower than 40 ms each, the rest are not loaded but
+  their keys go to the warm-up, which compiles them from source in the background as stages load
+  (`s_slowBinaries`, `s_cacheKeysToWarm`; not written to the file again). Logged as `shader cache: this driver takes
+  N ms...` and `... loaded in X s, N to compile from source`.
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
 
 ## Ideas tried and dropped (do not bring back unasked)

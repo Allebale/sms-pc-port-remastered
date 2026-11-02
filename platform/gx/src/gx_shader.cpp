@@ -969,12 +969,15 @@ static bool programKeyValid(const ProgramKey& key) {
     return k.numTexGens <= 8 && k.numChans <= 3 && k.numStages >= 1 && k.numStages <= 16 && k.numInd <= 4;
 }
 
-// Loads the cached programs (on the GL thread, at the first draw). Each program's binary is handed to
-// the driver first and only asked whether it took afterwards (all of them, then their answers): asked
-// at once, each one waited for the driver to finish it before the next began, and on AMD's driver
-// (which builds a binary up again, about 0.15 s each) the 1150 cached took three minutes at start.
-// Handed over together, with the driver's own compile threads on (KHR_parallel_shader_compile), they
-// are built side by side.
+// Loads the cached programs (on the GL thread, at the first draw). Some drivers build a program's binary
+// up again as slowly as its source, one at a time: AMD's took about 0.15 s each, and the 1150 cached took
+// three minutes at every start (handing them over all at once did not help), while it compiles them from
+// their source side by side at about 0.015 s each. So the first few are timed: when they are that slow,
+// the rest are not loaded but compiled from source by the warm-up instead, in the background as stages
+// load (s_cacheKeysToWarm), and not written to the file again (s_cacheFileKeys).
+static std::vector<ProgramKey> s_cacheKeysToWarm;
+static std::unordered_set<ProgramKey, ProgramKeyHash> s_cacheFileKeys;
+static bool s_slowBinaries = false;
 static void programCacheLoad() {
     s_cacheState = 0;
     const auto t0 = std::chrono::steady_clock::now();
@@ -1008,12 +1011,10 @@ static void programCacheLoad() {
             }
         }
     }
-    struct Pending {
-        GLuint p;
-        ProgramKey key;
-    };
-    std::vector<Pending> pending;
-    unsigned loaded = 0, stale = 0;
+    unsigned loaded = 0, stale = 0, toWarm = 0;
+    double binarySecs = 0;  // the binaries' own time, to tell a slow driver
+    const unsigned kTimed = 12;           // timed before deciding
+    const double kSlow   = 0.04;          // seconds each: slower than compiling from source in parallel
     bool keep = false;  // the file is this driver's: append to it
     bool corrupt = false;
     if (FILE* in = fopen(s_cachePath.c_str(), "rb")) {
@@ -1044,38 +1045,45 @@ static void programCacheLoad() {
                     corrupt = true;
                     break;
                 }
+                if (s_slowBinaries) {  // compiled from source by the warm-up instead (its source is today's then)
+                    if (s_cacheFileKeys.insert(key).second) {
+                        s_cacheKeysToWarm.push_back(key);
+                        toWarm++;
+                    }
+                    continue;
+                }
                 if (s_programs.count(key) || sourceHash(genVS(key.k), genFS(key.k)) != srcHash) {
                     stale++;
                     continue;
                 }
-                bool twice = false;  // the same key twice in the file: the first kept
-                for (const Pending& q : pending)
-                    if (!memcmp(&q.key, &key, sizeof key)) twice = true;
-                if (twice) {
+                if (!s_cacheFileKeys.insert(key).second) {  // the same key twice in the file: the first kept
                     stale++;
                     continue;
                 }
+                const auto b0 = std::chrono::steady_clock::now();
                 GLuint p = glCreateProgram();
                 bindAttributes(p);
-                glProgramBinary(p, GLenum(format), bin.data(), GLsizei(len));  // not waited for here
-                pending.push_back(Pending{p, key});
+                glProgramBinary(p, GLenum(format), bin.data(), GLsizei(len));
+                GLint ok = 0;
+                glGetProgramiv(p, GL_LINK_STATUS, &ok);
+                binarySecs += std::chrono::duration<double>(std::chrono::steady_clock::now() - b0).count();
+                if (!ok) {
+                    glDeleteProgram(p);
+                    stale++;
+                    continue;
+                }
+                ShaderProgram& sp = s_programs[key];
+                sp.id = 0;
+                setupProgram(p, sp);
+                loaded++;
+                if (loaded == kTimed && binarySecs / kTimed > kSlow) {
+                    s_slowBinaries = true;
+                    logmsg("shader cache: this driver takes %.0f ms to load a program's binary: the rest are "
+                           "compiled from source in the background instead", binarySecs / kTimed * 1000.0);
+                }
             }
         }
         fclose(in);
-    }
-    // ...then their answers
-    for (const Pending& q : pending) {
-        GLint ok = 0;
-        glGetProgramiv(q.p, GL_LINK_STATUS, &ok);
-        if (!ok) {
-            glDeleteProgram(q.p);
-            stale++;
-            continue;
-        }
-        ShaderProgram& sp = s_programs[q.key];
-        sp.id = 0;
-        setupProgram(q.p, sp);
-        loaded++;
     }
     if (stale > 64 && stale > loaded) keep = false;  // mostly unusable (repeated or rejected): start over
     if (corrupt) keep = false;
@@ -1094,13 +1102,16 @@ static void programCacheLoad() {
     }
     s_cacheState = 1;
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    if (keep) logmsg("shader cache: %u programs loaded in %.1f s, %u skipped (%s)", loaded, secs, stale, s_cachePath.c_str());
+    if (keep)
+        logmsg("shader cache: %u programs loaded in %.1f s, %u to compile from source, %u skipped (%s)", loaded, secs,
+               toWarm, stale, s_cachePath.c_str());
     else if (corrupt) logmsg("shader cache: damaged after %u programs, made anew (%s)", loaded, s_cachePath.c_str());
     else logmsg("shader cache: new (%s)", s_cachePath.c_str());
 }
 
 static void programCacheStore(const ProgramKey& key, uint64_t srcHash, GLuint p) {
     if (!s_cacheOut) return;
+    if (s_slowBinaries && !s_cacheFileKeys.insert(key).second) return;  // in the file already (its key is what counts)
     GLint len = 0;
     glGetProgramiv(p, GL_PROGRAM_BINARY_LENGTH, &len);
     if (len <= 0) return;
@@ -1285,6 +1296,13 @@ static void warmSetup() {
         if (s_parallel && glMaxShaderCompilerThreadsKHR) glMaxShaderCompilerThreadsKHR(0xFFFFFFFFu);
     });
     if (getenv("SMS_GX_SHADER_WARMUP_SERIAL")) s_parallel = false;  // as on drivers without it (tests)
+    // a slow driver's cached programs (programCacheLoad): compiled from source with the others
+    if (!s_cacheKeysToWarm.empty()) {
+        std::unordered_set<ProgramKey, ProgramKeyHash> have(s_warmKeys.begin(), s_warmKeys.end());
+        for (const ProgramKey& k : s_cacheKeysToWarm)
+            if (have.insert(k).second) s_warmKeys.push_back(k);
+        std::vector<ProgramKey>().swap(s_cacheKeysToWarm);
+    }
     size_t cached = 0;
     for (const ProgramKey& k : s_warmKeys) cached += s_programs.count(k);
     s_warmState = 1;
