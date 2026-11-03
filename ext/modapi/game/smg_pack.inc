@@ -2511,4 +2511,4 @@ const unsigned char kSmgPackCol[24048] = {
 	21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255,
 	21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255, 21, 31, 56, 255,
 };
-const float kSmgPackMuzzleAt[3] = {0.0000f, 12.9000f, -99.1622f}; // the muzzle's middle
+const float kSmgPackMuzzleAt[3] = {-0.0042f, 10.9400f, -16.2014f}; // the muzzle's middle
