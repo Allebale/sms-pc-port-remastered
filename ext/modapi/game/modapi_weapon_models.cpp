@@ -1,8 +1,8 @@
-// The rifle's and bazooka's own models, held in FLUDD's place while the First Person mod's rifle or
+// The rifle's, submachine gun's and bazooka's own models, held in FLUDD's place while the First Person mod's rifle or
 // bazooka is chosen (modapi_held_fludd.cpp places them; the spray weapons are
-// modapi_spray_weapons.cpp). A brown rifle and a green pipe bazooka with FLUDD's tank, straps,
+// modapi_spray_weapons.cpp). A brown rifle, a blue submachine gun and a green pipe bazooka with FLUDD's tank, straps,
 // nozzle and pump handle, made in Blender from simple shapes, low-poly with their light baked into
-// their colours, as the games of the GameCube's time looked (rifle_model.inc, bazooka_model.inc:
+// their colours, as the games of the GameCube's time looked (rifle_model.inc, smg_model.inc, bazooka_model.inc:
 // each triangle's corners and colours).
 //
 // Drawn straight with GX, as a packet of the scene's opaque draw buffer entered as FLUDD would be
@@ -19,16 +19,17 @@ namespace {
 
 #include "rifle_model.inc"
 #include "bazooka_model.inc"
+#include "smg_model.inc"
 
 struct Model {
 	const float* pos;
 	const unsigned char* col;
 	int corners;
 };
-const Model kModels[2] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, kBazookaCol, kBazookaCorners}};
+const Model kModels[3] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, kBazookaCol, kBazookaCorners}, {kSmgPos, kSmgCol, kSmgCorners}};
 
 Mtx s_viewModel;  // the view's matrix and the model's place in the world, this frame
-int s_shown = -1; // the model placed this frame (0 the rifle, 1 the bazooka), or none
+int s_shown = -1; // the model placed this frame (0 the rifle, 1 the bazooka, 2 the submachine gun), or none
 
 class WeaponPacket : public J3DPacket {
 public:
@@ -38,7 +39,7 @@ WeaponPacket s_packet;
 
 void WeaponPacket::draw()
 {
-	if (s_shown < 0 || s_shown > 1)
+	if (s_shown < 0 || s_shown > 2)
 		return;
 	const Model& m = kModels[s_shown];
 	Mtx identity;
@@ -74,8 +75,8 @@ void WeaponPacket::draw()
 
 } // namespace
 
-// The muzzle's place in a model's own units, forward (0 the rifle, 1 the bazooka).
-float PortWeaponModelMuzzle(int which) { return which == 0 ? kRifleMuzzle : kBazookaMuzzle; }
+// The muzzle's place in a model's own units, forward (0 the rifle, 1 the bazooka, 2 the submachine gun).
+float PortWeaponModelMuzzle(int which) { return which == 0 ? kRifleMuzzle : which == 1 ? kBazookaMuzzle : kSmgMuzzle; }
 
 // A model's place this frame (modapi_held_fludd.cpp): the view's matrix times its place in the
 // world (x right, y forward to the muzzle, z up, in its own units).

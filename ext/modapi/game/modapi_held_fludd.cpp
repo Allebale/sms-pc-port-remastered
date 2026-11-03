@@ -285,14 +285,14 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		s_kick *= powf(0.78f, port_frame_scale());
 	}
 
-	// The rifle and the bazooka: their own models in FLUDD's place (modapi_weapon_models.cpp), on
+	// The rifle, the bazooka and the submachine gun: their own models in FLUDD's place (modapi_weapon_models.cpp), on
 	// the shoulder, the muzzle a little past where the water starts and pointing at the aim,
 	// tipped up by the kick; their own units to about 50 and 47 of the game's long.
 	const int chosenWeapon = PortSprayWeaponId();
-	if (chosenWeapon == 2 || chosenWeapon == 3) {
-		const int which   = chosenWeapon == 2 ? 0 : 1;
-		const f32 scale   = which == 0 ? 12.5f : 15.0f;
-		const f32 ahead   = which == 0 ? 4.0f : 6.0f; // the muzzle past the water's start
+	if (chosenWeapon == 2 || chosenWeapon == 3 || chosenWeapon == 4) {
+		const int which   = chosenWeapon == 2 ? 0 : chosenWeapon == 3 ? 1 : 2; // the rifle, bazooka, submachine gun
+		const f32 scale   = which == 0 ? 12.5f : which == 1 ? 15.0f : 15.0f;
+		const f32 ahead   = which == 0 ? 4.0f : which == 1 ? 6.0f : 4.0f; // the muzzle past the water's start
 		Vec fwd = {toTarget.x + U.x * s_kick * 0.35f, toTarget.y + U.y * s_kick * 0.35f, toTarget.z + U.z * s_kick * 0.35f};
 		unit(fwd);
 		Vec right = cross(fwd, U);
