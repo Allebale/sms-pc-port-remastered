@@ -93,6 +93,9 @@ const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 bool s_firing; // our own requests, let through
 f32 s_lastShotAt;     // when the last shot went (the gun's pump)
 int s_lastShotWeapon;
+bool s_defeatNormal;  // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_NORMAL)
+const int kNormalToDefeat = 12;   // its drops on one enemy
+const f32 kNormalWindow   = 3.0f; // within so many seconds
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -141,6 +144,8 @@ struct Hit {
 	int hits;
 	int lastShot; // the shot (weapon and number) last counted: a shot's drops count once
 	f32 last;     // when
+	int normalHits;  // the normal spray's drops lately (its defeating: SMS_SPRAY_DEFEAT_NORMAL)
+	f32 normalLast;
 };
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
@@ -360,6 +365,22 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	const int tag    = w->mParticleAttackSOA[drop->mParticleIndex];
 	const int weapon = (tag >> kTagShift) & 0xf;
 	const int shot   = (tag >> kTagShift) & 0x7f; // weapon and number
+	if (weapon == NORMAL && s_defeatNormal) { // the normal spray, with its defeating on: a short burst
+		TSmallEnemy* ne = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
+		Hit* h          = ne && !ne->checkLiveFlag(LIVE_FLAG_DEAD) ? hitOf(ne) : 0;
+		if (h) {
+			if (s_time - h->normalLast > kNormalWindow)
+				h->normalHits = 0;
+			h->normalHits++;
+			h->normalLast = s_time;
+			if (h->normalHits >= kNormalToDefeat) {
+				h->normalHits = 0;
+				fprintf(stderr, "[weapons] an enemy defeated by the normal spray\n");
+				ne->kill(); // as a stomp: its own defeat, coins and all
+			}
+		}
+		return;
+	}
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return; // the normal spray, or any other water: the game's own
 	TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
@@ -643,6 +664,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	s_weapon  = now;
 	s_defeat  = defeat;
 	s_trigger = (flags & 2) != 0;
+	if (((flags & 4) != 0) != s_defeatNormal)
+		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
+	s_defeatNormal = (flags & 4) != 0;
 	return 1;
 }
 
