@@ -6,7 +6,7 @@
 // each triangle's corners and colours). In third person (SMS_SPRAY_THIRD_PERSON_MODEL) all of FLUDD
 // on his back is drawn as a pack of the weapon's own colours with the weapon on it over his right
 // shoulder (rifle_pack.inc, bazooka_pack.inc, smg_pack.inc: in game units, from FLUDD's
-// nozzle_center joint).
+// nozzle_center joint), the weapon on it a model of its own (*_pack_gun.inc) that kicks as it fires.
 //
 // Drawn straight with GX, as a packet of the scene's opaque draw buffer entered as FLUDD would be
 // (TWaterGun::perform's CUE_ENTRY, patch zzzzzzzz-held-fludd-weapon-model, which then leaves FLUDD
@@ -26,18 +26,26 @@ namespace {
 #include "rifle_pack.inc"
 #include "bazooka_pack.inc"
 #include "smg_pack.inc"
+#include "rifle_pack_gun.inc"
+#include "bazooka_pack_gun.inc"
+#include "smg_pack_gun.inc"
 
 struct Model {
 	const float* pos;
 	const unsigned char* col;
 	int corners;
 };
-const Model kModels[6] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, kBazookaCol, kBazookaCorners}, {kSmgPos, kSmgCol, kSmgCorners},
+const Model kModels[9] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, kBazookaCol, kBazookaCorners}, {kSmgPos, kSmgCol, kSmgCorners},
                           {kRiflePackPos, kRiflePackCol, kRiflePackCorners}, {kBazookaPackPos, kBazookaPackCol, kBazookaPackCorners},
-                          {kSmgPackPos, kSmgPackCol, kSmgPackCorners}};
+                          {kSmgPackPos, kSmgPackCol, kSmgPackCorners},
+                          {kRiflePackGunPos, kRiflePackGunCol, kRiflePackGunCorners},
+                          {kBazookaPackGunPos, kBazookaPackGunCol, kBazookaPackGunCorners},
+                          {kSmgPackGunPos, kSmgPackGunCol, kSmgPackGunCorners}};
 
 Mtx s_viewModel;  // the view's matrix and the model's place in the world, this frame
 int s_shown = -1; // the model placed this frame (0 the rifle, 1 the bazooka, 2 the submachine gun; 3 to 5 their packs), or none
+Mtx s_viewModel2; // and a second with it (6 to 8: the packs' weapons), or none
+int s_shown2 = -1;
 
 class WeaponPacket : public J3DPacket {
 public:
@@ -45,15 +53,23 @@ public:
 };
 WeaponPacket s_packet;
 
+void drawModel(const Model& m, MtxPtr viewModel);
+
 void WeaponPacket::draw()
 {
-	if (s_shown < 0 || s_shown > 5)
+	if (s_shown < 0 || s_shown > 8)
 		return;
-	const Model& m = kModels[s_shown];
+	drawModel(kModels[s_shown], s_viewModel);
+	if (s_shown2 >= 0 && s_shown2 <= 8)
+		drawModel(kModels[s_shown2], s_viewModel2);
+}
+
+void drawModel(const Model& m, MtxPtr viewModel)
+{
 	Mtx identity;
 	MTXIdentity(identity);
 	GXSetCurrentMtx(GX_PNMTX0);
-	GXLoadPosMtxImm(s_viewModel, GX_PNMTX0);
+	GXLoadPosMtxImm(viewModel, GX_PNMTX0);
 	GXLoadNrmMtxImm(identity, GX_PNMTX0);
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
@@ -88,7 +104,7 @@ float PortWeaponModelMuzzle(int which) { return which == 0 ? kRifleMuzzle : whic
 
 // A pack's muzzle (third person: 0 the rifle's, 1 the bazooka's, 2 the submachine gun's), in game units
 // from FLUDD's nozzle_center (x right, y forward, z up).
-const float* PortWeaponPackMuzzle(int which) { return which == 0 ? kRiflePackMuzzleAt : which == 1 ? kBazookaPackMuzzleAt : kSmgPackMuzzleAt; }
+const float* PortWeaponPackMuzzle(int which) { return which == 0 ? kRiflePackGunMuzzleAt : which == 1 ? kBazookaPackGunMuzzleAt : kSmgPackGunMuzzleAt; }
 
 // A model's place this frame (modapi_held_fludd.cpp): the view's matrix times its place in the
 // world (x right, y forward to the muzzle, z up, in its own units).
@@ -98,7 +114,14 @@ void PortWeaponModelShow(int which, MtxPtr viewModel)
 	s_shown = which;
 }
 
-void PortWeaponModelHide() { s_shown = -1; }
+// A second model with it this frame (a pack's weapon, in its own place).
+void PortWeaponModelShowSecond(int which, MtxPtr viewModel)
+{
+	MTXCopy(viewModel, s_viewModel2);
+	s_shown2 = which;
+}
+
+void PortWeaponModelHide() { s_shown = s_shown2 = -1; }
 
 // As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): true when a weapon's model is
 // entered in its place (FLUDD then left out).

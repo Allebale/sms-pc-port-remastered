@@ -128,6 +128,7 @@ f32 PortSprayWeaponShotPhase();
 bool PortSprayWeaponOnBack(TMario* m, bool* model); // modapi_spray_weapons.cpp
 bool PortSprayWeaponTrigger();
 const float* PortWeaponPackMuzzle(int which); // modapi_weapon_models.cpp
+void PortWeaponModelShowSecond(int which, MtxPtr viewModel);
 
 bool PortFluddHeld(TMario* mario)
 {
@@ -146,6 +147,11 @@ bool PortFluddHeld(TMario* mario)
 // of FLUDD drawn as the weapon's pack instead (modapi_weapon_models.cpp), on his back as FLUDD is.
 // Where its water starts (the shots, modapi_spray_weapons.cpp): the nozzle, or the pack's muzzle.
 JGeometry::TVec3<f32> s_backMuzzle, s_backMario; // and where he was then
+// Which of FLUDD's own axes (its base turn on his back) point forward and up, and their signs:
+// learnt while he stands up straight, then kept, so the pack lies down with him in a dive or a
+// belly slide as FLUDD does.
+int s_packFwd = -1, s_packUp;
+f32 s_packFwdSign, s_packUpSign;
 bool s_haveBackMuzzle;
 void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 {
@@ -197,13 +203,14 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 		unit(axis[c]);
 	}
 	int fi = 0, ui = 1;
-	f32 best = -1.0f;
+	f32 best = -1.0f, bestF = 0.0f;
 	for (int c = 0; c < 3; c++) {
 		const f32 d = fabsf(axis[c].x * face.x + axis[c].z * face.z);
 		if (d > best)
 			best = d, fi = c;
 	}
-	best = -1.0f;
+	bestF = best;
+	best  = -1.0f;
 	for (int c = 0; c < 3; c++) {
 		if (c == fi)
 			continue;
@@ -211,11 +218,23 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 		if (d > best)
 			best = d, ui = c;
 	}
+	if (bestF > 0.9f && best > 0.9f && !(g->mMario->mStatus & MARIO_STATUS_FLAG_JUMPING)) { // standing up straight
+		s_packFwd     = fi, s_packUp = ui;
+		s_packFwdSign = axis[fi].x * face.x + axis[fi].z * face.z < 0.0f ? -1.0f : 1.0f;
+		s_packUpSign  = axis[ui].y < 0.0f ? -1.0f : 1.0f;
+	}
+	if (s_packFwd >= 0) { // as learnt: FLUDD's own axes, however he lies
+		fi = s_packFwd, ui = s_packUp;
+		axis[fi].x *= s_packFwdSign, axis[fi].y *= s_packFwdSign, axis[fi].z *= s_packFwdSign;
+		axis[ui].x *= s_packUpSign, axis[ui].y *= s_packUpSign, axis[ui].z *= s_packUpSign;
+	}
 	Vec fwd = axis[fi], up = axis[ui];
-	if (fwd.x * face.x + fwd.z * face.z < 0.0f)
-		fwd.x = -fwd.x, fwd.y = -fwd.y, fwd.z = -fwd.z;
-	if (up.y < 0.0f)
-		up.x = -up.x, up.y = -up.y, up.z = -up.z;
+	if (s_packFwd < 0) { // not learnt yet: the nearest
+		if (fwd.x * face.x + fwd.z * face.z < 0.0f)
+			fwd.x = -fwd.x, fwd.y = -fwd.y, fwd.z = -fwd.z;
+		if (up.y < 0.0f)
+			up.x = -up.x, up.y = -up.y, up.z = -up.z;
+	}
 	Vec right = cross(fwd, up);
 	if (!unit(right))
 		return;
@@ -232,6 +251,22 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 	}
 	MTXConcat(graphics->getViewMtx(), place, viewModel);
 	PortWeaponModelShow(3 + which, viewModel); // all of FLUDD left out, the pack in its place
+	// its weapon on top, kicking back and up as it fires (about where it sits on the neck)
+	{
+		const f32 kick  = phase >= 0.0f ? (1.0f - phase) * (1.0f - phase) : 0.0f;
+		const f32 back  = kick * (which == 1 ? 9.0f : which == 0 ? 6.0f : 3.5f);
+		const f32 tilt  = kick * (which == 1 ? 0.2f : which == 0 ? 0.25f : 0.12f);
+		const f32 py = 2.0f, pz = 21.0f; // the pivot, in the pack's units (make_pack.py)
+		const f32 c = cosf(tilt), s = sinf(tilt);
+		Mtx kicked, gunWorld, gunView;
+		MTXIdentity(kicked);
+		kicked[1][1] = c, kicked[1][2] = -s, kicked[2][1] = s, kicked[2][2] = c;
+		kicked[1][3] = py - (c * py - s * pz) - back;
+		kicked[2][3] = pz - (s * py + c * pz);
+		MTXConcat(place, kicked, gunWorld);
+		MTXConcat(graphics->getViewMtx(), gunWorld, gunView);
+		PortWeaponModelShowSecond(6 + which, gunView);
+	}
 	const float* mz = PortWeaponPackMuzzle(which);
 	s_backMuzzle.set(at.x + right.x * mz[0] + fwd.x * mz[1] + up.x * mz[2], at.y + right.y * mz[0] + fwd.y * mz[1] + up.y * mz[2],
 	                 at.z + right.z * mz[0] + fwd.z * mz[1] + up.z * mz[2]);
