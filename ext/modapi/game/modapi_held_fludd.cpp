@@ -98,7 +98,7 @@ bool flipping(TMario* m)
 
 } // namespace
 
-void PortBazookaHide(); // modapi_bazooka_model.cpp
+void PortWeaponModelHide(); // modapi_weapon_models.cpp
 
 // api->held_fludd->set (mod_runtime.cpp)
 extern "C" int modg_held_fludd_set(int on, float right, float down, float forward, float scale, float aim)
@@ -111,7 +111,7 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 	s_aim     = aim > 50.0f ? aim : 1200.0f;
 	if (!s_on) { // (its turn in the view is kept: shown again with the nozzle away, it is held so)
 		s_placed = s_haveLast = false;
-		PortBazookaHide();
+		PortWeaponModelHide();
 	}
 	s_flipAfter = 0;
 	return gpMarioOriginal ? 1 : 0;
@@ -120,8 +120,9 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 // Is this Mario's FLUDD held in view now (drawn even with his models left out)?
 bool PortSprayWeaponChosen(); // modapi_spray_weapons.cpp
 int PortSprayWeaponId();
-void PortBazookaShow(MtxPtr viewModel); // modapi_bazooka_model.cpp
-void PortBazookaHide();
+void PortWeaponModelShow(int which, MtxPtr viewModel); // modapi_weapon_models.cpp
+void PortWeaponModelHide();
+float PortWeaponModelMuzzle(int which);
 
 f32 PortSprayWeaponShotPhase();
 
@@ -140,7 +141,7 @@ bool PortFluddHeld(TMario* mario)
 void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
 	s_placed = false;
-	PortBazookaHide(); // shown again below, held with the bazooka chosen
+	PortWeaponModelHide(); // shown again below, held with the bazooka chosen
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
 		return;
 	// its nozzle kept out, as the gun: idle, the game puts it away after a moment (the "house"
@@ -284,28 +285,31 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		s_kick *= powf(0.78f, port_frame_scale());
 	}
 
-	// The bazooka: its own model in FLUDD's place (modapi_bazooka_model.cpp), on the shoulder,
-	// its muzzle a little past where the water starts and pointing at the aim, tipped up by the
-	// kick; its own units (the muzzle 1.56 ahead of its middle) to about 47 of the game's long.
-	if (PortSprayWeaponId() == 3) {
-		const f32 scale = 15.0f;
+	// The rifle and the bazooka: their own models in FLUDD's place (modapi_weapon_models.cpp), on
+	// the shoulder, the muzzle a little past where the water starts and pointing at the aim,
+	// tipped up by the kick; their own units to about 50 and 47 of the game's long.
+	const int chosenWeapon = PortSprayWeaponId();
+	if (chosenWeapon == 2 || chosenWeapon == 3) {
+		const int which   = chosenWeapon == 2 ? 0 : 1;
+		const f32 scale   = which == 0 ? 12.5f : 15.0f;
+		const f32 ahead   = which == 0 ? 4.0f : 6.0f; // the muzzle past the water's start
 		Vec fwd = {toTarget.x + U.x * s_kick * 0.35f, toTarget.y + U.y * s_kick * 0.35f, toTarget.z + U.z * s_kick * 0.35f};
 		unit(fwd);
 		Vec right = cross(fwd, U);
 		if (unit(right)) {
-			const Vec up = cross(right, fwd);
-			const Vec muzzle = along(tip, 18.0f, fwd);
-			const Vec origin = along(muzzle, -1.565f * scale, fwd);
+			const Vec up     = cross(right, fwd);
+			const Vec muzzle = along(tip, ahead, fwd);
+			const Vec origin = along(muzzle, -PortWeaponModelMuzzle(which) * scale, fwd);
 			Mtx world, viewModel;
 			const f32 col[3][3] = {{right.x, fwd.x, up.x}, {right.y, fwd.y, up.y}, {right.z, fwd.z, up.z}};
-			const f32 at[3] = {origin.x, origin.y, origin.z};
+			const f32 at[3]     = {origin.x, origin.y, origin.z};
 			for (int row = 0; row < 3; row++) {
 				for (int c2 = 0; c2 < 3; c2++)
 					world[row][c2] = col[row][c2] * scale;
 				world[row][3] = at[row];
 			}
 			MTXConcat(v, world, viewModel);
-			PortBazookaShow(viewModel);
+			PortWeaponModelShow(which, viewModel);
 		}
 	}
 
