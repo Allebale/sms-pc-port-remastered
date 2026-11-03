@@ -81,11 +81,12 @@ struct Weapon {
 const Weapon kDefaults[WEAPONS] = { // the game's own numbers (a mod may set others: set_weapon_stats)
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
 	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 45.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
-	{1, 1.0f, 0.7f, 3.5f, 2.5f, 0.0f, 1.0f, 24, 6.0f, 45.0f, 0.0f, 2, 0, 0.7f, true},  // rifle (the Multi Shotgun zoomed in): one big blob
+	{1, 4.0f, 0.7f, 3.5f, 2.5f, 0.0f, 1.0f, 24, 6.0f, 45.0f, 0.0f, 2, 0, 0.7f, true},  // rifle (the Multi Shotgun zoomed in): one big blob
 	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 60, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
 Weapon kWeapons[WEAPONS]; // as they are now (kDefaults, or a mod's)
 f32 s_hitScale = 1.0f;    // the rifle's hit size, times its own
+f32 s_hitReach[WEAPONS] = {0.0f, 8000.0f, 8000.0f, 8000.0f}; // how far from Mario drops still hit enemies (ownHits)
 f32 s_reachScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f}; // reach, times its own
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
@@ -98,6 +99,7 @@ f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
 void followBazooka();
 void followStraight();
+void ownHits();
 const char* const kNames[WEAPONS] = {"normal spray", "shotgun", "rifle", "bazooka"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -177,6 +179,7 @@ void afterMovement()
 	if (s_weapon != NORMAL && s_trigger && s_time >= s_ready)
 		fire();
 	followStraight();
+	ownHits();
 	followBazooka();
 	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
 		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_PO_NORMAL_NOZZLE_IMI, &gpMarioOriginal->mWaterGun->getEmitPos0(), nullptr, 1.0f, 0, 0,
@@ -609,6 +612,77 @@ void followBazooka()
 		s_bazookaShot = 0;
 }
 
+// The weapons' drops against the small enemies, the game's check aside: the game only looks for
+// enemies near Mario, so far off a drop flies through them. Each flying drop of a weapon, within
+// its reach of Mario, is tested along its way since the last frame (a fast one cannot pass one
+// by) against every small enemy; one it reaches is hit (shoved, counted), and far off (where the
+// game would not) given the game's own water too. The bazooka's bursts there.
+void ownHits()
+{
+	TModelWaterManager* w = gpModelWaterManager;
+	TMario* m             = gpMarioOriginal;
+	if (!w || !m || !gpConductor)
+		return;
+	const f32 dt = port_frame_scale();
+	for (int i = 0; i < (int)w->mParticleCount; i++) {
+		const int tag    = (w->mParticleAttackSOA[i] >> kTagShift) & 0x7f;
+		const int weapon = tag & 0xf;
+		if (weapon <= NORMAL || weapon >= WEAPONS || (w->mParticleFlagSOA[i] & 0xf) != 1)
+			continue;
+		const f32 reach = s_hitReach[weapon];
+		const JGeometry::TVec3<f32> p = w->mParticlePositionSOA[i];
+		const f32 mx = p.x - m->mPosition.x, my = p.y - m->mPosition.y, mz = p.z - m->mPosition.z;
+		const f32 fromMario2 = mx * mx + my * my + mz * mz;
+		if (reach <= 0.0f || fromMario2 > reach * reach)
+			continue;
+		const JGeometry::TVec3<f32> v = w->mParticleVelocitySOA[i];
+		const JGeometry::TVec3<f32> a(p.x - v.x * dt, p.y - v.y * dt, p.z - v.z * dt); // where it was
+		const f32 sx = p.x - a.x, sy = p.y - a.y, sz = p.z - a.z, sl2 = sx * sx + sy * sy + sz * sz;
+		const f32 size = w->mParticleSizeSOA[i];
+		bool gone      = false;
+		for (int list = 0; list < 2 && !gone; list++) {
+			JGadget::TList<TEnemyManager*>::iterator ei = gpConductor->unk20.begin();
+			JGadget::TList<TLiveManager*>::iterator li  = gpConductor->unk10.begin();
+			while (!gone && (list == 0 ? ei != gpConductor->unk20.end() : li != gpConductor->unk10.end())) {
+				TLiveManager* mgr = list == 0 ? (TLiveManager*)*ei : *li;
+				if (list == 0)
+					++ei;
+				else
+					++li;
+				for (int k = 0; mgr && k < mgr->getObjNum() && !gone; k++) {
+					TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(k));
+					if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD))
+						continue;
+					const f32 h  = e->mHeadHeight > 80.0f ? e->mHeadHeight * 0.5f : 40.0f;
+					const f32 cx = e->mPosition.x - a.x, cy = e->mPosition.y + h - a.y, cz = e->mPosition.z - a.z;
+					f32 t = sl2 > 1e-4f ? (cx * sx + cy * sy + cz * sz) / sl2 : 1.0f;
+					t     = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+					const f32 dx = cx - sx * t, dy = cy - sy * t, dz = cz - sz * t;
+					const f32 er = (e->mBodyRadius > 30.0f ? e->mBodyRadius : 30.0f) + size + (h > 40.0f ? h * 0.3f : 0.0f);
+					if (dx * dx + dy * dy + dz * dz > er * er)
+						continue;
+					if (fromMario2 > 2000.0f * 2000.0f) { // where the game does not look: its own water too
+						TModelWaterManager::mStaticHitActor.mPosition      = p;
+						TModelWaterManager::mStaticHitActor.mParticleIndex = i;
+						e->receiveMessage(&TModelWaterManager::mStaticHitActor, HIT_MESSAGE_SPRAYED_BY_WATER);
+					}
+					if (kWeapons[weapon].burst > 0.0f) {
+						if (s_burst != tag) {
+							s_burst = tag;
+							burst(weapon, tag, p);
+						}
+						w->mParticleLifetimeSOA[i] = 0.0f;
+						gone                       = true;
+						break;
+					}
+					const f32 vl = sqrtf(v.x * v.x + v.z * v.z);
+					hitEnemy(e, weapon, tag, vl > 1e-3f ? v.x / vl : 0.0f, vl > 1e-3f ? v.z / vl : 0.0f);
+				}
+			}
+		}
+	}
+}
+
 PortExtension s_extension;
 
 struct Register {
@@ -680,7 +754,7 @@ f32 PortSprayWeaponShotPhase()
 // held_fludd->set_weapon_stats (mod_runtime.cpp): a weapon's numbers, as the mod's menu has them
 // (`has` 0: the game's own again). push, range, hit and burst are times the game's own.
 extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water,
-                                       float hit, float burst)
+                                       float hit, float burst, float hitReach)
 {
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return 0;
@@ -688,10 +762,13 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 	const Weapon& d = kDefaults[weapon];
 	w               = d;
 	s_reachScale[weapon] = 1.0f;
+	s_hitReach[weapon]   = 8000.0f;
 	if (weapon == RIFLE)
 		s_hitScale = 1.0f;
 	if (!has)
 		return 1;
+	if (hitReach > 0.0f)
+		s_hitReach[weapon] = hitReach;
 	w.every    = every >= 0.1f ? every : 0.1f;
 	w.shove    = d.shove * (push >= 0.0f ? push : 0.0f);
 	w.lift     = d.lift * (push >= 0.0f ? push : 0.0f);

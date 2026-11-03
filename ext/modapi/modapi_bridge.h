@@ -70,7 +70,7 @@ int modg_player_set_hidden_parts(uint32_t parts);        // API 1.5 beta 8
 int modg_held_fludd_set(int on, float right, float down, float forward, float scale, float aim); // first person
 int modg_spray_weapon_set(int weapon, int flags); // first person
 int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water, float hit,
-                           float burst);
+                           float burst, float hitReach);
 
 int modg_camera_get(SmsCamera* out);
 
