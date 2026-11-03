@@ -598,6 +598,12 @@ void followStraight()
 		}
 		const JGeometry::TVec3<f32>& way = s_laneCount ? s_lanes[lane] : s_straightWay;
 		v.set(way.x * s_straightSpeed, way.y * s_straightSpeed, way.z * s_straightSpeed);
+		// and put back exactly on its line (the game moved it with its fall first): from the gun
+		// to what the crosshair is on, however far, never above or below it
+		JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
+		const f32 along = (at.x - s_straightFrom.x) * way.x + (at.y - s_straightFrom.y) * way.y + (at.z - s_straightFrom.z) * way.z;
+		if (along > 0.0f)
+			at.set(s_straightFrom.x + way.x * along, s_straightFrom.y + way.y * along, s_straightFrom.z + way.z * along);
 		if (w->mParticleLifetimeSOA[i] < 30.0f)
 			w->mParticleLifetimeSOA[i] = 30.0f; // no end to its reach
 		flying++;
