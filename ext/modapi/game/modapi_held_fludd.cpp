@@ -17,8 +17,6 @@
 #include <M3DUtil/MActor.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/JDrama/JDRGraphics.hpp>
-#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
-#include <Camera/Camera.hpp>
 
 #include <math.h>
 #include <string.h>
@@ -100,8 +98,6 @@ bool flipping(TMario* m)
 
 } // namespace
 
-void untint(); // FLUDD's own colour again (below)
-
 // api->held_fludd->set (mod_runtime.cpp)
 extern "C" int modg_held_fludd_set(int on, float right, float down, float forward, float scale, float aim)
 {
@@ -113,7 +109,6 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 	s_aim     = aim > 50.0f ? aim : 1200.0f;
 	if (!s_on) { // (its turn in the view is kept: shown again with the nozzle away, it is held so)
 		s_placed = s_haveLast = false;
-		untint(); // FLUDD's own colour again
 	}
 	s_flipAfter = 0;
 	return gpMarioOriginal ? 1 : 0;
@@ -121,84 +116,7 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 
 // Is this Mario's FLUDD held in view now (drawn even with his models left out)?
 bool PortSprayWeaponChosen(); // modapi_spray_weapons.cpp
-int PortSprayWeaponId();
 
-// The held gun's colour by its weapon: a steady fog of that colour over FLUDD's materials (as the
-// game tints Mario when hurt, SMS_AddDamageFogEffect), about 60% of it at any distance; the
-// normal spray none (FLUDD's own yellow). Each material's own fog kept, and put back.
-const int kMostTinted = 64;
-J3DFogInfo s_fogKept[kMostTinted];
-bool s_fogIsKept[kMostTinted];
-J3DModelData* s_tinted; // the model whose fog is ours now
-J3DModel* s_tintedModel;
-int s_tint = -1;
-
-// FLUDD's materials are made into display lists once and locked (Mario's are made each frame,
-// so his damage fog shows): made again with the fog changed, and locked again as they were.
-void remake(J3DModel* model)
-{
-	const bool locked = model->getModelData()->getMaterialNum() && model->getMatPacket(0)->isLocked();
-	model->unlock();
-	model->makeDL();
-	if (locked)
-		model->lock();
-}
-
-void untint()
-{
-	if (!s_tinted)
-		return;
-	for (u16 i = 0; i < s_tinted->getMaterialNum() && i < kMostTinted; i++) {
-		J3DFog* fog = s_tinted->getMaterialNodePointer(i)->getPEBlock()->getFog();
-		if (fog && s_fogIsKept[i])
-			*(J3DFogInfo*)fog = s_fogKept[i];
-		s_fogIsKept[i] = false;
-	}
-	if (J3DModel* model = s_tintedModel)
-		remake(model);
-	s_tinted      = 0;
-	s_tintedModel = 0;
-	s_tint        = -1;
-}
-
-void tint(TWaterGun* g, int weapon)
-{
-	GXColor c = {0, 0, 0, 255};
-	if (weapon == 2) // the rifle: brown
-		c.r = 110, c.g = 62, c.b = 25;
-	else if (weapon == 3) // the bazooka: green
-		c.r = 40, c.g = 160, c.b = 50;
-	else {
-		untint();
-		return;
-	}
-	J3DModel* model    = g->mFluddModel->getModel();
-	J3DModelData* data = model->getModelData();
-	if (s_tinted && s_tinted != data)
-		untint();
-	if (s_tinted == data && s_tint == weapon)
-		return; // as it is
-	s_tinted      = data;
-	s_tintedModel = model;
-	s_tint        = weapon;
-	for (u16 i = 0; i < data->getMaterialNum() && i < kMostTinted; i++) {
-		J3DFog* fog = data->getMaterialNodePointer(i)->getPEBlock()->getFog();
-		if (!fog)
-			continue;
-		if (!s_fogIsKept[i]) {
-			s_fogKept[i]   = *(J3DFogInfo*)fog;
-			s_fogIsKept[i] = true;
-		}
-		fog->mType   = 2; // GX_FOG_PERSP_LIN
-		fog->mStartZ = -15000.0f; // so about 60% at the gun's distance, and much the same anywhere
-		fog->mEndZ   = 10000.0f;
-		fog->mNearZ  = gpCamera ? gpCamera->mNear : 1.0f;
-		fog->mFarZ   = gpCamera ? gpCamera->mFar : 100000.0f;
-		fog->mColor  = c;
-		fog->mAdjEnable = 0;
-	}
-	remake(model);
-}
 f32 PortSprayWeaponShotPhase();
 
 bool PortFluddHeld(TMario* mario)
@@ -240,7 +158,6 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	// (Otherwise the game may pump it along with Mario's arm: Super Mario Eclipse keeps him
 	// holding the pump.)
 	const bool weapon = PortSprayWeaponChosen();
-	tint(g, PortSprayWeaponId());
 	const bool overridden = weapon || !g->isEmitting();
 	const f32 phase = weapon ? PortSprayWeaponShotPhase() : -1.0f;
 	if (overridden) { // the still pose first (the gun's turn is worked out from it)
