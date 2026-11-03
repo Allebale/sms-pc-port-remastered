@@ -283,7 +283,8 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 }
 
 // The bazooka's water explosion where it bursts: the game's water-hit sprays and splashes round
-// it, a ring of FLUDD's drops thrown out and up (they wet what they reach), and a bang.
+// it, a ring of FLUDD's drops thrown out and up (they wet what they reach), a very big blob in
+// the middle, and a bang.
 void explode(const JGeometry::TVec3<f32>& at, f32 r)
 {
 	if (gpMarioParticleManager) {
@@ -318,6 +319,15 @@ void explode(const JGeometry::TVec3<f32>& at, f32 r)
 			info.mPow.set(30.0f + 25.0f * random01());
 			gpModelWaterManager->emitRequest(info);
 		}
+		// and one very big blob of water at the middle of it, thrown a little up, landing there
+		const f32 base = g->mEmitInfo->mSize.get();
+		info.mSize.set(base * 12.0f);
+		info.mDirTremble.set(0.0f);
+		info.mPowTremble.set(0.0f);
+		info.mPos.value.set(at.x, at.y + 60.0f, at.z);
+		info.mDir.value.set(0.0f, 1.0f, 0.0f);
+		info.mPow.set(12.0f);
+		gpModelWaterManager->emitRequest(info);
 		s_firing = false;
 	}
 	if (SMSGetMSound())
