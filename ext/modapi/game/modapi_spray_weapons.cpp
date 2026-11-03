@@ -4,7 +4,7 @@
 //
 //              shot                               reach      shove                 to defeat  every
 //   Shotgun    8 drops in a spread                medium     medium                2 shots    1 s
-//   Rifle      3 big fast drops in a line             very long  strong                1 shot     1 s
+//   Rifle      the shotgun's 8, dead straight             very long  strong                1 shot     1 s
 //   Bazooka    one huge drop, bursting on a hit   long       very strong, thrown   1 shot     5 s
 //                                                            up into the air        (all in its burst)
 //
@@ -81,7 +81,7 @@ struct Weapon {
 const Weapon kDefaults[WEAPONS] = { // the game's own numbers (a mod may set others: set_weapon_stats)
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
 	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
-	{3, 2.6f, 1.6f, 1.8f, 2.5f, 0.0f, 1.0f, 12, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
+	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, true},          // rifle
 	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 60, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
 Weapon kWeapons[WEAPONS]; // as they are now (kDefaults, or a mod's)
@@ -451,6 +451,9 @@ TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec
 
 int s_straightShot;  // the rifle's or bazooka's drops in straight flight (their shot)
 JGeometry::TVec3<f32> s_straightWay, s_straightFrom;
+const int kMostLanes = 8;
+JGeometry::TVec3<f32> s_lanes[kMostLanes]; // each straight drop's way (the rifle's spread)
+int s_laneCount;
 f32 s_straightFar, s_straightSpeed;
 int s_bazookaShot;   // the bazooka's drop in flight (its shot), to burst where it lands
 JGeometry::TVec3<f32> s_bazookaAt;
@@ -479,22 +482,20 @@ void fire()
 	const JGeometry::TVec3<f32> from = info.mPos.value;
 	JGeometry::TVec3<f32> way        = info.mDir.value;
 	if (k.straight) {
-		// what the crosshair is on: the rifle hits it now (hitscan); both send their drops dead
-		// straight to it (followStraight)
+		// aimed at what the crosshair is on; the drops fly dead straight (followStraight): the
+		// bazooka's to it (then it falls as any drop), the rifle's on as far as its reach
 		JGeometry::TVec3<f32> at;
-		TSmallEnemy* e = rifleTarget(eye, f, kRifleReach * (s_reachScale[s_weapon] < 1.0f ? s_reachScale[s_weapon] : 1.0f), &at);
-		const f32 fl   = sqrtf(f.x * f.x + f.z * f.z) + 1e-4f;
-		if (e && s_weapon == RIFLE)
-			hitEnemy(e, RIFLE, shot, f.x / fl, f.z / fl);
+		const f32 reachNow = kRifleReach * (s_reachScale[s_weapon] < 1.0f ? s_reachScale[s_weapon] : 1.0f);
+		TSmallEnemy* e     = rifleTarget(eye, f, reachNow, &at);
 		JGeometry::TVec3<f32> d(at.x - from.x, at.y - from.y, at.z - from.z);
 		const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
 		if (l > 1.0f)
 			way.set(d.x / l, d.y / l, d.z / l);
-		s_straightShot = shot;
-		s_straightWay  = way;
-		s_straightFrom = from;
-		s_straightFar  = l + 200.0f; // past what it is aimed at, then it falls as any drop
+		s_straightShot  = shot;
+		s_straightFrom  = from;
+		s_straightFar   = s_weapon == RIFLE ? reachNow : l + 200.0f;
 		s_straightSpeed = 0.0f;
+		s_laneCount     = 0;
 		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon], e ? "an enemy" : "nothing", l);
 	}
 	const f32 reach = k.straight ? 1.0f : s_reachScale[s_weapon]; // further: faster and longer lived
@@ -505,8 +506,9 @@ void fire()
 	info.mAlive.set((s16)(info.mAlive.get() * k.alive * (reach > 0.0f ? sqrtf(reach) : 1.0f)));
 	info.mSize.set(n->mEmitParams.mSize.get() * k.size);
 	info.mSizeTremble.set(0.0f);
-	info.mHitRadius.set(info.mHitRadius.get() * k.hit);
-	info.mHitHeight.set(info.mHitHeight.get() * k.hit);
+	const f32 hit = k.hit * (s_weapon == RIFLE ? s_hitScale : 1.0f); // the rifle's hit size (its menu)
+	info.mHitRadius.set(info.mHitRadius.get() * hit);
+	info.mHitHeight.set(info.mHitHeight.get() * hit);
 	info.mDirTremble.set(0.0f);
 	info.mPowTremble.set(0.0f);
 	info.mFlag.set(0x40);
@@ -516,6 +518,8 @@ void fire()
 		JGeometry::TVec3<f32> d = way;
 		scatter(d, k.spread);
 		info.mDir.value = d;
+		if (k.straight && s_laneCount < kMostLanes)
+			s_lanes[s_laneCount++] = d; // each drop's own way, kept straight
 		info.mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
 		made += gpModelWaterManager->emitRequest(info) ? 1 : 0;
 	}
@@ -529,7 +533,7 @@ void fire()
 		s_bazookaShot = shot;
 		s_bazookaSeen = false;
 	}
-	s_soundUntil = s_time + (s_weapon == BAZOOKA ? 0.45f : s_weapon == SHOTGUN ? 0.3f : 0.15f);
+	s_soundUntil = s_time + (s_weapon == BAZOOKA ? 0.45f : 0.3f);
 	if (s_told != s_weapon) {
 		fprintf(stderr, "[weapons] %s fired (%d drops)\n", kNames[s_weapon], made);
 		s_told = s_weapon;
@@ -562,7 +566,17 @@ void followStraight()
 		JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
 		if (s_straightSpeed <= 0.0f)
 			s_straightSpeed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-		v.set(s_straightWay.x * s_straightSpeed, s_straightWay.y * s_straightSpeed, s_straightWay.z * s_straightSpeed);
+		// its own way: the lane nearest the way it is going (a frame's fall bends it only a little)
+		const f32 vl = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z) + 1e-4f;
+		int lane     = 0;
+		f32 best     = -2.0f;
+		for (int k = 0; k < s_laneCount; k++) {
+			const f32 c = (v.x * s_lanes[k].x + v.y * s_lanes[k].y + v.z * s_lanes[k].z) / vl;
+			if (c > best)
+				best = c, lane = k;
+		}
+		const JGeometry::TVec3<f32>& way = s_laneCount ? s_lanes[lane] : s_straightWay;
+		v.set(way.x * s_straightSpeed, way.y * s_straightSpeed, way.z * s_straightSpeed);
 		if (w->mParticleLifetimeSOA[i] < 30.0f)
 			w->mParticleLifetimeSOA[i] = 30.0f; // no end to its reach
 		flying++;
@@ -658,7 +672,7 @@ bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
 // animation (modapi_held_fludd.cpp), a pump only as a weapon fires.
 f32 PortSprayWeaponShotPhase()
 {
-	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : s_lastShotWeapon == SHOTGUN ? 0.35f : 0.25f;
+	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : 0.35f;
 	const f32 t   = s_time - s_lastShotAt;
 	return s_lastShotAt > 0.0f && t >= 0.0f && t < len ? t / len : -1.0f;
 }
