@@ -29,6 +29,7 @@
 #include <Enemy/Telesa.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
+#include <Map/MapCollisionData.hpp>
 #include <Player/Mario.hpp>
 #include <Player/ModelWaterManager.hpp>
 #include <Player/NozzleBase.hpp>
@@ -190,10 +191,19 @@ void afterMovement()
 			continue;
 		}
 		const f32 mx = h.vx * dt, mz = h.vz * dt;
-		JGeometry::TVec3<f32> from(e->mPosition.x, e->mPosition.y + 40.0f, e->mPosition.z);
-		JGeometry::TVec3<f32> to(from.x + mx * 1.5f + h.vx * 0.5f, from.y, from.z + mz * 1.5f + h.vz * 0.5f);
-		JGeometry::TVec3<f32> wall;
-		if (gpMap && (!gpMap->isInArea(to.x, to.z) || gpMap->intersectLine(from, to, true, &wall))) {
+		if (gpMap && !gpMap->isInArea(e->mPosition.x + mx, e->mPosition.z + mz)) {
+			h.vx = h.vz = 0.0f; // the stage's edge
+			continue;
+		}
+		// moved with the map's own wall test, as actors are: kept out of walls, sliding along
+		// them; steps, slopes and kerbs no longer stop it (a thin line did)
+		const f32 radius = e->mBodyRadius > 30.0f ? e->mBodyRadius : 30.0f;
+		const f32 height = e->mHeadHeight > 60.0f ? e->mHeadHeight * 0.5f : 30.0f;
+		TBGWallCheckRecord wall(e->mPosition.x + mx, e->mPosition.y + height, e->mPosition.z + mz, radius, 1, 0);
+		const bool touched = gpMap && gpMap->isTouchedWallsAndMoveXZ(&wall);
+		e->mPosition.x = wall.mCenter.x;
+		e->mPosition.z = wall.mCenter.z;
+		if (touched) {
 			// against a wall: those the game defeats against walls (Strollin' Stus and their
 			// kind, rolling away from the water) are defeated so here too, hard enough
 			THamuKuri* stu = dynamic_cast<THamuKuri*>(e);
@@ -201,12 +211,12 @@ void afterMovement()
 			    && stu->getSpine()->getCurrentNerve() != &TNerveHamuKuriWallDie::theNerve()) {
 				stu->getSpine()->reset();
 				stu->getSpine()->setNext(&TNerveHamuKuriWallDie::theNerve());
+				h.vx = h.vz = 0.0f;
+				continue;
 			}
-			h.vx = h.vz = 0.0f;
-			continue;
+			h.vx *= 0.5f; // slides on, slower
+			h.vz *= 0.5f;
 		}
-		e->mPosition.x += mx;
-		e->mPosition.z += mz;
 		h.vx *= keep;
 		h.vz *= keep;
 	}
@@ -244,12 +254,16 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	}
 	if (!fresh)
 		return;
+	h->lastShot = shot;
+	if (!s_defeat)
+		return; // hits count towards a defeat only while it is on
 	if (s_time - h->last > kHitWindow)
 		h->hits = 0;
 	h->hits++;
-	h->lastShot = shot;
-	h->last     = s_time;
-	if (s_defeat && h->hits >= k.toDefeat) {
+	h->last = s_time;
+	if (h->hits < k.toDefeat)
+		fprintf(stderr, "[weapons] an enemy hit by the %s, %d of %d\n", kNames[weapon], h->hits, k.toDefeat);
+	if (h->hits >= k.toDefeat) {
 		h->hits = 0;
 		fprintf(stderr, "[weapons] an enemy defeated by the %s\n", kNames[weapon]);
 		e->kill(); // as a stomp: its own defeat, coins and all
@@ -607,6 +621,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
 	const int now     = weapon > NORMAL && weapon < WEAPONS ? weapon : NORMAL;
 	const bool defeat = (flags & 1) != 0;
+	if (defeat != s_defeat) // counted afresh from when defeating is turned on
+		for (int i = 0; i < kMostHits; i++)
+			s_hits[i].hits = 0;
 	if (now != s_weapon || defeat != s_defeat)
 		fprintf(stderr, "[weapons] %s, defeating enemies %s\n", kNames[now], defeat ? "on" : "off");
 	s_weapon  = now;
