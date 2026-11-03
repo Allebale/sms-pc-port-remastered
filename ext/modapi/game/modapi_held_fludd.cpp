@@ -127,7 +127,7 @@ float PortWeaponModelMuzzle(int which);
 f32 PortSprayWeaponShotPhase();
 bool PortSprayWeaponOnBack(TMario* m, bool* model); // modapi_spray_weapons.cpp
 bool PortSprayWeaponTrigger();
-void PortWeaponModelShowOnBack(int which, MtxPtr viewModel); // modapi_weapon_models.cpp
+const float* PortWeaponPackMuzzle(int which); // modapi_weapon_models.cpp
 
 bool PortFluddHeld(TMario* mario)
 {
@@ -142,10 +142,14 @@ bool PortFluddHeld(TMario* mario)
 
 // FLUDD on his back while a spray weapon fires from it (third person, SMS_SPRAY_THIRD_PERSON):
 // the nozzle kept out while R is held and a moment after (the game then puts it away as ever),
-// with a pump as each shot goes; with the weapons' models on, kept out and the model drawn in the
-// nozzle's place (only the nozzle left out). Nothing else of FLUDD or of him changes.
+// with a pump as each shot goes. With the weapons' models on (SMS_SPRAY_THIRD_PERSON_MODEL), all
+// of FLUDD drawn as the weapon's pack instead (modapi_weapon_models.cpp), on his back as FLUDD is.
+// Where its water starts (the shots, modapi_spray_weapons.cpp): the nozzle, or the pack's muzzle.
+JGeometry::TVec3<f32> s_backMuzzle, s_backMario; // and where he was then
+bool s_haveBackMuzzle;
 void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 {
+	s_haveBackMuzzle = false;
 	bool model = false;
 	if (!g->mFluddModel || !PortSprayWeaponOnBack(g->mMario, &model))
 		return;
@@ -153,47 +157,85 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 	const int which   = weapon == 2 ? 0 : weapon == 3 ? 1 : weapon == 4 ? 2 : -1; // the rifle, bazooka, submachine gun
 	model             = model && which >= 0;
 	const f32 phase   = PortSprayWeaponShotPhase();
-	if (!model && phase < 0.0f && !PortSprayWeaponTrigger())
-		return;
-	g->unk1CEC = 0.0f;      // out
-	g->unk1CFA = g->unk1CF8; // and the game's own wait before it puts it away
-	g->mFluddModel->setBck(phase >= 0.0f ? "wg_pump" : "wg_house");
-	if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
-		ctrl->setRate(0.0f);
-		ctrl->setFrame(phase >= 0.0f ? phase * ctrl->getEnd() : 0.0f);
+	J3DModel* fm      = g->mFluddModel->getModel();
+	if (model || phase >= 0.0f || PortSprayWeaponTrigger()) {
+		g->unk1CEC = 0.0f;       // out
+		g->unk1CFA = g->unk1CF8; // and the game's own wait before it puts it away
+		g->mFluddModel->setBck(phase >= 0.0f && !model ? "wg_pump" : "wg_house");
+		if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
+			ctrl->setRate(0.0f);
+			ctrl->setFrame(phase >= 0.0f && !model ? phase * ctrl->getEnd() : 0.0f);
+		}
+		g->mFluddModel->calc();
+		if (MActor* nozzle = g->getCurrentNozzle()->getMActor()) {
+			nozzle->getModel()->setBaseTRMtx(fm->getAnmMtx(g->unk1CD8));
+			nozzle->getModel()->calc();
+		}
+		g->setEmitPt();
 	}
-	g->mFluddModel->calc();
-	if (MActor* nozzle = g->getCurrentNozzle()->getMActor()) {
-		nozzle->getModel()->setBaseTRMtx(g->mFluddModel->getModel()->getAnmMtx(g->unk1CD8));
-		nozzle->getModel()->calc();
-	}
-	g->setEmitPt();
-	if (!model)
-		return;
 	MtxPtr em = g->getEmitMtx(0);
-	if (!em)
+	s_backMario.set(g->mMario->mPosition.x, g->mMario->mPosition.y, g->mMario->mPosition.z);
+	if (!model) {
+		if (em && g->unk1CEC <= 0.0f) { // the nozzle's tip, while it is out
+			s_backMuzzle.set(em[0][3], em[1][3], em[2][3]);
+		} else { // put away: where it comes out from
+			MtxPtr nc = fm->getAnmMtx(g->unk1CD8);
+			s_backMuzzle.set(nc[0][3], nc[1][3], nc[2][3]);
+		}
+		s_haveBackMuzzle = true;
 		return;
-	Vec fwd         = {em[0][0], em[1][0], em[2][0]};
-	const Vec at    = {em[0][3], em[1][3], em[2][3]};
-	const Vec world = {0.0f, 1.0f, 0.0f};
-	if (!unit(fwd))
-		return;
-	Vec right = cross(fwd, world);
+	}
+	// the pack's frame: from FLUDD's nozzle_center, its turn on his back (its axes nearest the way
+	// he faces and up), so it leans and sways with him as FLUDD does
+	MtxPtr base   = fm->getBaseTRMtx();
+	MtxPtr nc     = fm->getAnmMtx(g->unk1CD8);
+	const f32 ang = g->mMario->mFaceAngle.y * (3.14159265f / 32768.0f);
+	const Vec face = {sinf(ang), 0.0f, cosf(ang)}, worldUp = {0.0f, 1.0f, 0.0f};
+	Vec axis[3];
+	for (int c = 0; c < 3; c++) {
+		axis[c].x = base[0][c], axis[c].y = base[1][c], axis[c].z = base[2][c];
+		unit(axis[c]);
+	}
+	int fi = 0, ui = 1;
+	f32 best = -1.0f;
+	for (int c = 0; c < 3; c++) {
+		const f32 d = fabsf(axis[c].x * face.x + axis[c].z * face.z);
+		if (d > best)
+			best = d, fi = c;
+	}
+	best = -1.0f;
+	for (int c = 0; c < 3; c++) {
+		if (c == fi)
+			continue;
+		const f32 d = fabsf(axis[c].y);
+		if (d > best)
+			best = d, ui = c;
+	}
+	Vec fwd = axis[fi], up = axis[ui];
+	if (fwd.x * face.x + fwd.z * face.z < 0.0f)
+		fwd.x = -fwd.x, fwd.y = -fwd.y, fwd.z = -fwd.z;
+	if (up.y < 0.0f)
+		up.x = -up.x, up.y = -up.y, up.z = -up.z;
+	Vec right = cross(fwd, up);
 	if (!unit(right))
 		return;
-	const Vec up     = cross(right, fwd);
-	const f32 scale  = which == 0 ? 12.5f : 15.0f;
-	const Vec origin = along(at, -PortWeaponModelMuzzle(which) * scale, fwd); // its muzzle at the nozzle's
+	up = cross(right, fwd);
+	unit(up);
+	const Vec at = {nc[0][3], nc[1][3], nc[2][3]};
 	Mtx place, viewModel;
 	const f32 col[3][3] = {{right.x, fwd.x, up.x}, {right.y, fwd.y, up.y}, {right.z, fwd.z, up.z}};
-	const f32 o[3]      = {origin.x, origin.y, origin.z};
+	const f32 o[3]      = {at.x, at.y, at.z};
 	for (int r = 0; r < 3; r++) {
 		for (int c = 0; c < 3; c++)
-			place[r][c] = col[r][c] * scale;
+			place[r][c] = col[r][c];
 		place[r][3] = o[r];
 	}
 	MTXConcat(graphics->getViewMtx(), place, viewModel);
-	PortWeaponModelShowOnBack(which, viewModel);
+	PortWeaponModelShow(3 + which, viewModel); // all of FLUDD left out, the pack in its place
+	const float* mz = PortWeaponPackMuzzle(which);
+	s_backMuzzle.set(at.x + right.x * mz[0] + fwd.x * mz[1] + up.x * mz[2], at.y + right.y * mz[0] + fwd.y * mz[1] + up.y * mz[2],
+	                 at.z + right.z * mz[0] + fwd.z * mz[1] + up.z * mz[2]);
+	s_haveBackMuzzle = true;
 }
 
 // As FLUDD is calculated for the view (TWaterGun::perform): moved in front of it.
@@ -443,6 +485,19 @@ bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forwar
 		return false;
 	eye->set(s_viewEye.x, s_viewEye.y, s_viewEye.z);
 	forward->set(s_viewWay.x, s_viewWay.y, s_viewWay.z);
+	return true;
+}
+
+// Where a weapon's shot starts with FLUDD on his back (third person): its nozzle's tip, or the
+// weapon's pack's muzzle; false when neither is known this frame.
+bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at)
+{
+	TMario* m = gpMarioOriginal;
+	if (!s_haveBackMuzzle || !m)
+		return false;
+	// placed as last drawn: moved on with him since (the shot goes after his move this frame)
+	at->set(s_backMuzzle.x + m->mPosition.x - s_backMario.x, s_backMuzzle.y + m->mPosition.y - s_backMario.y,
+	        s_backMuzzle.z + m->mPosition.z - s_backMario.z);
 	return true;
 }
 

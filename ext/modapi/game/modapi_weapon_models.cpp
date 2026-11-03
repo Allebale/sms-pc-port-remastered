@@ -3,7 +3,10 @@
 // modapi_spray_weapons.cpp). A brown rifle, a blue submachine gun and a green pipe bazooka with FLUDD's tank, straps,
 // nozzle and pump handle, made in Blender from simple shapes, low-poly with their light baked into
 // their colours, as the games of the GameCube's time looked (rifle_model.inc, smg_model.inc, bazooka_model.inc:
-// each triangle's corners and colours).
+// each triangle's corners and colours). In third person (SMS_SPRAY_THIRD_PERSON_MODEL) all of FLUDD
+// on his back is drawn as a pack of the weapon's own colours with the weapon on it over his right
+// shoulder (rifle_pack.inc, bazooka_pack.inc, smg_pack.inc: in game units, from FLUDD's
+// nozzle_center joint).
 //
 // Drawn straight with GX, as a packet of the scene's opaque draw buffer entered as FLUDD would be
 // (TWaterGun::perform's CUE_ENTRY, patch zzzzzzzz-held-fludd-weapon-model, which then leaves FLUDD
@@ -20,17 +23,21 @@ namespace {
 #include "rifle_model.inc"
 #include "bazooka_model.inc"
 #include "smg_model.inc"
+#include "rifle_pack.inc"
+#include "bazooka_pack.inc"
+#include "smg_pack.inc"
 
 struct Model {
 	const float* pos;
 	const unsigned char* col;
 	int corners;
 };
-const Model kModels[3] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, kBazookaCol, kBazookaCorners}, {kSmgPos, kSmgCol, kSmgCorners}};
+const Model kModels[6] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, kBazookaCol, kBazookaCorners}, {kSmgPos, kSmgCol, kSmgCorners},
+                          {kRiflePackPos, kRiflePackCol, kRiflePackCorners}, {kBazookaPackPos, kBazookaPackCol, kBazookaPackCorners},
+                          {kSmgPackPos, kSmgPackCol, kSmgPackCorners}};
 
 Mtx s_viewModel;  // the view's matrix and the model's place in the world, this frame
-int s_shown = -1; // the model placed this frame (0 the rifle, 1 the bazooka, 2 the submachine gun), or none
-int s_onBack;     // 1 held in view (all of FLUDD left out), 2 on his back (only its nozzle left out)
+int s_shown = -1; // the model placed this frame (0 the rifle, 1 the bazooka, 2 the submachine gun; 3 to 5 their packs), or none
 
 class WeaponPacket : public J3DPacket {
 public:
@@ -40,7 +47,7 @@ WeaponPacket s_packet;
 
 void WeaponPacket::draw()
 {
-	if (s_shown < 0 || s_shown > 2)
+	if (s_shown < 0 || s_shown > 5)
 		return;
 	const Model& m = kModels[s_shown];
 	Mtx identity;
@@ -79,31 +86,26 @@ void WeaponPacket::draw()
 // The muzzle's place in a model's own units, forward (0 the rifle, 1 the bazooka, 2 the submachine gun).
 float PortWeaponModelMuzzle(int which) { return which == 0 ? kRifleMuzzle : which == 1 ? kBazookaMuzzle : kSmgMuzzle; }
 
+// A pack's muzzle (third person: 0 the rifle's, 1 the bazooka's, 2 the submachine gun's), in game units
+// from FLUDD's nozzle_center (x right, y forward, z up).
+const float* PortWeaponPackMuzzle(int which) { return which == 0 ? kRiflePackMuzzleAt : which == 1 ? kBazookaPackMuzzleAt : kSmgPackMuzzleAt; }
+
 // A model's place this frame (modapi_held_fludd.cpp): the view's matrix times its place in the
 // world (x right, y forward to the muzzle, z up, in its own units).
 void PortWeaponModelShow(int which, MtxPtr viewModel)
 {
 	MTXCopy(viewModel, s_viewModel);
-	s_shown  = which;
-	s_onBack = 1;
-}
-
-// The same with FLUDD on his back (third person): the model in its nozzle's place.
-void PortWeaponModelShowOnBack(int which, MtxPtr viewModel)
-{
-	MTXCopy(viewModel, s_viewModel);
-	s_shown  = which;
-	s_onBack = 2;
+	s_shown = which;
 }
 
 void PortWeaponModelHide() { s_shown = -1; }
 
-// As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): with a weapon's model entered
-// in its place, 1 (all of FLUDD then left out) or 2 (only its nozzle); 0 none.
-int PortWeaponModelEntry()
+// As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): true when a weapon's model is
+// entered in its place (FLUDD then left out).
+bool PortWeaponModelEntry()
 {
 	if (s_shown < 0 || !j3dSys.getDrawBuffer(0))
-		return 0;
+		return false;
 	j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
-	return s_onBack == 2 ? 2 : 1;
+	return true;
 }

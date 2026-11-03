@@ -57,6 +57,7 @@ int port_spray_tagged_drops = 0;
 bool PortFluddHeld(TMario* mario);
 bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward);
 void PortFluddHeldKick(f32 amount);
+bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at);
 
 namespace {
 
@@ -586,7 +587,9 @@ void fire()
 	// the drop the stream would make, from the gun's nozzle towards the middle of the view
 	TWaterEmitInfo info(*g->mEmitInfo);
 	n->emitCommon(0, &info);
-	const JGeometry::TVec3<f32> from = info.mPos.value;
+	JGeometry::TVec3<f32> from = info.mPos.value;
+	if (!PortFluddHeld(m) && PortFluddBackMuzzle(&from)) // on his back: from its nozzle (or the pack's muzzle) now
+		info.mPos.value = from;
 	JGeometry::TVec3<f32> way        = info.mDir.value;
 	Straight* st = 0; // its straight flight (followStraight)
 	if (k.straight) {
