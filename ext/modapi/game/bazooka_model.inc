@@ -1,6 +1,7 @@
-// The bazooka model (made with Blender from simple shapes, make_retro.py): 1340 triangles,
+// The Bazooka model (made with Blender from simple shapes): 1340 triangles,
 // each corner's place (x right, y forward to the muzzle, z up) and colour, lit in it.
 const int kBazookaCorners = 4020;
+const float kBazookaMuzzle = 1.5650f; // its front, forward
 const float kBazookaPos[12060] = {
 	0.0000f, 1.2000f, 0.3400f, 0.0000f, -1.2000f, 0.3400f, 0.1700f, -1.2000f, 0.2944f, 0.0000f, 1.2000f, 0.3400f,
 	0.1700f, -1.2000f, 0.2944f, 0.1700f, 1.2000f, 0.2944f, 0.1700f, 1.2000f, 0.2944f, 0.1700f, -1.2000f, 0.2944f,
