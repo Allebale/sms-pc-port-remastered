@@ -81,7 +81,7 @@ struct Weapon {
 const Weapon kDefaults[WEAPONS] = { // the game's own numbers (a mod may set others: set_weapon_stats)
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
 	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
-	{1, 4.0f, 0.7f, 3.5f, 2.5f, 0.0f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, true},  // rifle (the Multi Shotgun zoomed in): one big blob
+	{1, 4.0f, 0.7f, 3.5f, 5.0f, 0.0f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, true},  // rifle (the Multi Shotgun zoomed in): one big blob
 	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 60, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
 Weapon kWeapons[WEAPONS]; // as they are now (kDefaults, or a mod's)
@@ -707,7 +707,7 @@ f32 PortSprayWeaponShotPhase()
 // held_fludd->set_weapon_stats (mod_runtime.cpp): a weapon's numbers, as the mod's menu has them
 // (`has` 0: the game's own again). push, range, hit and burst are times the game's own.
 extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water,
-                                       float hit, float burst, float lift)
+                                       float hit, float burst, float lift, float dropSize)
 {
 	if (weapon == NORMAL) { // the normal spray: only its seconds to defeat
 		s_normalTime = has && every >= 0.1f ? every : 1.0f;
@@ -726,6 +726,7 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 	w.every    = every >= 0.1f ? every : 0.1f;
 	w.shove    = d.shove * (push >= 0.0f ? push : 0.0f);
 	w.lift     = d.lift * (lift >= 0.0f ? lift : push >= 0.0f ? push : 0.0f); // its own, or with the push (lift < 0)
+	w.size     = d.size * (dropSize > 0.05f ? dropSize : 1.0f);
 	w.toDefeat = toDefeat >= 1 ? toDefeat : 1;
 	w.water    = water >= 0 ? water : 0;
 	w.burst    = d.burst * (burst > 0.1f ? burst : 0.1f);

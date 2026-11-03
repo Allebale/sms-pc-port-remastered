@@ -130,7 +130,19 @@ const int kMostTinted = 64;
 J3DFogInfo s_fogKept[kMostTinted];
 bool s_fogIsKept[kMostTinted];
 J3DModelData* s_tinted; // the model whose fog is ours now
+J3DModel* s_tintedModel;
 int s_tint = -1;
+
+// FLUDD's materials are made into display lists once and locked (Mario's are made each frame,
+// so his damage fog shows): made again with the fog changed, and locked again as they were.
+void remake(J3DModel* model)
+{
+	const bool locked = model->getModelData()->getMaterialNum() && model->getMatPacket(0)->isLocked();
+	model->unlock();
+	model->makeDL();
+	if (locked)
+		model->lock();
+}
 
 void untint()
 {
@@ -142,8 +154,11 @@ void untint()
 			*(J3DFogInfo*)fog = s_fogKept[i];
 		s_fogIsKept[i] = false;
 	}
-	s_tinted = 0;
-	s_tint   = -1;
+	if (J3DModel* model = s_tintedModel)
+		remake(model);
+	s_tinted      = 0;
+	s_tintedModel = 0;
+	s_tint        = -1;
 }
 
 void tint(TWaterGun* g, int weapon)
@@ -157,11 +172,15 @@ void tint(TWaterGun* g, int weapon)
 		untint();
 		return;
 	}
-	J3DModelData* data = g->mFluddModel->getModel()->getModelData();
+	J3DModel* model    = g->mFluddModel->getModel();
+	J3DModelData* data = model->getModelData();
 	if (s_tinted && s_tinted != data)
 		untint();
-	s_tinted = data;
-	s_tint   = weapon;
+	if (s_tinted == data && s_tint == weapon)
+		return; // as it is
+	s_tinted      = data;
+	s_tintedModel = model;
+	s_tint        = weapon;
 	for (u16 i = 0; i < data->getMaterialNum() && i < kMostTinted; i++) {
 		J3DFog* fog = data->getMaterialNodePointer(i)->getPEBlock()->getFog();
 		if (!fog)
@@ -178,6 +197,7 @@ void tint(TWaterGun* g, int weapon)
 		fog->mColor  = c;
 		fog->mAdjEnable = 0;
 	}
+	remake(model);
 }
 f32 PortSprayWeaponShotPhase();
 
