@@ -77,12 +77,15 @@ struct Weapon {
 	f32 kick;      // the held gun's recoil, 0 to 1
 	bool straight; // flies dead straight to what the crosshair is on, no fall, no end to its reach
 };
-const Weapon kWeapons[WEAPONS] = {
+const Weapon kDefaults[WEAPONS] = { // the game's own numbers (a mod may set others: set_weapon_stats)
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
 	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
 	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 1.0f, 12, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
 	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 60, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
+Weapon kWeapons[WEAPONS]; // as they are now (kDefaults, or a mod's)
+f32 s_hitScale = 1.0f;    // the rifle's hit size, times its own
+f32 s_reachScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f}; // reach, times its own
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
@@ -367,12 +370,12 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 	const f32 r  = a->getDamageRadius() > a->getAttackRadius() ? a->getDamageRadius() : a->getAttackRadius();
 	const f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
 	// the rifle's: each enemy hit within a good deal more than its own size, so it is easy to hit
-	const f32 rad0 = (r > 60.0f ? r : 60.0f) + 70.0f;
+	const f32 rad0 = (r > 60.0f ? r : 60.0f) + 70.0f * s_hitScale;
 	const f32 cx = a->mPosition.x - eye.x, cy = a->mPosition.y + 0.5f * hh - eye.y, cz = a->mPosition.z - eye.z;
 	const f32 t = cx * f.x + cy * f.y + cz * f.z;
 	if (t < 0.0f || t > most)
 		return -1.0f;
-	const f32 rad = rad0 + t * 0.03f; // kinder still far away (150 more at 5000)
+	const f32 rad = rad0 + t * 0.03f * s_hitScale; // kinder still far away (150 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
 	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) - 40.0f; // a body's height (and some) counts as near
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
@@ -465,7 +468,7 @@ void fire()
 		// what the crosshair is on: the rifle hits it now (hitscan); both send their drops dead
 		// straight to it (followStraight)
 		JGeometry::TVec3<f32> at;
-		TSmallEnemy* e = rifleTarget(eye, f, kRifleReach, &at);
+		TSmallEnemy* e = rifleTarget(eye, f, kRifleReach * (s_reachScale[s_weapon] < 1.0f ? s_reachScale[s_weapon] : 1.0f), &at);
 		const f32 fl   = sqrtf(f.x * f.x + f.z * f.z) + 1e-4f;
 		if (e && s_weapon == RIFLE)
 			hitEnemy(e, RIFLE, shot, f.x / fl, f.z / fl);
@@ -480,11 +483,12 @@ void fire()
 		s_straightSpeed = 0.0f;
 		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon], e ? "an enemy" : "nothing", l);
 	}
-	const f32 pow  = n->mEmitParams.mEmitPow.get() * k.pow;
+	const f32 reach = k.straight ? 1.0f : s_reachScale[s_weapon]; // further: faster and longer lived
+	const f32 pow   = n->mEmitParams.mEmitPow.get() * k.pow * (reach > 0.0f ? sqrtf(reach) : 1.0f);
 	const s16 base = n->mEmitParams.mAttack.get();
 	info.mNum.set(1);
 	info.mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (shot << kTagShift)));
-	info.mAlive.set((s16)(info.mAlive.get() * k.alive));
+	info.mAlive.set((s16)(info.mAlive.get() * k.alive * (reach > 0.0f ? sqrtf(reach) : 1.0f)));
 	info.mSize.set(n->mEmitParams.mSize.get() * k.size);
 	info.mSizeTremble.set(0.0f);
 	info.mHitRadius.set(info.mHitRadius.get() * k.hit);
@@ -583,6 +587,7 @@ struct Register {
 	Register()
 	{
 		memset(&s_extension, 0, sizeof s_extension);
+		memcpy(kWeapons, kDefaults, sizeof kWeapons);
 		s_extension.name          = "spray weapons";
 		s_extension.stageSetup    = stageSetup;
 		s_extension.afterMovement = afterMovement;
@@ -639,4 +644,31 @@ f32 PortSprayWeaponShotPhase()
 	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : s_lastShotWeapon == SHOTGUN ? 0.35f : 0.25f;
 	const f32 t   = s_time - s_lastShotAt;
 	return s_lastShotAt > 0.0f && t >= 0.0f && t < len ? t / len : -1.0f;
+}
+
+// held_fludd->set_weapon_stats (mod_runtime.cpp): a weapon's numbers, as the mod's menu has them
+// (`has` 0: the game's own again). push, range, hit and burst are times the game's own.
+extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water,
+                                       float hit, float burst)
+{
+	if (weapon <= NORMAL || weapon >= WEAPONS)
+		return 0;
+	Weapon& w       = kWeapons[weapon];
+	const Weapon& d = kDefaults[weapon];
+	w               = d;
+	s_reachScale[weapon] = 1.0f;
+	if (weapon == RIFLE)
+		s_hitScale = 1.0f;
+	if (!has)
+		return 1;
+	w.every    = every >= 0.1f ? every : 0.1f;
+	w.shove    = d.shove * (push >= 0.0f ? push : 0.0f);
+	w.lift     = d.lift * (push >= 0.0f ? push : 0.0f);
+	w.toDefeat = toDefeat >= 1 ? toDefeat : 1;
+	w.water    = water >= 0 ? water : 0;
+	w.burst    = d.burst * (burst > 0.1f ? burst : 0.1f);
+	s_reachScale[weapon] = range > 0.1f ? range : 0.1f;
+	if (weapon == RIFLE)
+		s_hitScale = hit >= 0.0f ? hit : 0.0f;
+	return 1;
 }
