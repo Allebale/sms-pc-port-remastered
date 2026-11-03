@@ -94,8 +94,8 @@ bool s_firing; // our own requests, let through
 f32 s_lastShotAt;     // when the last shot went (the gun's pump)
 int s_lastShotWeapon;
 bool s_defeatNormal;  // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_NORMAL)
-const int kNormalToDefeat = 12;   // its drops on one enemy
-const f32 kNormalWindow   = 3.0f; // within so many seconds
+f32 s_normalTime    = 1.0f;  // seconds of it on one enemy that defeat it (the mod's menu)
+const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -144,8 +144,8 @@ struct Hit {
 	int hits;
 	int lastShot; // the shot (weapon and number) last counted: a shot's drops count once
 	f32 last;     // when
-	int normalHits;  // the normal spray's drops lately (its defeating: SMS_SPRAY_DEFEAT_NORMAL)
-	f32 normalLast;
+	f32 normalStart; // the normal spray on it since (its defeating: SMS_SPRAY_DEFEAT_NORMAL)
+	f32 normalLast;  // and last
 };
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
@@ -369,12 +369,12 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 		TSmallEnemy* ne = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
 		Hit* h          = ne && !ne->checkLiveFlag(LIVE_FLAG_DEAD) ? hitOf(ne) : 0;
 		if (h) {
-			if (s_time - h->normalLast > kNormalWindow)
-				h->normalHits = 0;
-			h->normalHits++;
+			// how long it has been sprayed without a pause of more than half a second
+			if (s_time - h->normalLast > kNormalGap)
+				h->normalStart = s_time;
 			h->normalLast = s_time;
-			if (h->normalHits >= kNormalToDefeat) {
-				h->normalHits = 0;
+			if (s_time - h->normalStart >= s_normalTime) {
+				h->normalStart = s_time;
 				fprintf(stderr, "[weapons] an enemy defeated by the normal spray\n");
 				ne->kill(); // as a stomp: its own defeat, coins and all
 			}
@@ -706,7 +706,11 @@ f32 PortSprayWeaponShotPhase()
 extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water,
                                        float hit, float burst)
 {
-	if (weapon <= NORMAL || weapon >= WEAPONS)
+	if (weapon == NORMAL) { // the normal spray: only its seconds to defeat
+		s_normalTime = has && every >= 0.1f ? every : 1.0f;
+		return 1;
+	}
+	if (weapon < NORMAL || weapon >= WEAPONS)
 		return 0;
 	Weapon& w       = kWeapons[weapon];
 	const Weapon& d = kDefaults[weapon];
