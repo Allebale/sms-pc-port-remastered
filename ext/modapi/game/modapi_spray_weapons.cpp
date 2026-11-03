@@ -101,6 +101,7 @@ int s_lastShotWeapon;
 bool s_defeatNormal;  // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_NORMAL)
 f32 s_normalTime    = 1.0f;  // seconds of it on one enemy that defeat it (the mod's menu)
 const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
+bool s_third;        // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -493,16 +494,78 @@ JGeometry::TVec3<f32> s_bazookaAt;
 bool s_bazookaSeen;
 const f32 kRifleReach = 60000.0f; // as far as the stage goes
 
+// FLUDD can fire a weapon now: held in view, or (SMS_SPRAY_THIRD_PERSON) on his back as the game has it
+bool armed(TMario* m)
+{
+	if (PortFluddHeld(m))
+		return true;
+	if (!s_third || !m || m != gpMarioOriginal || m->onYoshi())
+		return false;
+	TWaterGun* g = m->mWaterGun;
+	if (!g || !g->mFluddModel)
+		return false;
+	const int n = g->mCurrentNozzle;
+	return n == TWaterGun::Spray || n == TWaterGun::Underwater;
+}
+
+// In third person (nothing on screen changes): the aim from about his shoulders the way he faces,
+// or at the nearest small enemy a little to either side of that (no crosshair to aim with)
+bool thirdView(TMario* m, JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* f)
+{
+	if (!s_third || !m)
+		return false;
+	const f32 a = m->mFaceAngle.y * (3.14159265f / 32768.0f);
+	const f32 fx = sinf(a), fz = cosf(a);
+	eye->set(m->mPosition.x, m->mPosition.y + 100.0f, m->mPosition.z);
+	f->set(fx, 0.0f, fz);
+	if (!gpConductor)
+		return true;
+	const f32 kNear = 3000.0f, kCone = 0.87f; // within about 30 degrees of the way he faces
+	f32 best = kNear;
+	JGeometry::TVec3<f32> to;
+	bool found = false;
+	for (int list = 0; list < 2; list++) {
+		JGadget::TList<TEnemyManager*>::iterator a0 = gpConductor->unk20.begin(), a1 = gpConductor->unk20.end();
+		JGadget::TList<TLiveManager*>::iterator b0 = gpConductor->unk10.begin(), b1 = gpConductor->unk10.end();
+		while (list == 0 ? a0 != a1 : b0 != b1) {
+			TLiveManager* mgr = list == 0 ? (TLiveManager*)*a0 : *b0;
+			if (list == 0)
+				++a0;
+			else
+				++b0;
+			for (int i = 0; mgr && i < mgr->getObjNum(); i++) {
+				TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
+				if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+					continue;
+				const f32 hh = e->getDamageHeight() > e->getAttackHeight() ? e->getDamageHeight() : e->getAttackHeight();
+				const f32 dx = e->mPosition.x - eye->x, dz = e->mPosition.z - eye->z;
+				const f32 dy = e->mPosition.y + 0.5f * hh - eye->y;
+				const f32 flat = sqrtf(dx * dx + dz * dz);
+				if (flat < 1.0f || flat > best || (dx * fx + dz * fz) / flat < kCone || fabsf(dy) > 600.0f)
+					continue;
+				best = flat;
+				to.set(dx, dy, dz);
+				found = true;
+			}
+		}
+	}
+	if (found) {
+		const f32 l = sqrtf(to.x * to.x + to.y * to.y + to.z * to.z);
+		f->set(to.x / l, to.y / l, to.z / l);
+	}
+	return true;
+}
+
 // A shot, the moment the weapon is ready while R is held (afterMovement).
 void fire()
 {
 	TMario* m    = gpMarioOriginal;
 	TWaterGun* g = m ? m->mWaterGun : 0;
-	if (!g || !gpModelWaterManager || !PortFluddHeld(m) || g->mCurrentNozzle != TWaterGun::Spray || g->mCurrentWater <= 0)
+	if (!g || !gpModelWaterManager || !armed(m) || g->mCurrentNozzle != TWaterGun::Spray || g->mCurrentWater <= 0)
 		return;
 	TNozzleBase* n = g->getCurrentNozzle();
 	JGeometry::TVec3<f32> eye, f;
-	if (!n || !PortFluddHeldView(&eye, &f))
+	if (!n || !(PortFluddHeldView(&eye, &f) || thirdView(m, &eye, &f)))
 		return;
 	const Weapon& k = kWeapons[s_weapon];
 	s_ready         = s_time + k.every;
@@ -680,7 +743,7 @@ struct Register {
 
 
 // api->held_fludd->set_weapon (mod_runtime.cpp): 0 normal, 1 shotgun, 2 rifle, 3 bazooka; flags 1:
-// weapons may defeat enemies, 2: R is held (the mod keeps R from the game while a weapon is chosen,
+// weapons may defeat enemies, 2: R is held, 8: they fire in third person too (FLUDD on his back) (the mod keeps R from the game while a weapon is chosen,
 // so its own spray, pump and sound never start; the weapon fires on its own clock)
 extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
@@ -694,6 +757,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	s_weapon  = now;
 	s_defeat  = defeat;
 	s_trigger = (flags & 2) != 0;
+	if (((flags & 8) != 0) != s_third)
+		fprintf(stderr, "[weapons] in third person %s\n", (flags & 8) ? "on" : "off");
+	s_third = (flags & 8) != 0;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
 	s_defeatNormal = (flags & 4) != 0;
@@ -709,7 +775,7 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 		return false;
 	TMario* m    = gpMarioOriginal;
 	TWaterGun* g = m ? m->mWaterGun : 0;
-	if (!g || !PortFluddHeld(m) || g->mCurrentNozzle != TWaterGun::Spray)
+	if (!g || !armed(m) || g->mCurrentNozzle != TWaterGun::Spray)
 		return false;
 	const JGeometry::TVec3<f32>& at = asked.mPos.value;
 	const f32 dx = at.x - g->mEmitPos[0].x, dy = at.y - g->mEmitPos[0].y, dz = at.z - g->mEmitPos[0].z;
