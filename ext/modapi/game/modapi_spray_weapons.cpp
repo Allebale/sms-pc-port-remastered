@@ -50,6 +50,10 @@
 #include <string.h>
 
 extern "C" int port_cheat_infinite_fludd;
+// Set once a spray weapon has fired: its drops carry the weapon in their attack's upper bits, and
+// TModelWaterManager::getParticleAttack (patch zzzzzzz-held-fludd-4-weapons) then gives the game
+// only the lower ones. Until then (no First Person mod, or no weapon fired) the game's own attack.
+int port_spray_tagged_drops = 0;
 bool PortFluddHeld(TMario* mario);
 bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward);
 void PortFluddHeldKick(f32 amount);
@@ -547,6 +551,7 @@ void fire()
 	s_firing = false;
 	if (!made)
 		return;
+	port_spray_tagged_drops = 1; // the game reads only the lower bits of a drop's attack from now on
 	PortFluddHeldKick(k.kick);
 	s_lastShotAt     = s_time;
 	s_lastShotWeapon = s_weapon;

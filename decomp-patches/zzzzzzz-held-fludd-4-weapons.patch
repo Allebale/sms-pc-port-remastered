@@ -2,14 +2,16 @@ Reason: FLUDD's spray weapons (api->held_fludd->set_weapon, ext/modapi/game/moda
 
 --- a/include/Player/ModelWaterManager.hpp
 +++ b/include/Player/ModelWaterManager.hpp
-@@ -136,7 +136,13 @@
+@@ -136,7 +136,15 @@
  	}
  	s16 getParticleAttack(TWaterHitActor* hit)
  	{
 +#ifdef TARGET_PC
-+		// the lower bits: a spray weapon's drop carries the weapon above them
-+		// (ext/modapi/game/modapi_spray_weapons.cpp)
-+		return (s16)(mParticleAttackSOA[hit->mParticleIndex] & 0xff);
++		// once a spray weapon has fired, the lower bits: its drops carry the weapon above
++		// them (ext/modapi/game/modapi_spray_weapons.cpp); the game's own attack otherwise
++		extern int port_spray_tagged_drops;
++		const s16 attack = mParticleAttackSOA[hit->mParticleIndex];
++		return port_spray_tagged_drops ? (s16)(attack & 0xff) : attack;
 +#else
  		return mParticleAttackSOA[hit->mParticleIndex];
 +#endif
