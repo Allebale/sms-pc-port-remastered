@@ -3,7 +3,7 @@
 // stream. Still water, FLUDD's own drops, only fired another way (Allebale's numbers):
 //
 //              shot                               reach      shove                 to defeat  every
-//   Shotgun    8 drops in a spread                medium     long                  2 shots    1 s
+//   Shotgun    8 drops in a spread                medium     medium                2 shots    1 s
 //   Rifle      one big blob, dead straight                 very long  strong                1 shot     1 s
 //   Bazooka    one huge drop, bursting on a hit   long       very strong, thrown   1 shot     5 s
 //                                                            up into the air        (all in its burst)
@@ -80,8 +80,8 @@ struct Weapon {
 };
 const Weapon kDefaults[WEAPONS] = { // the game's own numbers (a mod may set others: set_weapon_stats)
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
-	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 45.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
-	{1, 1.0f, 0.7f, 3.5f, 2.5f, 0.0f, 1.0f, 24, 6.0f, 45.0f, 0.0f, 2, 0, 0.7f, true},  // rifle (the Multi Shotgun zoomed in): one big blob
+	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
+	{1, 4.0f, 0.7f, 3.5f, 2.5f, 0.0f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, true},  // rifle (the Multi Shotgun zoomed in): one big blob
 	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 60, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
 Weapon kWeapons[WEAPONS]; // as they are now (kDefaults, or a mod's)
