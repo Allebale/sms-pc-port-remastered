@@ -365,16 +365,18 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 	return n;
 }
 
-// A rocket jump (SMS_SPRAY_STATS self_jump, Team Fortress 2's rocket launcher): Mario near the
+// A rocket jump (SmsSprayStats.self_jump, Team Fortress 2's rocket launcher): Mario near the
 // bazooka's burst is thrown away from it, harder the nearer he is (half as hard at its edge), as
-// high as the rocket nozzle takes him from right on it. Its push adds to how he already moves (a
-// jump first throws him higher), he steers in the air as in any jump, and the landing never stuns.
+// high as the rocket nozzle takes him from right on it, in the air too (a jump first throws him
+// higher). Made to fling him forward, the way he looks: a burst below him also throws him that
+// way, one in front of him pushes him back only a little. He steers in the air as in any jump, and
+// the landing never stuns.
 void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 {
 	TMario* m = gpMarioOriginal;
 	if (s_rocketJump <= 0.0f || !m || m->onYoshi() || m->checkFlag(MARIO_FLAG_IN_WATER))
 		return;
-	const f32 reach = r > 220.0f ? r : 220.0f;
+	const f32 reach = r > 400.0f ? r : 400.0f; // far enough to reach him from the ground at a jump's top
 	f32 dx = m->mPosition.x - at.x, dy = m->mPosition.y + 60.0f - at.y, dz = m->mPosition.z - at.z; // from his middle
 	const f32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
 	if (dist > reach)
@@ -388,6 +390,22 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	f32 up          = dy * speed;
 	if (up < speed * 0.3f) // a burst beside or above him still lifts him a little
 		up = speed * 0.3f;
+	// the way he looks (first person: the view's; else the way he faces), across the ground
+	JGeometry::TVec3<f32> eye, look;
+	f32 fx, fz;
+	if (PortFluddHeldView(&eye, &look) && look.x * look.x + look.z * look.z > 0.01f) {
+		const f32 l = sqrtf(look.x * look.x + look.z * look.z);
+		fx = look.x / l, fz = look.z / l;
+	} else {
+		const f32 face = m->mFaceAngle.y * (3.14159265f / 32768.0f);
+		fx = sinf(face), fz = cosf(face);
+	}
+	f32 along = (dx * fx + dz * fz) * speed;                              // its push the way he looks
+	f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz;       // and to the side
+	if (along < 0.0f)
+		along *= 0.3f;                                                    // back: only a little
+	along += speed * 0.5f * (dy > 0.0f ? dy : 0.0f);                       // from below: forward too
+	sx *= 0.6f, sz *= 0.6f;
 	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
 	if (!inAir)
 		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
@@ -395,7 +413,7 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	// across the ground: the way he goes now and the push, as his facing and forward speed (backwards
 	// if it throws him behind him, so he keeps facing the way he looked)
 	const f32 face = m->mFaceAngle.y * (3.14159265f / 32768.0f);
-	const f32 hx = sinf(face) * m->mForwardVel + dx * speed, hz = cosf(face) * m->mForwardVel + dz * speed;
+	const f32 hx = sinf(face) * m->mForwardVel + along * fx + sx, hz = cosf(face) * m->mForwardVel + along * fz + sz;
 	const f32 h  = sqrtf(hx * hx + hz * hz);
 	if (h > 0.5f) {
 		f32 way = atan2f(hx, hz);
@@ -406,7 +424,7 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 		m->mForwardVel  = fwd;
 	}
 	s_rocketAir = true;
-	fprintf(stderr, "[weapons] rocket jump: %.0f away, up %.1f, across %.1f\n", dist, up, h);
+	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f\n", dist, inAir ? " (in the air)" : "", up, h);
 }
 
 // The bazooka's burst where its drop first hits an enemy or lands: every small enemy near,
