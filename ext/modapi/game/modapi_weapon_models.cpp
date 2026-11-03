@@ -30,6 +30,7 @@ const Model kModels[3] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, k
 
 Mtx s_viewModel;  // the view's matrix and the model's place in the world, this frame
 int s_shown = -1; // the model placed this frame (0 the rifle, 1 the bazooka, 2 the submachine gun), or none
+int s_onBack;     // 1 held in view (all of FLUDD left out), 2 on his back (only its nozzle left out)
 
 class WeaponPacket : public J3DPacket {
 public:
@@ -83,17 +84,26 @@ float PortWeaponModelMuzzle(int which) { return which == 0 ? kRifleMuzzle : whic
 void PortWeaponModelShow(int which, MtxPtr viewModel)
 {
 	MTXCopy(viewModel, s_viewModel);
-	s_shown = which;
+	s_shown  = which;
+	s_onBack = 1;
+}
+
+// The same with FLUDD on his back (third person): the model in its nozzle's place.
+void PortWeaponModelShowOnBack(int which, MtxPtr viewModel)
+{
+	MTXCopy(viewModel, s_viewModel);
+	s_shown  = which;
+	s_onBack = 2;
 }
 
 void PortWeaponModelHide() { s_shown = -1; }
 
-// As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): true when a weapon's model is
-// entered in its place (FLUDD then left out).
-bool PortWeaponModelEntry()
+// As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): with a weapon's model entered
+// in its place, 1 (all of FLUDD then left out) or 2 (only its nozzle); 0 none.
+int PortWeaponModelEntry()
 {
 	if (s_shown < 0 || !j3dSys.getDrawBuffer(0))
-		return false;
+		return 0;
 	j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
-	return true;
+	return s_onBack == 2 ? 2 : 1;
 }
