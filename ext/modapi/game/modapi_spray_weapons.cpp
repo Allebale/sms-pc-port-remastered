@@ -689,6 +689,9 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 	return true;
 }
 
+// The spray weapon chosen now (the held gun's colour, modapi_held_fludd.cpp).
+int PortSprayWeaponId() { return s_weapon; }
+
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
 
@@ -704,7 +707,7 @@ f32 PortSprayWeaponShotPhase()
 // held_fludd->set_weapon_stats (mod_runtime.cpp): a weapon's numbers, as the mod's menu has them
 // (`has` 0: the game's own again). push, range, hit and burst are times the game's own.
 extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water,
-                                       float hit, float burst)
+                                       float hit, float burst, float lift)
 {
 	if (weapon == NORMAL) { // the normal spray: only its seconds to defeat
 		s_normalTime = has && every >= 0.1f ? every : 1.0f;
@@ -722,7 +725,7 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 		return 1;
 	w.every    = every >= 0.1f ? every : 0.1f;
 	w.shove    = d.shove * (push >= 0.0f ? push : 0.0f);
-	w.lift     = d.lift * (push >= 0.0f ? push : 0.0f);
+	w.lift     = d.lift * (lift >= 0.0f ? lift : push >= 0.0f ? push : 0.0f); // its own, or with the push (lift < 0)
 	w.toDefeat = toDefeat >= 1 ? toDefeat : 1;
 	w.water    = water >= 0 ? water : 0;
 	w.burst    = d.burst * (burst > 0.1f ? burst : 0.1f);
