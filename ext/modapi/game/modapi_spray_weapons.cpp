@@ -3,8 +3,8 @@
 // stream. Still water, FLUDD's own drops, only fired another way (Allebale's numbers):
 //
 //              shot                               reach      shove                 to defeat  every
-//   Shotgun    8 drops in a spread                medium     light                 2 shots    1 s
-//   Rifle      3 fast drops in a line             very long  strong                1 shot     2 s
+//   Shotgun    8 drops in a spread                medium     medium                2 shots    1 s
+//   Rifle      3 fast drops in a line             very long  strong                1 shot     1 s
 //   Bazooka    one huge drop, bursting on a hit   long       very strong, thrown   1 shot     5 s
 //                                                            up into the air        (all in its burst)
 //
@@ -79,9 +79,9 @@ struct Weapon {
 };
 const Weapon kWeapons[WEAPONS] = {
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false},                                // normal: the game's own
-	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 12, 6.0f, 9.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
-	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 2.0f, 6, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
-	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 30, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
+	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
+	{3, 2.6f, 1.6f, 0.7f, 1.0f, 0.0f, 1.0f, 12, 3.0f, 26.0f, 0.0f, 1, 0, 0.45f, true},          // rifle
+	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 60, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
 };
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
@@ -366,14 +366,15 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 {
 	const f32 r  = a->getDamageRadius() > a->getAttackRadius() ? a->getDamageRadius() : a->getAttackRadius();
 	const f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
-	const f32 rad0 = (r > 30.0f ? r : 30.0f) + 15.0f;
+	// the rifle's: each enemy hit within a good deal more than its own size, so it is easy to hit
+	const f32 rad0 = (r > 60.0f ? r : 60.0f) + 70.0f;
 	const f32 cx = a->mPosition.x - eye.x, cy = a->mPosition.y + 0.5f * hh - eye.y, cz = a->mPosition.z - eye.z;
 	const f32 t = cx * f.x + cy * f.y + cz * f.z;
 	if (t < 0.0f || t > most)
 		return -1.0f;
-	const f32 rad = rad0 + t * 0.015f; // a little kinder far away (75 more at 5000)
+	const f32 rad = rad0 + t * 0.03f; // kinder still far away (150 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
-	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f); // a body's height counts as near
+	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) - 40.0f; // a body's height (and some) counts as near
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
 	return d2 <= rad * rad ? t : -1.0f;
 }
