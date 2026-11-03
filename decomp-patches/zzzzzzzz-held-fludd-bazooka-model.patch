@@ -1,0 +1,24 @@
+Reason: the First Person mod's bazooka (FLUDD held in view, api->held_fludd): its own model is drawn in FLUDD's place while it is chosen (ext/modapi/game/modapi_bazooka_model.cpp). As FLUDD is entered for drawing, the bazooka's packet is entered instead and FLUDD (and its nozzle) left out. Without the mod holding the bazooka, nothing changes.
+
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -6,6 +6,7 @@
+ #include <Player/Mario.hpp>
+ #ifdef TARGET_PC
+ #include "port_ext.h"
++bool PortBazookaEntry(); // the bazooka's own model (ext/modapi/game/modapi_bazooka_model.cpp)
+ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics);
+ bool PortFluddHeldWay(TWaterGun* g, const JGeometry::TVec3<f32>& from, JGeometry::TVec3<f32>* way);
+ #endif
+@@ -1945,6 +1946,11 @@
+ 
+ void TWaterGun::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
++#ifdef TARGET_PC
++	// the bazooka's own model drawn in FLUDD's place (ext/modapi/game/modapi_bazooka_model.cpp)
++	if ((cue & CUE_ENTRY) != 0 && PortBazookaEntry())
++		cue &= ~CUE_ENTRY;
++#endif
+ 	// TODO: frame 0x70 against retail 0xb0 with every instruction exact
+ 	// (0x58 before the nozzle actor was read through getMActor(), c-hs5).
+ 
