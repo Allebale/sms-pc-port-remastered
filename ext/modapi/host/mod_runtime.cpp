@@ -772,7 +772,7 @@ void dropRegistrations(SmsMod* m)
 		modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
 		for (int w = SMS_SPRAY_SHOTGUN; w <= SMS_SPRAY_BAZOOKA; w++)
-			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
+			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
 	}
 	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
 		m->hiddenParts = 0;
@@ -1138,11 +1138,9 @@ int apiSprayWeaponSet(int weapon, int flags)
 
 int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
 {
-	if (!st || st->size < offsetof(SmsSprayStats, hit_reach))
-		return modg_spray_weapon_stats(weapon, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-	const float reach = st->size >= offsetof(SmsSprayStats, hit_reach) + sizeof(float) ? st->hit_reach : 0.0f;
-	return modg_spray_weapon_stats(weapon, 1, st->every, st->push, st->range, st->to_defeat, st->water, st->hit_size, st->burst,
-	                               reach);
+	if (!st || st->size < sizeof(SmsSprayStats))
+		return modg_spray_weapon_stats(weapon, 0, 0, 0, 0, 0, 0, 0, 0);
+	return modg_spray_weapon_stats(weapon, 1, st->every, st->push, st->range, st->to_defeat, st->water, st->hit_size, st->burst);
 }
 
 const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
