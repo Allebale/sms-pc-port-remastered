@@ -1,4 +1,4 @@
-Reason: the First Person mod's rifle and bazooka (FLUDD held in view, api->held_fludd): their own models are drawn in FLUDD's place while one is chosen (ext/modapi/game/modapi_weapon_models.cpp). As FLUDD is entered for drawing, its packet is entered instead and FLUDD (and its nozzle) left out. Without the mod holding one, nothing changes.
+Reason: the First Person mod's weapons (FLUDD held in view, or on his back in third person; api->held_fludd): their own models are drawn in FLUDD's place while one is chosen (ext/modapi/game/modapi_weapon_models.cpp). As FLUDD is entered for drawing, the weapon's packet is entered too and FLUDD (held in view) or only its nozzle (on his back) left out. Without the mod showing one, nothing changes.
 
 --- a/src/Player/WaterGun.cpp
 +++ b/src/Player/WaterGun.cpp
@@ -6,19 +6,32 @@ Reason: the First Person mod's rifle and bazooka (FLUDD held in view, api->held_
  #include <Player/Mario.hpp>
  #ifdef TARGET_PC
  #include "port_ext.h"
-+bool PortWeaponModelEntry(); // a weapon's own model (ext/modapi/game/modapi_weapon_models.cpp)
++int PortWeaponModelEntry(); // a weapon's own model (ext/modapi/game/modapi_weapon_models.cpp)
  void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics);
  bool PortFluddHeldWay(TWaterGun* g, const JGeometry::TVec3<f32>& from, JGeometry::TVec3<f32>* way);
  #endif
-@@ -1945,6 +1946,11 @@
+@@ -1945,6 +1946,13 @@
  
  void TWaterGun::perform(u32 cue, JDrama::TGraphics* graphics)
  {
 +#ifdef TARGET_PC
-+	// a weapon's own model drawn in FLUDD's place (ext/modapi/game/modapi_weapon_models.cpp)
-+	if ((cue & CUE_ENTRY) != 0 && PortWeaponModelEntry())
++	// a weapon's own model drawn in FLUDD's place (ext/modapi/game/modapi_weapon_models.cpp): 1 all
++	// of FLUDD left out (held in view), 2 only its nozzle (on his back, the weapon in the nozzle's place)
++	const int weaponModel = (cue & CUE_ENTRY) != 0 ? PortWeaponModelEntry() : 0;
++	if (weaponModel == 1)
 +		cue &= ~CUE_ENTRY;
 +#endif
  	// TODO: frame 0x70 against retail 0xb0 with every instruction exact
  	// (0x58 before the nozzle actor was read through getMActor(), c-hs5).
  
+@@ -1975,6 +1983,10 @@
+ 		setEmitPt();
+ 	}
+ 
++#ifdef TARGET_PC
++	if (weaponModel == 2)
++		cue &= ~CUE_ENTRY;
++#endif
+ 	if (getCurrentNozzle()->getMActor()) {
+ 		getCurrentNozzle()->getMActor()->perform(cue, graphics);
+ 	}

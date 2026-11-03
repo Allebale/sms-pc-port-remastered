@@ -102,6 +102,7 @@ bool s_defeatNormal;  // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_N
 f32 s_normalTime    = 1.0f;  // seconds of it on one enemy that defeat it (the mod's menu)
 const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
 bool s_third;        // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
+bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -743,7 +744,8 @@ struct Register {
 
 
 // api->held_fludd->set_weapon (mod_runtime.cpp): 0 normal, 1 shotgun, 2 rifle, 3 bazooka; flags 1:
-// weapons may defeat enemies, 2: R is held, 8: they fire in third person too (FLUDD on his back) (the mod keeps R from the game while a weapon is chosen,
+// weapons may defeat enemies, 2: R is held, 8: they fire in third person too (FLUDD on his back),
+// 16: and there their models in its nozzle's place (the mod keeps R from the game while a weapon is chosen,
 // so its own spray, pump and sound never start; the weapon fires on its own clock)
 extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
@@ -759,7 +761,8 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	s_trigger = (flags & 2) != 0;
 	if (((flags & 8) != 0) != s_third)
 		fprintf(stderr, "[weapons] in third person %s\n", (flags & 8) ? "on" : "off");
-	s_third = (flags & 8) != 0;
+	s_third      = (flags & 8) != 0;
+	s_thirdModel = (flags & 16) != 0;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
 	s_defeatNormal = (flags & 4) != 0;
@@ -787,6 +790,17 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 
 // The spray weapon chosen now (the bazooka's own model, modapi_held_fludd.cpp).
 int PortSprayWeaponId() { return s_weapon; }
+
+// A spray weapon fires from FLUDD on his back now (third person, SMS_SPRAY_THIRD_PERSON): its pump
+// (modapi_held_fludd.cpp); `model`, its own model in the nozzle's place too
+bool PortSprayWeaponOnBack(TMario* m, bool* model)
+{
+	*model = s_thirdModel;
+	return s_third && s_weapon != NORMAL && !PortFluddHeld(m) && armed(m);
+}
+
+// R held, a spray weapon chosen
+bool PortSprayWeaponTrigger() { return s_trigger; }
 
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }

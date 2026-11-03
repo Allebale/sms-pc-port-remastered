@@ -125,6 +125,9 @@ void PortWeaponModelHide();
 float PortWeaponModelMuzzle(int which);
 
 f32 PortSprayWeaponShotPhase();
+bool PortSprayWeaponOnBack(TMario* m, bool* model); // modapi_spray_weapons.cpp
+bool PortSprayWeaponTrigger();
+void PortWeaponModelShowOnBack(int which, MtxPtr viewModel); // modapi_weapon_models.cpp
 
 bool PortFluddHeld(TMario* mario)
 {
@@ -137,11 +140,69 @@ bool PortFluddHeld(TMario* mario)
 	return n == TWaterGun::Spray || n == TWaterGun::Underwater;
 }
 
+// FLUDD on his back while a spray weapon fires from it (third person, SMS_SPRAY_THIRD_PERSON):
+// the nozzle kept out while R is held and a moment after (the game then puts it away as ever),
+// with a pump as each shot goes; with the weapons' models on, kept out and the model drawn in the
+// nozzle's place (only the nozzle left out). Nothing else of FLUDD or of him changes.
+void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
+{
+	bool model = false;
+	if (!g->mFluddModel || !PortSprayWeaponOnBack(g->mMario, &model))
+		return;
+	const int weapon  = PortSprayWeaponId();
+	const int which   = weapon == 2 ? 0 : weapon == 3 ? 1 : weapon == 4 ? 2 : -1; // the rifle, bazooka, submachine gun
+	model             = model && which >= 0;
+	const f32 phase   = PortSprayWeaponShotPhase();
+	if (!model && phase < 0.0f && !PortSprayWeaponTrigger())
+		return;
+	g->unk1CEC = 0.0f;      // out
+	g->unk1CFA = g->unk1CF8; // and the game's own wait before it puts it away
+	g->mFluddModel->setBck(phase >= 0.0f ? "wg_pump" : "wg_house");
+	if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
+		ctrl->setRate(0.0f);
+		ctrl->setFrame(phase >= 0.0f ? phase * ctrl->getEnd() : 0.0f);
+	}
+	g->mFluddModel->calc();
+	if (MActor* nozzle = g->getCurrentNozzle()->getMActor()) {
+		nozzle->getModel()->setBaseTRMtx(g->mFluddModel->getModel()->getAnmMtx(g->unk1CD8));
+		nozzle->getModel()->calc();
+	}
+	g->setEmitPt();
+	if (!model)
+		return;
+	MtxPtr em = g->getEmitMtx(0);
+	if (!em)
+		return;
+	Vec fwd         = {em[0][0], em[1][0], em[2][0]};
+	const Vec at    = {em[0][3], em[1][3], em[2][3]};
+	const Vec world = {0.0f, 1.0f, 0.0f};
+	if (!unit(fwd))
+		return;
+	Vec right = cross(fwd, world);
+	if (!unit(right))
+		return;
+	const Vec up     = cross(right, fwd);
+	const f32 scale  = which == 0 ? 12.5f : 15.0f;
+	const Vec origin = along(at, -PortWeaponModelMuzzle(which) * scale, fwd); // its muzzle at the nozzle's
+	Mtx place, viewModel;
+	const f32 col[3][3] = {{right.x, fwd.x, up.x}, {right.y, fwd.y, up.y}, {right.z, fwd.z, up.z}};
+	const f32 o[3]      = {origin.x, origin.y, origin.z};
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++)
+			place[r][c] = col[r][c] * scale;
+		place[r][3] = o[r];
+	}
+	MTXConcat(graphics->getViewMtx(), place, viewModel);
+	PortWeaponModelShowOnBack(which, viewModel);
+}
+
 // As FLUDD is calculated for the view (TWaterGun::perform): moved in front of it.
 void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
 	s_placed = false;
 	PortWeaponModelHide(); // shown again below, held with the bazooka chosen
+	if (g && graphics && !PortFluddHeld(g->mMario))
+		onBack(g, graphics);
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
 		return;
 	// its nozzle kept out, as the gun: idle, the game puts it away after a moment (the "house"
