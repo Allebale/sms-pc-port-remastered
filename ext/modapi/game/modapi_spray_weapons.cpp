@@ -60,7 +60,7 @@ void PortFluddHeldKick(f32 amount);
 
 namespace {
 
-enum { NORMAL = 0, SHOTGUN = 1, RIFLE = 2, BAZOOKA = 3, WEAPONS = 4 };
+enum { NORMAL = 0, SHOTGUN = 1, RIFLE = 2, BAZOOKA = 3, SMG = 4, WEAPONS = 5 };
 const int kTagShift = 8; // the weapon in a drop's attack, above the game's own (1 to 255)
 
 const int kShotShift = 12; // and the shot (1 to 7, round again), above the weapon
@@ -87,10 +87,11 @@ const Weapon kDefaults[WEAPONS] = { // the game's own numbers (a mod may set oth
 	{8, 1.0f, 0.7f, 1.25f, 1.2f, 0.12f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, false},       // shotgun
 	{1, 4.0f, 0.7f, 3.5f, 5.0f, 0.0f, 1.0f, 24, 6.0f, 16.0f, 0.0f, 2, 0, 0.7f, true},  // rifle (the Multi Shotgun zoomed in): one big blob
 	{1, 1.8f, 1.4f, 4.0f, 3.0f, 0.0f, 5.0f, 60, 16.0f, 34.0f, 38.0f, 1, 550.0f, 1.0f, true},  // bazooka
+	{1, 4.0f, 0.7f, 3.5f, 5.0f, 0.0f, 0.15f, 24, 2.0f, 8.0f, 0.0f, 2, 0, 0.3f, true},   // submachine gun: the rifle's blob, quick, a smaller shove
 };
 Weapon kWeapons[WEAPONS]; // as they are now (kDefaults, or a mod's)
-f32 s_hitScale = 1.0f;    // the rifle's hit size, times its own
-f32 s_reachScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f}; // reach, times its own
+f32 s_hitScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f}; // a weapon's hit size (the rifle's and submachine gun's), times its own
+f32 s_reachScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f}; // reach, times its own
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
@@ -105,7 +106,7 @@ f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
 void followBazooka();
 void followStraight();
-const char* const kNames[WEAPONS] = {"normal spray", "shotgun", "rifle", "bazooka"};
+const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
 bool s_defeat;  // weapons may defeat enemies
@@ -409,12 +410,12 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 	const f32 r  = a->getDamageRadius() > a->getAttackRadius() ? a->getDamageRadius() : a->getAttackRadius();
 	const f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
 	// the rifle's: each enemy hit within a good deal more than its own size, so it is easy to hit
-	const f32 rad0 = (r > 60.0f ? r : 60.0f) + 70.0f * s_hitScale;
+	const f32 rad0 = (r > 60.0f ? r : 60.0f) + 70.0f * s_hitScale[s_weapon];
 	const f32 cx = a->mPosition.x - eye.x, cy = a->mPosition.y + 0.5f * hh - eye.y, cz = a->mPosition.z - eye.z;
 	const f32 t = cx * f.x + cy * f.y + cz * f.z;
 	if (t < 0.0f || t > most)
 		return -1.0f;
-	const f32 rad = rad0 + t * 0.03f * s_hitScale; // kinder still far away (150 more at 5000)
+	const f32 rad = rad0 + t * 0.03f * s_hitScale[s_weapon]; // kinder still far away (150 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
 	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) - 40.0f; // a body's height (and some) counts as near
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
@@ -474,12 +475,19 @@ TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec
 	return best;
 }
 
-int s_straightShot;  // the rifle's or bazooka's drops in straight flight (their shot)
-JGeometry::TVec3<f32> s_straightWay, s_straightFrom;
+// The straight shots in flight (the rifle's, submachine gun's and bazooka's), several at once: a
+// quick weapon has a few in the air together.
 const int kMostLanes = 8;
-JGeometry::TVec3<f32> s_lanes[kMostLanes]; // each straight drop's way (the rifle's spread)
-int s_laneCount;
-f32 s_straightFar, s_straightSpeed;
+struct Straight {
+	int shot;                                  // its shot (weapon and number), 0 none
+	JGeometry::TVec3<f32> from, way;           // its line
+	JGeometry::TVec3<f32> lanes[kMostLanes];   // each drop's own way (a spread)
+	int laneCount;
+	f32 far, speed;
+};
+const int kMostStraight = 8;
+Straight s_straights[kMostStraight];
+int s_nextStraight;
 int s_bazookaShot;   // the bazooka's drop in flight (its shot), to burst where it lands
 JGeometry::TVec3<f32> s_bazookaAt;
 bool s_bazookaSeen;
@@ -506,6 +514,7 @@ void fire()
 	n->emitCommon(0, &info);
 	const JGeometry::TVec3<f32> from = info.mPos.value;
 	JGeometry::TVec3<f32> way        = info.mDir.value;
+	Straight* st = 0; // its straight flight (followStraight)
 	if (k.straight) {
 		// aimed at what the crosshair is on; the drops fly dead straight (followStraight): the
 		// bazooka's to it (then it falls as any drop), the rifle's on as far as its reach
@@ -516,11 +525,16 @@ void fire()
 		const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
 		if (l > 1.0f)
 			way.set(d.x / l, d.y / l, d.z / l);
-		s_straightShot  = shot;
-		s_straightFrom  = from;
-		s_straightFar   = s_weapon == RIFLE ? reachNow : l + 200.0f;
-		s_straightSpeed = 0.0f;
-		s_laneCount     = 0;
+		st = &s_straights[s_nextStraight++ % kMostStraight];
+		for (int q = 0; q < kMostStraight; q++) // a shot's number come round again: its old flight is done
+			if (s_straights[q].shot == shot)
+				st = &s_straights[q];
+		st->shot      = shot;
+		st->from      = from;
+		st->way       = way;
+		st->far       = s_weapon == BAZOOKA ? l + 200.0f : reachNow;
+		st->speed     = 0.0f;
+		st->laneCount = 0;
 		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon], e ? "an enemy" : "nothing", l);
 	}
 	const f32 reach = k.straight ? 1.0f : s_reachScale[s_weapon]; // further: faster and longer lived
@@ -531,7 +545,7 @@ void fire()
 	info.mAlive.set((s16)(info.mAlive.get() * k.alive * (reach > 0.0f ? sqrtf(reach) : 1.0f)));
 	info.mSize.set(n->mEmitParams.mSize.get() * k.size);
 	info.mSizeTremble.set(0.0f);
-	const f32 hit = k.hit * (s_weapon == RIFLE ? s_hitScale : 1.0f); // the rifle's hit size (its menu)
+	const f32 hit = k.hit * s_hitScale[s_weapon]; // its hit size (its menu)
 	info.mHitRadius.set(info.mHitRadius.get() * hit);
 	info.mHitHeight.set(info.mHitHeight.get() * hit);
 	info.mDirTremble.set(0.0f);
@@ -543,8 +557,8 @@ void fire()
 		JGeometry::TVec3<f32> d = way;
 		scatter(d, k.spread);
 		info.mDir.value = d;
-		if (k.straight && s_laneCount < kMostLanes)
-			s_lanes[s_laneCount++] = d; // each drop's own way, kept straight
+		if (st && st->laneCount < kMostLanes)
+			st->lanes[st->laneCount++] = d; // each drop's own way, kept straight
 		info.mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
 		made += gpModelWaterManager->emitRequest(info) ? 1 : 0;
 	}
@@ -559,7 +573,7 @@ void fire()
 		s_bazookaShot = shot;
 		s_bazookaSeen = false;
 	}
-	s_soundUntil = s_time + (s_weapon == BAZOOKA ? 0.45f : 0.3f);
+	s_soundUntil = s_time + (s_weapon == BAZOOKA ? 0.45f : s_weapon == SMG ? 0.1f : 0.3f);
 	if (s_told != s_weapon) {
 		fprintf(stderr, "[weapons] %s fired (%d drops)\n", kNames[s_weapon], made);
 		s_told = s_weapon;
@@ -574,47 +588,52 @@ void fire()
 // game's fall taken back out each frame) and alive, until past what they were aimed at.
 void followStraight()
 {
-	if (!s_straightShot || !gpModelWaterManager)
+	if (!gpModelWaterManager)
 		return;
 	TModelWaterManager* w = gpModelWaterManager;
-	int flying = 0;
 	for (int i = 0; i < (int)w->mParticleCount; i++) {
-		if (((w->mParticleAttackSOA[i] >> kTagShift) & 0x7f) != s_straightShot || (w->mParticleFlagSOA[i] & 0xf) != 1)
+		if ((w->mParticleFlagSOA[i] & 0xf) != 1)
+			continue;
+		const int tag = (w->mParticleAttackSOA[i] >> kTagShift) & 0x7f;
+		if (!(tag & 0xf))
+			continue; // not a weapon's
+		Straight* st = 0;
+		for (int q = 0; q < kMostStraight && !st; q++)
+			if (s_straights[q].shot == tag)
+				st = &s_straights[q];
+		if (!st)
 			continue;
 		const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
 		if (gpMap && !gpMap->isInArea(p.x, p.z)) {
 			w->mParticleLifetimeSOA[i] = 0.0f; // out of the stage: gone
 			continue;
 		}
-		const f32 x = p.x - s_straightFrom.x, y = p.y - s_straightFrom.y, z = p.z - s_straightFrom.z;
-		if (x * x + y * y + z * z > s_straightFar * s_straightFar)
+		const f32 x = p.x - st->from.x, y = p.y - st->from.y, z = p.z - st->from.z;
+		if (x * x + y * y + z * z > st->far * st->far)
 			continue; // past it: falls as any drop
 		JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
-		if (s_straightSpeed <= 0.0f)
-			s_straightSpeed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+		if (st->speed <= 0.0f)
+			st->speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
 		// its own way: the lane nearest the way it is going (a frame's fall bends it only a little)
 		const f32 vl = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z) + 1e-4f;
 		int lane     = 0;
 		f32 best     = -2.0f;
-		for (int k = 0; k < s_laneCount; k++) {
-			const f32 c = (v.x * s_lanes[k].x + v.y * s_lanes[k].y + v.z * s_lanes[k].z) / vl;
+		for (int k = 0; k < st->laneCount; k++) {
+			const f32 c = (v.x * st->lanes[k].x + v.y * st->lanes[k].y + v.z * st->lanes[k].z) / vl;
 			if (c > best)
 				best = c, lane = k;
 		}
-		const JGeometry::TVec3<f32>& way = s_laneCount ? s_lanes[lane] : s_straightWay;
-		v.set(way.x * s_straightSpeed, way.y * s_straightSpeed, way.z * s_straightSpeed);
+		const JGeometry::TVec3<f32>& way = st->laneCount ? st->lanes[lane] : st->way;
+		v.set(way.x * st->speed, way.y * st->speed, way.z * st->speed);
 		// and put back exactly on its line (the game moved it with its fall first): from the gun
 		// to what the crosshair is on, however far, never above or below it
 		JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
-		const f32 along = (at.x - s_straightFrom.x) * way.x + (at.y - s_straightFrom.y) * way.y + (at.z - s_straightFrom.z) * way.z;
+		const f32 along = (at.x - st->from.x) * way.x + (at.y - st->from.y) * way.y + (at.z - st->from.z) * way.z;
 		if (along > 0.0f)
-			at.set(s_straightFrom.x + way.x * along, s_straightFrom.y + way.y * along, s_straightFrom.z + way.z * along);
+			at.set(st->from.x + way.x * along, st->from.y + way.y * along, st->from.z + way.z * along);
 		if (w->mParticleLifetimeSOA[i] < 30.0f)
 			w->mParticleLifetimeSOA[i] = 30.0f; // no end to its reach
-		flying++;
 	}
-	if (!flying && s_straightSpeed > 0.0f)
-		s_straightShot = 0;
 }
 
 // The bazooka's drop: followed until it lands or is gone, then it bursts there (if it hit no
@@ -710,7 +729,7 @@ bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
 // animation (modapi_held_fludd.cpp), a pump only as a weapon fires.
 f32 PortSprayWeaponShotPhase()
 {
-	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : 0.35f;
+	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : s_lastShotWeapon == SMG ? 0.12f : 0.35f;
 	const f32 t   = s_time - s_lastShotAt;
 	return s_lastShotAt > 0.0f && t >= 0.0f && t < len ? t / len : -1.0f;
 }
@@ -730,11 +749,10 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 	const Weapon& d = kDefaults[weapon];
 	w               = d;
 	s_reachScale[weapon] = 1.0f;
-	if (weapon == RIFLE)
-		s_hitScale = 1.0f;
+	s_hitScale[weapon]   = 1.0f;
 	if (!has)
 		return 1;
-	w.every    = every >= 0.1f ? every : 0.1f;
+	w.every    = every >= 0.05f ? every : 0.05f;
 	w.shove    = d.shove * (push >= 0.0f ? push : 0.0f);
 	w.lift     = d.lift * (lift >= 0.0f ? lift : push >= 0.0f ? push : 0.0f); // its own, or with the push (lift < 0)
 	w.size     = d.size * (dropSize > 0.05f ? dropSize : 1.0f);
@@ -742,7 +760,7 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 	w.water    = water >= 0 ? water : 0;
 	w.burst    = d.burst * (burst > 0.1f ? burst : 0.1f);
 	s_reachScale[weapon] = range > 0.1f ? range : 0.1f;
-	if (weapon == RIFLE)
-		s_hitScale = hit >= 0.0f ? hit : 0.0f;
+	if (weapon == RIFLE || weapon == SMG)
+		s_hitScale[weapon] = hit >= 0.0f ? hit : 0.0f;
 	return 1;
 }
