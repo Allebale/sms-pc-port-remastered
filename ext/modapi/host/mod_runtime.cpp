@@ -773,6 +773,7 @@ void dropRegistrations(SmsMod* m)
 		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
 		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_SMG; w++)
 			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
+		modg_spray_rocket_jump(0.0f);
 	}
 	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
 		m->hiddenParts = 0;
@@ -1138,6 +1139,8 @@ int apiSprayWeaponSet(int weapon, int flags)
 
 int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
 {
+	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump: only from a mod that sets it
+		modg_spray_rocket_jump(st && st->size >= offsetof(SmsSprayStats, self_jump) + sizeof(float) ? st->self_jump : 0.0f);
 	if (!st || st->size < offsetof(SmsSprayStats, lift))
 		return modg_spray_weapon_stats(weapon, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 	const float lift = st->size >= offsetof(SmsSprayStats, lift) + sizeof(float) ? st->lift : -1.0f; // older mods: with the push

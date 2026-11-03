@@ -103,6 +103,8 @@ bool s_defeatNormal;  // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_N
 f32 s_normalTime    = 1.0f;  // seconds of it on one enemy that defeat it (the mod's menu)
 const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
 bool s_third;        // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
+f32 s_rocketJump;     // the bazooka's burst throws Mario too (a rocket jump), times its own; 0 not (the mod's menu)
+bool s_rocketAir;     // he is in the air from one (his fall then hurts him no more than a jump's)
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
@@ -176,6 +178,7 @@ Hit* hitOf(TSmallEnemy* e)
 
 void stageSetup()
 {
+	s_rocketAir = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -191,6 +194,13 @@ void afterMovement()
 		fire();
 	followStraight();
 	followBazooka();
+	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
+		TMario* m = gpMarioOriginal;
+		if (m && (m->mStatus & MARIO_STATUS_FLAG_JUMPING) && !m->checkFlag(MARIO_FLAG_IN_WATER))
+			m->unk104 = m->mPosition.y;
+		else
+			s_rocketAir = false;
+	}
 	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
 		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_PO_NORMAL_NOZZLE_IMI, &gpMarioOriginal->mWaterGun->getEmitPos0(), nullptr, 1.0f, 0, 0,
 		                                     nullptr, 0, 4);
@@ -355,6 +365,50 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 	return n;
 }
 
+// A rocket jump (SMS_SPRAY_STATS self_jump, Team Fortress 2's rocket launcher): Mario near the
+// bazooka's burst is thrown away from it, harder the nearer he is (half as hard at its edge), as
+// high as the rocket nozzle takes him from right on it. Its push adds to how he already moves (a
+// jump first throws him higher), he steers in the air as in any jump, and the landing never stuns.
+void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
+{
+	TMario* m = gpMarioOriginal;
+	if (s_rocketJump <= 0.0f || !m || m->onYoshi() || m->checkFlag(MARIO_FLAG_IN_WATER))
+		return;
+	const f32 reach = r > 220.0f ? r : 220.0f;
+	f32 dx = m->mPosition.x - at.x, dy = m->mPosition.y + 60.0f - at.y, dz = m->mPosition.z - at.z; // from his middle
+	const f32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
+	if (dist > reach)
+		return;
+	if (dist > 1.0f)
+		dx /= dist, dy /= dist, dz /= dist;
+	else
+		dx = 0.0f, dy = 1.0f, dz = 0.0f;
+	const f32 g     = m->mJumpParams.mGravity.get() > 0.05f ? m->mJumpParams.mGravity.get() : 0.8f;
+	const f32 speed = sqrtf(2.0f * g * 1500.0f) * (1.0f - 0.5f * dist / reach) * s_rocketJump; // the rocket nozzle's height, 1500
+	f32 up          = dy * speed;
+	if (up < speed * 0.3f) // a burst beside or above him still lifts him a little
+		up = speed * 0.3f;
+	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
+	if (!inAir)
+		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
+	m->mVel.y = (inAir && m->mVel.y > 0.0f ? m->mVel.y : 0.0f) + up;
+	// across the ground: the way he goes now and the push, as his facing and forward speed (backwards
+	// if it throws him behind him, so he keeps facing the way he looked)
+	const f32 face = m->mFaceAngle.y * (3.14159265f / 32768.0f);
+	const f32 hx = sinf(face) * m->mForwardVel + dx * speed, hz = cosf(face) * m->mForwardVel + dz * speed;
+	const f32 h  = sqrtf(hx * hx + hz * hz);
+	if (h > 0.5f) {
+		f32 way = atan2f(hx, hz);
+		f32 fwd = h;
+		if (cosf(way - face) < 0.0f) // behind him
+			way += 3.14159265f, fwd = -h;
+		m->mFaceAngle.y = (s16)(way * (32768.0f / 3.14159265f));
+		m->mForwardVel  = fwd;
+	}
+	s_rocketAir = true;
+	fprintf(stderr, "[weapons] rocket jump: %.0f away, up %.1f, across %.1f\n", dist, up, h);
+}
+
 // The bazooka's burst where its drop first hits an enemy or lands: every small enemy near,
 // thrown away from it.
 void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
@@ -368,6 +422,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
 		n += burstIn(*it, weapon, shot, at, r);
 	explode(at, r);
+	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies in it\n", at.x, at.y, at.z, n);
 }
 
@@ -825,6 +880,15 @@ f32 PortSprayWeaponShotPhase()
 	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : s_lastShotWeapon == SMG ? 0.12f : 0.35f;
 	const f32 t   = s_time - s_lastShotAt;
 	return s_lastShotAt > 0.0f && t >= 0.0f && t < len ? t / len : -1.0f;
+}
+
+// held_fludd->set_weapon_stats' self_jump (mod_runtime.cpp): the bazooka's rocket jump, 0 none
+extern "C" int modg_spray_rocket_jump(float strength)
+{
+	if ((strength > 0.0f) != (s_rocketJump > 0.0f))
+		fprintf(stderr, "[weapons] the bazooka's rocket jump %s\n", strength > 0.0f ? "on" : "off");
+	s_rocketJump = strength > 0.0f ? (strength < 4.0f ? strength : 4.0f) : 0.0f;
+	return 1;
 }
 
 // held_fludd->set_weapon_stats (mod_runtime.cpp): a weapon's numbers, as the mod's menu has them
