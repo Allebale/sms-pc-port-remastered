@@ -689,9 +689,6 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 	return true;
 }
 
-// The spray weapon chosen now (the held gun's colour, modapi_held_fludd.cpp).
-int PortSprayWeaponId() { return s_weapon; }
-
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
 
