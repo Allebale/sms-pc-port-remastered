@@ -15,6 +15,8 @@
 // Game code: C++03.
 #include "port_ext.h"
 #include "port_framerate.h"
+#include "port_character.h"
+#include "port_coop.h"
 #include "coop_character.h"
 #include "../../multiplayer/mp_recolour.h"
 
@@ -67,13 +69,6 @@
 
 extern "C" {
 // platform/pad (pad.cpp): the second player's controller
-int port_coop_enabled(void);
-int port_coop_player2(void);
-void port_coop_set_joinable(int on);
-void port_coop_leave(void);
-unsigned port_coop_take_events(void);
-int port_coop_can_join(void);
-void port_coop_join_virtual(void);
 extern int port_coop_in_p2;
 // zzzzzz-coop-11 (below): a Puffer stuck on or off a nozzle
 void port_coop_popo_grab(void* popo, int on);
@@ -83,7 +78,7 @@ extern f32 port_camera_mouse_pitch, port_camera_zoom;
 extern int port_camera_mouse_busy;
 // platform/gx
 void GXPC_SetSplitView(int on, float x, float y, float w, float h) __attribute__((weak));
-void GXPC_ExtOverlaySet(int panel, const char* text) __attribute__((weak));
+void GXPC_CoopCard(const GXPCCoopCard* card) __attribute__((weak));
 // ext/multiplayer/game/mp_spawn.cpp: the stage's scene.bin records
 int port_spawn_record_of(const void* object, const void** record, unsigned* size);
 // decomp-patches/zzzzzz-coop-01: ViewFrustumClipCheck's other view
@@ -99,7 +94,6 @@ const Vec* port_coop_ear_pos = nullptr;
 namespace {
 
 const int kNoticeFrames = 30 * 5;
-const int kOverlayNotice = 0; // GXPC_EXT_OVERLAY_NOTICE
 
 // ------------------------------------------------------------ the players' globals
 
@@ -163,10 +157,8 @@ void takeLife()
 bool s_out;           // player 2 is out of lives
 bool s_lastLife;      // ...and their death is playing: out once it has
 s32 s_livesWhenOut;   // the count when they went out: a life more brings them back
-int s_noticeFrames;
-int s_hintFrames;     // "press Start to join" shown at a stage's start
-bool s_hintShown;
-bool s_connectHintShown; // "connect a second controller", shown once a game
+int s_hintFrames;     // frames played (SMS_COOP_TEST_JOIN)
+int s_builtCharacter; // the first player's character as player 2 was made (a switch since: no joining here)
 bool s_testJoined;
 int s_testJoinFrame;
 int s_frame;
@@ -545,6 +537,11 @@ void sceneLoaded()
 	s_console2 = nullptr;
 	if (!s_wanted || !gpMarioOriginal || !gpCamera || !gpStrategy || gpApplication.mCurrArea.getStage() == 15)
 		return;
+	// only with a controller to join with: a player alone plays the stage as ever
+	if (!port_coop_armed() && !getenv("SMS_COOP_TEST_JOIN")) {
+		fprintf(stderr, "[coop] no second controller: this stage has no player 2\n");
+		return;
+	}
 	TIdxGroupObj* players = gpStrategy->unk10[6]; // "プレーヤーグループ"
 	JDrama::TViewObjPtrListT<JDrama::TViewObj>* cameras
 	    = (JDrama::TViewObjPtrListT<JDrama::TViewObj>*)JDrama::TNameRefGen::search2("Cameras");
@@ -582,8 +579,9 @@ void sceneLoaded()
 	m->onHitFlag(HIT_FLAG_NO_COLLISION); // until they join
 	THitActor* actor = m;
 	players->add(actor);
-	s_made = true;
-	s_dir  = gpMarDirector;
+	s_made           = true;
+	s_dir            = gpMarDirector;
+	s_builtCharacter = port_character_selected();
 	fprintf(stderr, "[coop] player 2 and camera 2 ready (%d bytes free in the stage's heap)\n",
 	        (int)JKRHeap::getCurrentHeap()->getTotalFreeSize());
 }
@@ -653,7 +651,6 @@ void stageSetup()
 	s_warpHeld[0] = s_warpHeld[1] = nullptr;
 	s_post3DEnd = s_postOverlayFrom = s_postOverlayTo = s_composite = -1;
 	s_respawnFrames = 0;
-	s_hintShown     = false;
 	if (s_lastLife) { // the stage changed while their last life was being lost
 		s_lastLife     = false;
 		s_out          = true;
@@ -900,21 +897,133 @@ bool playing()
 	       && !d->checkFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 }
 
-void notice(const char* text, int frames)
+// ------------------------------------------------------------ the card
+// What players see of joining and leaving (GXPC_CoopCard, platform/gx's
+// gx_coop_overlay.cpp): a card near the top of the picture, or while the
+// screen is split in the view of the player it is about, with a badge in
+// that player's colour. The text names players by number, not character:
+// either player may be any character (the Characters page, F4). What the
+// controllers are doing now (a guest's Start held, player 2's controller
+// gone...) comes first; else the last thing that happened, for a few seconds.
+
+const u32 kPlayerColour[2] = { 0xe5484dffu, 0x30a852ffu }; // player 1 red, player 2 green
+
+struct Card {
+	int who; // 1 or 2: whose badge and colour
+	char title[64];
+	char lines[2][96];
+	float progress;
+};
+Card s_event;     // the last thing that happened
+int s_eventUntil; // ...shown until this frame (s_frame)
+
+// `format` with its %s the controller's Start as printed on it (START, OPTIONS, +).
+void cardText(char* out, size_t size, const char* format, const char* start)
 {
-	if (GXPC_ExtOverlaySet)
-		GXPC_ExtOverlaySet(kOverlayNotice, text);
-	s_noticeFrames = frames;
-	fprintf(stderr, "[coop] %s\n", text);
+	snprintf(out, size, format, start && *start ? start : "START");
 }
 
-// A notice about player 2: `format`'s first %s their name (Luigi, or their
-// chosen character's), the second "him" or "them".
-void noticeP2(const char* format, int frames)
+void setCard(Card& c, int who, const char* title, const char* l1, const char* l2, const char* start)
 {
-	char text[160];
-	snprintf(text, sizeof text, format, coop_character::name(), coop_character::them());
-	notice(text, frames);
+	c.who = who;
+	cardText(c.title, sizeof c.title, title, start);
+	cardText(c.lines[0], sizeof c.lines[0], l1, start);
+	cardText(c.lines[1], sizeof c.lines[1], l2, start);
+}
+
+void notice(int who, int frames, const char* title, const char* line1 = "", const char* line2 = "",
+            const char* start = "")
+{
+	setCard(s_event, who, title, line1, line2, start);
+	s_event.progress = -1;
+	s_eventUntil     = s_frame + frames;
+	fprintf(stderr, "[coop] %s / %s / %s\n", s_event.title, s_event.lines[0], s_event.lines[1]);
+}
+
+// A notice about player 2 (lives), in their view.
+void noticeP2(const char* title, int frames, const char* line = "")
+{
+	notice(2, frames, title, line);
+}
+
+// The card for this frame.
+void showCard(bool split, bool built)
+{
+	if (!GXPC_CoopCard)
+		return;
+	PortCoopStatus st;
+	port_coop_status(&st);
+	Card c     = {};
+	c.progress = -1;
+	bool have  = true;
+	const char* guest = st.guestStart;
+	if (st.p2Gone >= 0) {
+		setCard(c, 2, "Player 2's controller disconnected", "Reconnect it, or press a button on", "another controller to keep playing", "");
+		c.progress = st.p2Gone / 10.0f;
+	} else if (st.p2Hold > 0) {
+		setCard(c, 2, "Keep holding to leave", "The screen goes back to one", "", "");
+		c.progress = st.p2Hold;
+	} else if (st.queuedHold > 0) {
+		setCard(c, 2, "Keep holding to cancel", "This controller won't join", "", "");
+		c.progress = st.queuedHold;
+	} else if (st.guestHold > 0) {
+		setCard(c, 1, "Keep holding to take over", "This controller becomes Player 1's", "", "");
+		c.progress = st.guestHold;
+	} else if (st.queued) {
+		setCard(c, 2, "Player 2 is ready", built ? "Joins as soon as play starts" : "Joins when the next area loads",
+		        "Hold [%s] to cancel", guest);
+	} else if (st.guest && port_coop_player2()) {
+		setCard(c, 1, "Two players are already playing", "Hold [%s] to take over as Player 1", "", guest);
+	} else if (st.guest) {
+		setCard(c, 2, "Join as Player 2", built ? "Press [%s] to join" : "Press [%s] to join from the next area",
+		        "Hold [%s] to take over as Player 1", guest);
+	} else if (s_frame < s_eventUntil) {
+		c = s_event;
+	} else {
+		have = false;
+	}
+	if (!have) {
+		GXPC_CoopCard(nullptr);
+		return;
+	}
+	GXPCCoopCard card = {};
+	snprintf(card.badge, sizeof card.badge, "P%d", c.who);
+	card.accent = kPlayerColour[c.who == 2 ? 1 : 0];
+	memcpy(card.title, c.title, sizeof card.title);
+	memcpy(card.lines, c.lines, sizeof card.lines);
+	card.progress = c.progress;
+	card.view     = split ? (c.who == 2 ? 1 : 2) : 0; // split: in the view of the player it is about
+	card.stacked  = s_layout == 1;
+	GXPC_CoopCard(&card);
+}
+
+// What happened since the last frame, as notices.
+void takeEvents()
+{
+	PortCoopStatus st;
+	port_coop_status(&st);
+	const unsigned e = port_coop_take_events();
+	if (e & PORT_COOP_EVENT_LEFT) {
+		if (e & PORT_COOP_EVENT_LEFT_GONE)
+			notice(2, kNoticeFrames, "Player 2 left", "Their controller didn't come back");
+		else
+			notice(2, kNoticeFrames, "Player 2 left", "Press [%s] on another controller to join again", "", st.guestStart);
+	}
+	if ((e & PORT_COOP_EVENT_JOINED) && s_out)
+		notice(2, kNoticeFrames, "Player 2 is out of lives", "The next 1-Up brings them back");
+	else if (e & PORT_COOP_EVENT_JOINED)
+		notice(2, kNoticeFrames, "Player 2 joined", "Hold [%s] to leave", "", st.p2Start);
+	if (e & PORT_COOP_EVENT_P2_BACK)
+		notice(2, kNoticeFrames / 2, "Player 2 is back");
+	if (e & PORT_COOP_EVENT_CANCELLED)
+		notice(2, kNoticeFrames / 2, "Player 2 won't join", "Press [%s] to join after all", "", st.guestStart);
+	if (e & PORT_COOP_EVENT_TAKEOVER)
+		notice(1, kNoticeFrames * 3 / 4, "Player 1 is on this controller", "The other one can join as Player 2");
+	else if (e & PORT_COOP_EVENT_OWNER_BACK)
+		notice(1, kNoticeFrames * 3 / 4, "Player 1 is on this controller");
+	if (e & PORT_COOP_EVENT_OWNER_LOST)
+		notice(1, kNoticeFrames * 2, "Player 1's controller disconnected", "Press a button on a controller to play on",
+		       "The keyboard still works");
 }
 
 // Beside player 1, facing as they do, a little behind and to their right.
@@ -1157,12 +1266,17 @@ void frame()
 	// ...and sounds are heard from the nearer camera (zzzzzz-coop-08)
 	s_earMtx          = port_coop_views[1];
 	port_coop_ear_pos = s_earMtx ? &s_p2.cam->getUnk124Vec() : nullptr;
+	// what the controllers can do now (platform/pad): in the menus every
+	// controller plays as controller 1; in a stage the others join
+	const bool inStage = d && gpApplication.mCurrArea.getStage() != 15;
+	const bool built   = here && s_builtCharacter == port_character_selected();
+	port_coop_set_mode(!inStage ? 0 : playing() ? 2 : 1, built);
+	takeEvents();
 	if (!here) {
-		port_coop_set_joinable(0);
 		s_split = false;
+		showCard(false, built);
 		return;
 	}
-	port_coop_set_joinable(playing());
 	// controller 2 reads as controller 1 does in each of the stage's modes
 	// (the director sets controller 1's: play, talk, menus)
 	// (flag 4, B talks, is each controller's own: the director sets it for the
@@ -1184,13 +1298,6 @@ void frame()
 	if (const char* t = getenv("SMS_COOP_TEST_LEAVE")) // a test's player 2 leaving, frames after joining
 		if (s_testJoined && s_frame == s_testJoinFrame + atoi(t))
 			port_coop_leave();
-	const unsigned events = port_coop_take_events();
-	if ((events & 1) && s_out)
-		noticeP2("%s is out of lives. The next 1-Up brings %s back.", kNoticeFrames);
-	else if (events & 1)
-		noticeP2("%s joined! Hold START on their controller to leave.", kNoticeFrames);
-	if (events & 2)
-		noticeP2("%s left. Press START on another controller to play again.", kNoticeFrames);
 	// out of lives: back with the next life that comes (it is theirs)
 	if (s_out && !s_active && playing()) {
 		TFlagManager* flags = TFlagManager::getInstance();
@@ -1198,7 +1305,7 @@ void frame()
 		if (lives > s_livesWhenOut) {
 			takeLife();
 			s_out = false;
-			noticeP2(coop_character::chosen() ? "A 1-Up for %s: they're back!" : "A 1-Up for %s: he's back!", kNoticeFrames / 2);
+			noticeP2("A 1-Up for Player 2: back in!", kNoticeFrames / 2);
 		} else if (lives < s_livesWhenOut) {
 			s_livesWhenOut = lives; // Mario lost one meanwhile
 		}
@@ -1212,16 +1319,6 @@ void frame()
 		s_fluddSyncedFor = s_dir;
 		syncFludd(p2());
 	}
-	if (!s_active && !s_hintShown && playing() && port_coop_can_join()) {
-		s_hintShown = true;
-		noticeP2("Co-op: press START on another controller to join as %s.", kNoticeFrames);
-	} else if (!s_active && !s_hintShown && !s_connectHintShown && playing() && port_coop_player2() == 0) {
-		// no controller but the first player's (once a game: they may mean to play alone for now)
-		s_connectHintShown = true;
-		noticeP2("Co-op: connect a second controller, then press its START to join as %s.", kNoticeFrames);
-	}
-	if (s_noticeFrames > 0 && --s_noticeFrames == 0 && GXPC_ExtOverlaySet)
-		GXPC_ExtOverlaySet(kOverlayNotice, "");
 	// two views while both play the stage; one (player 1's camera) for its
 	// cutscenes, Shine Gets and the like, which the game shows on camera 1
 	const bool split = s_active && d->mState >= TMarDirector::STATE_UNK4 && !d->isDemoModeNow()
@@ -1230,6 +1327,7 @@ void frame()
 	if (split != s_split)
 		setAspects(split);
 	s_split = split;
+	showCard(split, built);
 }
 
 void afterMovement()
@@ -1417,7 +1515,7 @@ void afterMovement()
 			s_respawnFrames = s_frame + fps * 3;
 			if (flags->getFlag(kLivesFlag) > 0) {
 				takeLife();
-				noticeP2("%s lost a life.", kNoticeFrames / 2);
+				noticeP2("Player 2 lost a life", kNoticeFrames / 2);
 			} else {
 				s_lastLife = true; // the death plays out, then they leave the screen
 			}
@@ -1428,7 +1526,7 @@ void afterMovement()
 				s_out          = true;
 				s_livesWhenOut = flags->getFlag(kLivesFlag);
 				activate(false);
-				noticeP2("%s is out of lives. The next 1-Up brings %s back.", kNoticeFrames);
+				noticeP2("Player 2 is out of lives", kNoticeFrames, "The next 1-Up brings them back");
 				return;
 			}
 			revive(m);
@@ -1825,8 +1923,10 @@ namespace {
 struct Register {
 	Register()
 	{
-		const char* e = getenv("SMS_COOP");
-		s_wanted      = e && *e && strcmp(e, "0") != 0 && !getenv("SMS_MULTIPLAYER");
+		// on unless SMS_COOP=0, and never in an online game (SMS_MULTIPLAYER)
+		const char* e  = getenv("SMS_COOP");
+		const char* mp = getenv("SMS_MULTIPLAYER");
+		s_wanted       = !(e && *e && !strcmp(e, "0")) && !(mp && *mp && strcmp(mp, "0") && strcmp(mp, "off"));
 		if (!s_wanted)
 			return;
 		const char* layout = getenv("SMS_COOP_SPLIT");
