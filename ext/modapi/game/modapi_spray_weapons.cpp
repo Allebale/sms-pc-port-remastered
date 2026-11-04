@@ -363,9 +363,10 @@ void explode(const JGeometry::TVec3<f32>& at, f32 r)
 // The small enemies of one manager within the burst, each hit (a shot counts once for each).
 // Shadow Mario (TEMario): the stream's drops each take one of his water meter (mWaterCtMax of them,
 // then he goes down), so a weapon's one drop a shot did next to nothing. A shot takes a share of
-// it instead, its weapon's: a Rifle shot a fifth, a Bazooka burst a third, a Submachine gun shot 1 in 20.
+// it instead, its weapon's: a Rifle shot a third, a Bazooka burst a half, a Submachine gun shot 1 in 10;
+// emptied, he goes down at once (the game's own next hit, as the stream's last drop would).
 // Only while the game lets water count (him running his course or waiting), as its own.
-const f32 kShadowShare[WEAPONS] = {0.0f, 0.0f, 0.2f, 0.34f, 0.05f};
+const f32 kShadowShare[WEAPONS] = {0.0f, 0.0f, 0.34f, 0.5f, 0.1f};
 int s_shadowShot;
 f32 s_shadowAt; // when (a shot's number comes round again after 7: not the same shot then)
 bool sameShadowShot(int shot) { return shot == s_shadowShot && s_time - s_shadowAt < 3.0f; }
@@ -386,6 +387,8 @@ void shadowHit(TEMario* em, int weapon, int shot, bool gameCounted)
 		return;
 	m->mWaterCounter = (s16)(m->mWaterCounter > take ? m->mWaterCounter - take : 0);
 	fprintf(stderr, "[weapons] Shadow Mario hit by the %s: %d of his %d water left\n", kNames[weapon], (int)m->mWaterCounter, most);
+	if (m->mWaterCounter == 0)
+		m->hitWater(em); // empty: down now
 }
 
 // A shot that got to what it was aimed at (far away, or Shadow Mario, who runs too fast to meet
