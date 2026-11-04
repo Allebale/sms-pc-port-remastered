@@ -180,9 +180,11 @@ Hit* hitOf(TSmallEnemy* e)
 	return slot;
 }
 
+void clearStraights();
 void stageSetup()
 {
 	s_rocketAir = false;
+	clearStraights(); // (their enemies were the last stage's)
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -291,7 +293,7 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	h->lastShot = shot;
 	if (!s_defeat)
 		return; // hits count towards a defeat only while it is on
-	if (s_time - h->last > kHitWindow)
+	if (s_time - h->last > kHitWindow * (s_farScale > 1.0f ? s_farScale : 1.0f)) // longer at long range
 		h->hits = 0;
 	h->hits++;
 	h->last = s_time;
@@ -581,9 +583,13 @@ struct Straight {
 	JGeometry::TVec3<f32> lanes[kMostLanes];   // each drop's own way (a spread)
 	int laneCount;
 	f32 far, speed;
+	f32 aim;             // how far away what it was aimed at is
+	TSmallEnemy* target; // far away (long range): the enemy aimed at, hit as the shot gets there
+	int weapon;
 };
 const int kMostStraight = 8;
 Straight s_straights[kMostStraight];
+void clearStraights() { memset(s_straights, 0, sizeof s_straights); }
 int s_nextStraight;
 int s_bazookaShot;   // the bazooka's drop in flight (its shot), to burst where it lands
 JGeometry::TVec3<f32> s_bazookaAt;
@@ -694,6 +700,9 @@ void fire()
 		st->from      = from;
 		st->way       = way;
 		st->far       = s_weapon == BAZOOKA ? l + 200.0f : reachNow;
+		st->aim       = l;
+		st->target    = l > 3000.0f && s_weapon != BAZOOKA ? e : 0;
+		st->weapon    = s_weapon;
 		st->speed     = 0.0f;
 		st->laneCount = 0;
 		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon], e ? "an enemy" : "nothing", l);
@@ -796,8 +805,18 @@ void followStraight()
 		// to what the crosshair is on, however far, never above or below it
 		JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
 		const f32 along = (at.x - st->from.x) * way.x + (at.y - st->from.y) * way.y + (at.z - st->from.z) * way.z;
+		// far away (long range): faster, to get there in about half a second, not seconds (an enemy
+		// walked out of the way meanwhile)
+		const f32 quick = st->aim > 3000.0f ? st->aim / 15.0f : 0.0f;
+		const f32 extra = quick > st->speed ? (quick - st->speed) * port_frame_scale() : 0.0f;
 		if (along > 0.0f)
-			at.set(st->from.x + way.x * along, st->from.y + way.y * along, st->from.z + way.z * along);
+			at.set(st->from.x + way.x * (along + extra), st->from.y + way.y * (along + extra), st->from.z + way.z * (along + extra));
+		// that fast it could pass through the enemy between two frames: hit as it gets there
+		if (st->target && along + extra >= st->aim - 100.0f) {
+			const f32 hl = sqrtf(way.x * way.x + way.z * way.z);
+			hitEnemy(st->target, st->weapon, st->shot, hl > 1e-3f ? way.x / hl : 0.0f, hl > 1e-3f ? way.z / hl : 0.0f);
+			st->target = 0;
+		}
 		if (w->mParticleLifetimeSOA[i] < 30.0f)
 			w->mParticleLifetimeSOA[i] = 30.0f; // no end to its reach
 	}
