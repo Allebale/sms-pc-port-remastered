@@ -411,8 +411,11 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 		return 0;
 	int n = 0;
 	for (int i = 0; i < mgr->getObjNum(); i++) {
-		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) { // Shadow Mario in the burst
-			const f32 x = em->mPosition.x - at.x, y = em->mPosition.y - at.y, z = em->mPosition.z - at.z;
+		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) { // Shadow Mario in the burst (where he is seen)
+			if (!em->mEnemyMario)
+				continue;
+			const JGeometry::TVec3<f32>& ep = em->mEnemyMario->mPosition;
+			const f32 x = ep.x - at.x, y = ep.y - at.y, z = ep.z - at.z;
 			if (x * x + z * z <= r * r && fabsf(y) <= 400.0f) {
 				hitTarget(em, weapon, shot, 0.0f, 0.0f);
 				n++;
@@ -586,6 +589,17 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 	return d2 <= rad * rad ? t : -1.0f;
 }
 
+// Where along the line an enemy is (alongRay), -1 if not on it: a small enemy, or Shadow Mario (his
+// own actor is left out of the drawing, a stand-in for the Mario-like one seen: that one's place)
+f32 shotAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, TLiveActor* e, f32 most)
+{
+	if (TEMario* em = dynamic_cast<TEMario*>(e))
+		return em->mEnemyMario && !em->checkLiveFlag(LIVE_FLAG_DEAD) ? alongRay(eye, f, em->mEnemyMario, most) : -1.0f;
+	if (!dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+		return -1.0f;
+	return alongRay(eye, f, e, most);
+}
+
 TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* at)
 {
 	// the map's walls and ground along it, a piece at a time and only inside the stage (a line
@@ -616,11 +630,7 @@ TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3
 				for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 					for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
 						TLiveActor* e = (*it)->getObj(i); // a small enemy, or Shadow Mario
-						if (!dynamic_cast<TSmallEnemy*>(e) && !dynamic_cast<TEMario*>(e))
-							continue;
-						if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
-							continue;
-						const f32 t = alongRay(eye, f, e, bestT);
+						const f32 t   = shotAlong(eye, f, e, bestT);
 						if (t >= 0.0f && t < bestT)
 							bestT = t, best = e;
 					}
@@ -628,11 +638,7 @@ TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3
 				for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
 					for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
 						TLiveActor* e = (*it)->getObj(i); // a small enemy, or Shadow Mario
-						if (!dynamic_cast<TSmallEnemy*>(e) && !dynamic_cast<TEMario*>(e))
-							continue;
-						if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
-							continue;
-						const f32 t = alongRay(eye, f, e, bestT);
+						const f32 t   = shotAlong(eye, f, e, bestT);
 						if (t >= 0.0f && t < bestT)
 							bestT = t, best = e;
 					}
