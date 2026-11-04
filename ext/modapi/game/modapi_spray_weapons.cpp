@@ -166,24 +166,33 @@ Hit s_hits[kMostHits];
 struct Shove {
 	TBaseNPC* npc;
 	f32 vx, vz;
+	f32 vy, y; // thrown up as the enemies are (the bazooka's air height): its height, falling back to the ground
+	bool air;
 };
 const int kMostShoves = 16;
 Shove s_shoves[kMostShoves];
 
-void shoveNpc(TBaseNPC* npc, f32 vx, f32 vz)
+void shoveNpc(TBaseNPC* npc, f32 vx, f32 vz, f32 lift)
 {
 	Shove* slot = 0;
 	for (int i = 0; i < kMostShoves && !slot; i++)
 		if (s_shoves[i].npc == npc)
 			slot = &s_shoves[i];
 	for (int i = 0; i < kMostShoves && !slot; i++)
-		if (!s_shoves[i].npc || s_shoves[i].vx * s_shoves[i].vx + s_shoves[i].vz * s_shoves[i].vz < 0.09f)
+		if (!s_shoves[i].npc || (!s_shoves[i].air && s_shoves[i].vx * s_shoves[i].vx + s_shoves[i].vz * s_shoves[i].vz < 0.09f))
 			slot = &s_shoves[i];
 	if (!slot)
 		return;
 	slot->npc = npc;
 	slot->vx  = vx;
 	slot->vz  = vz;
+	if (lift > 0.0f) {
+		if (!slot->air)
+			slot->y = npc->mPosition.y;
+		slot->vy  = lift;
+		slot->y  += 8.0f;
+		slot->air = true;
+	}
 }
 
 Hit* hitOf(TSmallEnemy* e)
@@ -233,9 +242,18 @@ void afterMovement()
 		                                     nullptr, 0, 4);
 	for (int i = 0; i < kMostShoves; i++) { // the people shoved: along the ground, kept out of walls
 		Shove& sh = s_shoves[i];
-		if (!sh.npc || (sh.vx * sh.vx + sh.vz * sh.vz) < 0.09f)
+		if (!sh.npc || (!sh.air && (sh.vx * sh.vx + sh.vz * sh.vz) < 0.09f))
 			continue;
 		TBaseNPC* npc = sh.npc;
+		if (sh.air) { // up and back down onto the ground under it, as the game's own fall would
+			sh.vy -= 1.0f * dt;
+			sh.y += sh.vy * dt;
+			const TBGCheckData* floor = 0;
+			const f32 ground = gpMap ? gpMap->checkGround(npc->mPosition.x, sh.y + 100.0f, npc->mPosition.z, &floor) : sh.y;
+			if (sh.vy < 0.0f && sh.y <= ground)
+				sh.y = ground, sh.vy = 0.0f, sh.air = false;
+			npc->mPosition.y = sh.y;
+		}
 		const f32 mx = sh.vx * dt, mz = sh.vz * dt;
 		if (gpMap && !gpMap->isInArea(npc->mPosition.x + mx, npc->mPosition.z + mz)) {
 			sh.vx = sh.vz = 0.0f;
@@ -405,7 +423,7 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 				const f32 x = npc->mPosition.x - at.x, y = npc->mPosition.y - at.y, z = npc->mPosition.z - at.z;
 				const f32 l = sqrtf(x * x + z * z);
 				if (l <= r && fabsf(y) <= 400.0f && l > 1.0f) {
-					shoveNpc(npc, x / l * kWeapons[weapon].shove, z / l * kWeapons[weapon].shove);
+					shoveNpc(npc, x / l * kWeapons[weapon].shove, z / l * kWeapons[weapon].shove, kWeapons[weapon].lift);
 					n++;
 				}
 				continue;
