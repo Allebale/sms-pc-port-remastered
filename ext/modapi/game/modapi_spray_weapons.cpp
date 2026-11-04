@@ -43,6 +43,8 @@
 #include <MSound/SoundEffects.hpp>
 #include <Strategic/LiveManager.hpp>
 #include <Enemy/Conductor.hpp>
+#include <Enemy/Emario.hpp>
+#include <Enemy/EnemyMario.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include "port_framerate.h"
 
@@ -359,12 +361,61 @@ void explode(const JGeometry::TVec3<f32>& at, f32 r)
 }
 
 // The small enemies of one manager within the burst, each hit (a shot counts once for each).
+// Shadow Mario (TEMario): the stream's drops each take one of his water meter (mWaterCtMax of them,
+// then he goes down), so a weapon's one drop a shot did next to nothing. A shot takes a share of
+// it instead, its weapon's: a Rifle shot 6 in 100, a Bazooka burst 10, a Submachine gun shot 1.5.
+// Only while the game lets water count (him running his course or waiting), as its own.
+const f32 kShadowShare[WEAPONS] = {0.0f, 0.0f, 0.06f, 0.10f, 0.015f};
+int s_shadowShot;
+f32 s_shadowAt; // when (a shot's number comes round again after 7: not the same shot then)
+bool sameShadowShot(int shot) { return shot == s_shadowShot && s_time - s_shadowAt < 3.0f; }
+void shadowHit(TEMario* em, int weapon, int shot, bool gameCounted)
+{
+	TEnemyMario* m = em ? em->mEnemyMario : 0;
+	if (!m || weapon <= NORMAL || weapon >= WEAPONS || sameShadowShot(shot) || m->getSettingsParams()->mInvincibleFlag.get())
+		return;
+	const u16 doing = m->mEMDoing;
+	if (doing != TEnemyMario::EM_DOING_REPLAY && doing != TEnemyMario::EM_DOING_REPLAY_WAITING
+	    && doing != TEnemyMario::EM_DOING_REPLAY_JUMP_TO_NEAREST_NODE)
+		return;
+	s_shadowShot   = shot;
+	s_shadowAt     = s_time;
+	const int most = m->getSettingsParams()->mWaterCtMax.get();
+	int take       = (int)((f32)most * kShadowShare[weapon] + 0.5f) - (gameCounted ? 1 : 0); // the game took one itself
+	if (take < 1)
+		return;
+	m->mWaterCounter = (s16)(m->mWaterCounter > take ? m->mWaterCounter - take : 0);
+	fprintf(stderr, "[weapons] Shadow Mario hit by the %s: %d of his %d water left\n", kNames[weapon], (int)m->mWaterCounter, most);
+}
+
+// A shot that got to what it was aimed at (far away, or Shadow Mario, who runs too fast to meet
+// a drop): an enemy hit, or Shadow Mario wetted (the game's own count, then the weapon's share).
+void hitTarget(TLiveActor* a, int weapon, int shot, f32 dx, f32 dz)
+{
+	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(a)) {
+		hitEnemy(e, weapon, shot, dx, dz);
+	} else if (TEMario* em = dynamic_cast<TEMario*>(a)) {
+		if (sameShadowShot(shot))
+			return;
+		em->receiveMessage(em, HIT_MESSAGE_SPRAYED_BY_WATER);
+		shadowHit(em, weapon, shot, true);
+	}
+}
+
 int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>& at, f32 r)
 {
 	if (!mgr)
 		return 0;
 	int n = 0;
 	for (int i = 0; i < mgr->getObjNum(); i++) {
+		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) { // Shadow Mario in the burst
+			const f32 x = em->mPosition.x - at.x, y = em->mPosition.y - at.y, z = em->mPosition.z - at.z;
+			if (x * x + z * z <= r * r && fabsf(y) <= 400.0f) {
+				hitTarget(em, weapon, shot, 0.0f, 0.0f);
+				n++;
+			}
+			continue;
+		}
 		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
 		if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 			continue;
@@ -487,6 +538,17 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	}
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return; // the normal spray, or any other water: the game's own
+	if (TEMario* em = dynamic_cast<TEMario*>(static_cast<THitActor*>(object))) { // Shadow Mario: the weapon's share
+		if (kWeapons[weapon].burst > 0.0f) {
+			if (s_burst != shot) {
+				s_burst = shot;
+				burst(weapon, shot, w->mParticlePositionSOA[drop->mParticleIndex]);
+			}
+		} else {
+			shadowHit(em, weapon, shot, true);
+		}
+		return;
+	}
 	TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
 	if (!e)
 		return;
@@ -521,7 +583,7 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 	return d2 <= rad * rad ? t : -1.0f;
 }
 
-TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* at)
+TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* at)
 {
 	// the map's walls and ground along it, a piece at a time and only inside the stage (a line
 	// far out of it crashes the map's lookup)
@@ -542,16 +604,18 @@ TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec
 	}
 	if (most < 1.0f)
 		most = 1.0f;
-	TSmallEnemy* best = 0;
-	f32 bestT         = most;
+	TLiveActor* best = 0;
+	f32 bestT        = most;
 	if (gpConductor) {
 		for (int list = 0; list < 2; list++) {
 			JGadget::TList<TLiveManager*> none;
 			if (list == 0) {
 				for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 					for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
-						TSmallEnemy* e = dynamic_cast<TSmallEnemy*>((*it)->getObj(i));
-						if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+						TLiveActor* e = (*it)->getObj(i); // a small enemy, or Shadow Mario
+						if (!dynamic_cast<TSmallEnemy*>(e) && !dynamic_cast<TEMario*>(e))
+							continue;
+						if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 							continue;
 						const f32 t = alongRay(eye, f, e, bestT);
 						if (t >= 0.0f && t < bestT)
@@ -560,8 +624,10 @@ TSmallEnemy* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec
 			} else {
 				for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
 					for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
-						TSmallEnemy* e = dynamic_cast<TSmallEnemy*>((*it)->getObj(i));
-						if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+						TLiveActor* e = (*it)->getObj(i); // a small enemy, or Shadow Mario
+						if (!dynamic_cast<TSmallEnemy*>(e) && !dynamic_cast<TEMario*>(e))
+							continue;
+						if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 							continue;
 						const f32 t = alongRay(eye, f, e, bestT);
 						if (t >= 0.0f && t < bestT)
@@ -584,7 +650,7 @@ struct Straight {
 	int laneCount;
 	f32 far, speed;
 	f32 aim;             // how far away what it was aimed at is
-	TSmallEnemy* target; // far away (long range): the enemy aimed at, hit as the shot gets there
+	TLiveActor* target;  // far away (long range), or Shadow Mario: what it was aimed at, hit as the shot gets there
 	int weapon;
 };
 const int kMostStraight = 8;
@@ -687,7 +753,7 @@ void fire()
 		// bazooka's to it (then it falls as any drop), the rifle's on as far as its reach
 		JGeometry::TVec3<f32> at;
 		const f32 reachNow = kRifleReach * (s_reachScale[s_weapon] < 1.0f ? s_reachScale[s_weapon] : 1.0f);
-		TSmallEnemy* e     = rifleTarget(eye, f, reachNow, &at);
+		TLiveActor* e      = rifleTarget(eye, f, reachNow, &at);
 		JGeometry::TVec3<f32> d(at.x - from.x, at.y - from.y, at.z - from.z);
 		const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
 		if (l > 1.0f)
@@ -701,7 +767,7 @@ void fire()
 		st->way       = way;
 		st->far       = s_weapon == BAZOOKA ? l + 200.0f : reachNow;
 		st->aim       = l;
-		st->target    = l > 3000.0f && s_weapon != BAZOOKA ? e : 0;
+		st->target    = (l > 3000.0f || dynamic_cast<TEMario*>(e)) && s_weapon != BAZOOKA ? e : 0;
 		st->weapon    = s_weapon;
 		st->speed     = 0.0f;
 		st->laneCount = 0;
@@ -807,14 +873,14 @@ void followStraight()
 		const f32 along = (at.x - st->from.x) * way.x + (at.y - st->from.y) * way.y + (at.z - st->from.z) * way.z;
 		// far away (long range): faster, to get there in about half a second, not seconds (an enemy
 		// walked out of the way meanwhile)
-		const f32 quick = st->aim > 3000.0f ? st->aim / 15.0f : 0.0f;
+		const f32 quick = st->aim > 3000.0f || (st->target && dynamic_cast<TEMario*>(st->target)) ? st->aim / 15.0f : 0.0f;
 		const f32 extra = quick > st->speed ? (quick - st->speed) * port_frame_scale() : 0.0f;
 		if (along > 0.0f)
 			at.set(st->from.x + way.x * (along + extra), st->from.y + way.y * (along + extra), st->from.z + way.z * (along + extra));
 		// that fast it could pass through the enemy between two frames: hit as it gets there
 		if (st->target && along + extra >= st->aim - 100.0f) {
 			const f32 hl = sqrtf(way.x * way.x + way.z * way.z);
-			hitEnemy(st->target, st->weapon, st->shot, hl > 1e-3f ? way.x / hl : 0.0f, hl > 1e-3f ? way.z / hl : 0.0f);
+			hitTarget(st->target, st->weapon, st->shot, hl > 1e-3f ? way.x / hl : 0.0f, hl > 1e-3f ? way.z / hl : 0.0f);
 			st->target = 0;
 		}
 		if (w->mParticleLifetimeSOA[i] < 30.0f)
