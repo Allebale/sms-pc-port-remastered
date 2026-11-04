@@ -775,10 +775,21 @@ void dropRegistrations(SmsMod* m)
 	if (m->holdsFludd) { // FLUDD back on his back
 		m->holdsFludd = false;
 		modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+	}
+	if (m->armsFludd) { // the normal spray, the game's own numbers, no zoom
+		m->armsFludd = false;
 		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
-		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_SMG; w++)
+		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_SMG; w++) {
 			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
+			modg_spray_view_distance(w, 0.0f);
+		}
 		modg_spray_rocket_jump(0.0f);
+		modg_spray_far_scale(1.0f);
+		modg_held_fludd_zoom(0.0f, 0);
+	}
+	if (m->setsView) {
+		m->setsView = false;
+		modg_held_fludd_view(0);
 	}
 	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
 		m->hiddenParts = 0;
@@ -1159,12 +1170,18 @@ int apiHeldFluddSet(int on, float right, float down, float forward, float scale,
 int apiSprayWeaponSet(int weapon, int flags)
 {
 	if (SmsMod* m = current())
-		m->holdsFludd = m->holdsFludd || weapon != SMS_SPRAY_NORMAL;
+		m->armsFludd = m->armsFludd || weapon != SMS_SPRAY_NORMAL || flags != 0;
 	return modg_spray_weapon_set(weapon, flags);
 }
 
 int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
 {
+	if (SmsMod* m = current())
+		m->armsFludd = m->armsFludd || st != nullptr;
+	// each weapon's hold distance in first person, and long range (from mods that set them)
+	modg_spray_view_distance(weapon, st && st->size >= offsetof(SmsSprayStats, view_distance) + sizeof(float) ? st->view_distance : 0.0f);
+	if (st && st->size >= offsetof(SmsSprayStats, far_scale) + sizeof(float))
+		modg_spray_far_scale(st->far_scale);
 	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump: only from a mod that sets it
 		modg_spray_rocket_jump(st && st->size >= offsetof(SmsSprayStats, self_jump) + sizeof(float) ? st->self_jump : 0.0f);
 	if (!st || st->size < offsetof(SmsSprayStats, lift))
@@ -1175,8 +1192,37 @@ int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
 	                               lift, drop);
 }
 
+int apiHeldFluddView(int on)
+{
+	if (SmsMod* m = current())
+		m->setsView = m->setsView || on != 0;
+	return modg_held_fludd_view(on);
+}
+
+int apiHeldFluddZoom(float fovy, int flags)
+{
+	if (SmsMod* m = current())
+		m->armsFludd = m->armsFludd || fovy > 0.0f;
+	return modg_held_fludd_zoom(fovy, flags);
+}
+
+int apiHeldFluddState(SmsHeldFluddState* st)
+{
+	if (!st || st->size < offsetof(SmsHeldFluddState, zoom_flags) + sizeof(int))
+		return 0;
+	int fp = 0, held = 0, weapon = 0, flags = 0;
+	float fovy = 0.0f;
+	modg_held_fludd_state(&fp, &held, &weapon, &fovy, &flags);
+	st->first_person = fp;
+	st->held         = held;
+	st->weapon       = weapon;
+	st->zoom_fovy    = fovy;
+	st->zoom_flags   = flags;
+	return 1;
+}
+
 const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
-                                     apiSprayWeaponStats};
+                                     apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState};
 
 // ------------------------------------------------------------------ the API: multiplayer
 

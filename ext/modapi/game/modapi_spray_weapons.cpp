@@ -43,6 +43,7 @@
 #include <MSound/SoundEffects.hpp>
 #include <Strategic/LiveManager.hpp>
 #include <Enemy/Conductor.hpp>
+#include <MoveBG/MapObjManager.hpp>
 #include "port_framerate.h"
 
 #include <math.h>
@@ -93,6 +94,8 @@ const Weapon kDefaults[WEAPONS] = { // the game's own numbers (a mod may set oth
 Weapon kWeapons[WEAPONS]; // as they are now (kDefaults, or a mod's)
 f32 s_hitScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f}; // a weapon's hit size (the rifle's and submachine gun's), times its own
 f32 s_reachScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f}; // reach, times its own
+f32 s_viewDistance[WEAPONS];  // first person: how far ahead of the camera it is held (0 the first-person mod's)
+f32 s_farScale = 1.0f;        // long range: enemies and characters drawn and moving this many times further
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
@@ -904,6 +907,36 @@ f32 PortSprayWeaponShotPhase()
 	const f32 len = s_lastShotWeapon == BAZOOKA ? 0.5f : s_lastShotWeapon == SMG ? 0.12f : 0.35f;
 	const f32 t   = s_time - s_lastShotAt;
 	return s_lastShotAt > 0.0f && t >= 0.0f && t < len ? t / len : -1.0f;
+}
+
+// held_fludd->set_weapon_stats' view_distance and far_scale (mod_runtime.cpp)
+extern "C" int modg_spray_view_distance(int weapon, float distance)
+{
+	if (weapon < 0 || weapon >= WEAPONS)
+		return 0;
+	s_viewDistance[weapon] = distance > 1.0f && distance < 1000.0f ? distance : 0.0f;
+	return 1;
+}
+
+extern "C" int modg_spray_far_scale(float scale)
+{
+	const f32 k = scale > 1.0f ? (scale < 20.0f ? scale : 20.0f) : 1.0f;
+	if (k != s_farScale)
+		fprintf(stderr, "[weapons] long range: enemies and characters out to %.1f times as far\n", k);
+	s_farScale = k;
+	return 1;
+}
+
+// The first-person hold distance of the weapon chosen (modapi_held_fludd.cpp), 0 the mod's own.
+f32 PortSprayWeaponViewDistance() { return s_weapon != NORMAL ? s_viewDistance[s_weapon] : 0.0f; }
+
+// Long range (livemanager.cpp, as it clips its actors out of the view): enemies and characters
+// out to s_farScale times their own distance; map objects as ever.
+f32 PortSprayWeaponFarScale(TLiveManager* manager)
+{
+	if (s_farScale <= 1.0f || dynamic_cast<TMapObjBaseManager*>(manager))
+		return 1.0f;
+	return s_farScale;
 }
 
 // held_fludd->set_weapon_stats' self_jump (mod_runtime.cpp): the bazooka's rocket jump, 0 none
