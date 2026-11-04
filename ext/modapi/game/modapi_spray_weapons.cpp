@@ -363,9 +363,9 @@ void explode(const JGeometry::TVec3<f32>& at, f32 r)
 // The small enemies of one manager within the burst, each hit (a shot counts once for each).
 // Shadow Mario (TEMario): the stream's drops each take one of his water meter (mWaterCtMax of them,
 // then he goes down), so a weapon's one drop a shot did next to nothing. A shot takes a share of
-// it instead, its weapon's: a Rifle shot 6 in 100, a Bazooka burst 10, a Submachine gun shot 1.5.
+// it instead, its weapon's: a Rifle shot a fifth, a Bazooka burst a third, a Submachine gun shot 1 in 20.
 // Only while the game lets water count (him running his course or waiting), as its own.
-const f32 kShadowShare[WEAPONS] = {0.0f, 0.0f, 0.06f, 0.10f, 0.015f};
+const f32 kShadowShare[WEAPONS] = {0.0f, 0.0f, 0.2f, 0.34f, 0.05f};
 int s_shadowShot;
 f32 s_shadowAt; // when (a shot's number comes round again after 7: not the same shot then)
 bool sameShadowShot(int shot) { return shot == s_shadowShot && s_time - s_shadowAt < 3.0f; }
