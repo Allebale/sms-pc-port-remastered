@@ -1,4 +1,4 @@
-Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon_stats' far_scale): enemies and characters are drawn and move further away than the game's own distance, so a weapon can hit them there (enemies: TLiveManager::clipActorsAux; characters: TNPCManager::clipEnemies, and TBaseNPC::perform, which stops them moving out of sight beyond it). Map objects keep theirs. Without such a mod, nothing changes.
+Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon_stats' far_scale): enemies and characters are drawn, move and are animated further away than the game's own distance, so a weapon can hit them there (enemies: TLiveManager::clipActorsAux; characters: TNPCManager::clipEnemies, TBaseNPC::perform, which stops them moving out of sight beyond it, and calcAnmOff_, which stops some animations, an angry Pianta's, beyond its own distance). Map objects keep theirs. Without such a mod, nothing changes.
 
 --- a/src/Strategic/livemanager.cpp
 +++ b/src/Strategic/livemanager.cpp
@@ -35,7 +35,17 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
  #include <System/MarDirector.hpp>
  #include <M3DUtil/SDLModel.hpp>
  #include <M3DUtil/LodAnm.hpp>
-@@ -804,6 +808,9 @@
+@@ -710,6 +714,9 @@
+ 			// Named first: retail calls getAnmOffDist_ before the squared
+ 			// camera distance and CLBSquared after it.
+ 			f32 dist = getAnmOffDist_();
++#ifdef TARGET_PC
++			dist *= PortSprayWeaponFarScale(mManager); // a weapons mod's long range: animated further away
++#endif
+ 			if (MsSquaredDist(mPosition, gpCamera->unk124) > CLBSquared(dist) && !bVar6
+ 			    && mSpine->getTime() > 2) {
+ 				r31 = true;
+@@ -804,6 +811,9 @@
  		f32 farClip          = gpConductor->unk84.mEnemyFarClip.get();
  		if (manager != nullptr)
  			farClip = *manager->unk58;
