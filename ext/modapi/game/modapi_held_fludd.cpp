@@ -122,6 +122,7 @@ bool PortSprayWeaponChosen(); // modapi_spray_weapons.cpp
 int PortSprayWeaponId();
 void PortWeaponModelShow(int which, MtxPtr viewModel); // modapi_weapon_models.cpp
 void PortWeaponModelHide();
+void PortWeaponModelKeep();
 float PortWeaponModelMuzzle(int which);
 
 f32 PortSprayWeaponShotPhase();
@@ -321,7 +322,9 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	J3DModel* model = g->mFluddModel->getModel();
 	MtxPtr base     = model->getBaseTRMtx();
 	if (s_haveLast && memcmp(base, s_lastBase, sizeof(Mtx)) == 0) {
-		s_placed = true; // not posed again this frame (Mario frozen): where it was
+		s_placed = true; // not posed again this frame (Mario frozen): where it was, a weapon's model too
+		if (PortSprayWeaponChosen())
+			PortWeaponModelKeep();
 		return;
 	}
 	// still, nozzle out (the put-away animation at its start), unless water comes out: the
@@ -347,8 +350,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		}
 	}
 	MtxPtr em = g->getEmitMtx(0);
-	if (!em)
+	if (!em) {
+		if (PortSprayWeaponChosen())
+			PortWeaponModelKeep(); // not placed this frame: its model where it was
 		return;
+	}
 
 	// the view: its right, up and forward, and the eye
 	MtxPtr v     = graphics->getViewMtx();
@@ -375,8 +381,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	const Vec origin = {base[0][3], base[1][3], base[2][3]};
 	Vec way          = {em[0][0], em[1][0], em[2][0]};
 	const Vec at     = {em[0][3], em[1][3], em[2][3]};
-	if (!unit(way))
+	if (!unit(way)) {
+		if (PortSprayWeaponChosen())
+			PortWeaponModelKeep(); // not placed this frame: its model where it was
 		return;
+	}
 
 	// the new turn, kept in the view's frame: the nozzle's way to the aim, its roll against the up
 	// kept. During a back flip, side flip, triple jump or spin (his body, and FLUDD on it, turned
@@ -409,8 +418,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 			s_haveInView = true;
 		}
 	}
-	if (!s_haveInView)
+	if (!s_haveInView) {
+		if (PortSprayWeaponChosen())
+			PortWeaponModelKeep(); // not placed this frame: its model where it was
 		return;
+	}
 	f32 turned[3][3];
 	for (int r = 0; r < 3; r++) // the view's turn back to the world (its transpose)
 		for (int c = 0; c < 3; c++)

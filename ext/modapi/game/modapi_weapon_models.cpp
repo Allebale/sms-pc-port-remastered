@@ -121,7 +121,21 @@ void PortWeaponModelShowSecond(int which, MtxPtr viewModel)
 	s_shown2 = which;
 }
 
-void PortWeaponModelHide() { s_shown = s_shown2 = -1; }
+int s_lastShown = -1, s_lastShown2 = -1; // as last shown, to keep (PortWeaponModelKeep)
+
+void PortWeaponModelHide()
+{
+	if (s_shown >= 0)
+		s_lastShown = s_shown, s_lastShown2 = s_shown2;
+	s_shown = s_shown2 = -1;
+}
+
+// Shown again where it was last (FLUDD not placed again this frame: Mario frozen).
+void PortWeaponModelKeep()
+{
+	s_shown  = s_lastShown;
+	s_shown2 = s_lastShown2;
+}
 
 // As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): true when a weapon's model is
 // entered in its place (FLUDD then left out).
