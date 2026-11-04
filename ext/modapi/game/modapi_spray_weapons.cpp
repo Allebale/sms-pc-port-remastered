@@ -43,6 +43,7 @@
 #include <MSound/SoundEffects.hpp>
 #include <Strategic/LiveManager.hpp>
 #include <Enemy/Conductor.hpp>
+#include <NPC/NpcBase.hpp>
 #include "port_framerate.h"
 
 #include <math.h>
@@ -105,7 +106,8 @@ const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
 bool s_third;        // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
 f32 s_rocketJump;     // the bazooka's burst throws Mario too (a rocket jump), times its own; 0 not (the mod's menu)
 bool s_rocketAir;     // he is in the air from one (his fall then hurts him no more than a jump's)
-bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
+bool s_thirdModel;
+bool s_knockNpcs;     // the bazooka's burst shoves the people too (SMS_SPRAY_KNOCK_NPCS), never hurting them   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -160,6 +162,30 @@ struct Hit {
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
 
+// the people (Piantas, Nokis and their kind) shoved by the bazooka's burst (SMS_SPRAY_KNOCK_NPCS)
+struct Shove {
+	TBaseNPC* npc;
+	f32 vx, vz;
+};
+const int kMostShoves = 16;
+Shove s_shoves[kMostShoves];
+
+void shoveNpc(TBaseNPC* npc, f32 vx, f32 vz)
+{
+	Shove* slot = 0;
+	for (int i = 0; i < kMostShoves && !slot; i++)
+		if (s_shoves[i].npc == npc)
+			slot = &s_shoves[i];
+	for (int i = 0; i < kMostShoves && !slot; i++)
+		if (!s_shoves[i].npc || s_shoves[i].vx * s_shoves[i].vx + s_shoves[i].vz * s_shoves[i].vz < 0.09f)
+			slot = &s_shoves[i];
+	if (!slot)
+		return;
+	slot->npc = npc;
+	slot->vx  = vx;
+	slot->vz  = vz;
+}
+
 Hit* hitOf(TSmallEnemy* e)
 {
 	Hit* slot = 0;
@@ -179,6 +205,7 @@ Hit* hitOf(TSmallEnemy* e)
 void stageSetup()
 {
 	s_rocketAir = false;
+	memset(s_shoves, 0, sizeof s_shoves);
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -204,6 +231,26 @@ void afterMovement()
 	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
 		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_PO_NORMAL_NOZZLE_IMI, &gpMarioOriginal->mWaterGun->getEmitPos0(), nullptr, 1.0f, 0, 0,
 		                                     nullptr, 0, 4);
+	for (int i = 0; i < kMostShoves; i++) { // the people shoved: along the ground, kept out of walls
+		Shove& sh = s_shoves[i];
+		if (!sh.npc || (sh.vx * sh.vx + sh.vz * sh.vz) < 0.09f)
+			continue;
+		TBaseNPC* npc = sh.npc;
+		const f32 mx = sh.vx * dt, mz = sh.vz * dt;
+		if (gpMap && !gpMap->isInArea(npc->mPosition.x + mx, npc->mPosition.z + mz)) {
+			sh.vx = sh.vz = 0.0f;
+			continue;
+		}
+		const f32 radius = npc->mBodyRadius > 30.0f ? npc->mBodyRadius : 30.0f;
+		const f32 height = npc->mHeadHeight > 60.0f ? npc->mHeadHeight * 0.5f : 30.0f;
+		TBGWallCheckRecord wall(npc->mPosition.x + mx, npc->mPosition.y + height, npc->mPosition.z + mz, radius, 1, 0);
+		if (gpMap && gpMap->isTouchedWallsAndMoveXZ(&wall))
+			sh.vx *= 0.5f, sh.vz *= 0.5f;
+		npc->mPosition.x = wall.mCenter.x;
+		npc->mPosition.z = wall.mCenter.z;
+		sh.vx *= keep;
+		sh.vz *= keep;
+	}
 	for (int i = 0; i < kMostHits; i++) {
 		Hit& h = s_hits[i];
 		if (!h.enemy || (h.vx * h.vx + h.vz * h.vz) < 0.09f)
@@ -352,6 +399,18 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 		return 0;
 	int n = 0;
 	for (int i = 0; i < mgr->getObjNum(); i++) {
+		if (s_knockNpcs) { // a person: shoved away, nothing more
+			TBaseNPC* npc = dynamic_cast<TBaseNPC*>(mgr->getObj(i));
+			if (npc && !npc->checkLiveFlag(LIVE_FLAG_HIDDEN)) {
+				const f32 x = npc->mPosition.x - at.x, y = npc->mPosition.y - at.y, z = npc->mPosition.z - at.z;
+				const f32 l = sqrtf(x * x + z * z);
+				if (l <= r && fabsf(y) <= 400.0f && l > 1.0f) {
+					shoveNpc(npc, x / l * kWeapons[weapon].shove, z / l * kWeapons[weapon].shove);
+					n++;
+				}
+				continue;
+			}
+		}
 		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
 		if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 			continue;
@@ -374,8 +433,8 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 {
 	TMario* m = gpMarioOriginal;
-	if (s_rocketJump <= 0.0f || !m || m->onYoshi() || m->checkFlag(MARIO_FLAG_IN_WATER))
-		return;
+	if (s_rocketJump <= 0.0f || !m || !PortFluddHeld(m) || m->onYoshi() || m->checkFlag(MARIO_FLAG_IN_WATER))
+		return; // first person only (FLUDD held in view): in third person he is never thrown
 	const f32 reach = r > 400.0f ? r : 400.0f; // far enough to reach him from the ground at a jump's top
 	f32 dx = m->mPosition.x - at.x, dy = m->mPosition.y + 60.0f - at.y, dz = m->mPosition.z - at.z; // from his middle
 	const f32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -837,7 +896,7 @@ struct Register {
 
 // api->held_fludd->set_weapon (mod_runtime.cpp): 0 normal, 1 shotgun, 2 rifle, 3 bazooka; flags 1:
 // weapons may defeat enemies, 2: R is held, 8: they fire in third person too (FLUDD on his back),
-// 16: and there their models in its nozzle's place (the mod keeps R from the game while a weapon is chosen,
+// 16: and there their models in its nozzle's place, 64: the bazooka's burst shoves people too (the mod keeps R from the game while a weapon is chosen,
 // so its own spray, pump and sound never start; the weapon fires on its own clock)
 extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
@@ -855,6 +914,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] in third person %s\n", (flags & 8) ? "on" : "off");
 	s_third      = (flags & 8) != 0;
 	s_thirdModel = (flags & 16) != 0;
+	if (((flags & 64) != 0) != s_knockNpcs)
+		fprintf(stderr, "[weapons] the bazooka shoving people %s\n", (flags & 64) ? "on" : "off");
+	s_knockNpcs = (flags & 64) != 0;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
 	s_defeatNormal = (flags & 4) != 0;
