@@ -117,6 +117,37 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 	return gpMarioOriginal ? 1 : 0;
 }
 
+// Shared by a first-person mod and a weapons mod (api->held_fludd's set_view, set_zoom, get_state):
+// what each sets, for the other to read. Nothing in the game acts on it.
+int s_view;          // the first-person camera is on
+f32 s_zoomFovy;      // the rifle's zoom: the field of view to narrow the camera to (0 none)
+int s_zoomFlags;     // SMS_ZOOM_FIRST_PERSON, SMS_ZOOM_SCOPE
+
+extern "C" int modg_held_fludd_view(int on)
+{
+	s_view = on != 0;
+	return 1;
+}
+
+extern "C" int modg_held_fludd_zoom(float fovy, int flags)
+{
+	s_zoomFovy  = fovy > 1.0f && fovy < 170.0f ? fovy : 0.0f;
+	s_zoomFlags = s_zoomFovy > 0.0f ? flags : 0;
+	return 1;
+}
+
+int PortSprayWeaponId();
+bool PortFluddHeld(TMario* mario);
+extern "C" int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags)
+{
+	*firstPerson = s_view;
+	*held        = s_on && gpMarioOriginal && PortFluddHeld(gpMarioOriginal);
+	*weapon      = PortSprayWeaponId();
+	*zoomFovy    = s_zoomFovy;
+	*zoomFlags   = s_zoomFlags;
+	return 1;
+}
+
 // Is this Mario's FLUDD held in view now (drawn even with his models left out)?
 bool PortSprayWeaponChosen(); // modapi_spray_weapons.cpp
 int PortSprayWeaponId();
@@ -127,6 +158,7 @@ void PortWeaponModelNoFludd(bool on);
 float PortWeaponModelMuzzle(int which);
 
 f32 PortSprayWeaponShotPhase();
+f32 PortSprayWeaponViewDistance(); // modapi_spray_weapons.cpp
 bool PortSprayWeaponOnBack(TMario* m, bool* model); // modapi_spray_weapons.cpp
 bool PortSprayWeaponTrigger();
 const float* PortWeaponPackMuzzle(int which); // modapi_weapon_models.cpp
@@ -367,7 +399,10 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	eye          = along(eye, -v[0][3], R);
 	eye          = along(eye, -v[1][3], U);
 	eye          = along(eye, v[2][3], F);
-	Vec tip      = along(along(along(eye, s_right, R), -s_down, U), s_forward, F);
+	// how far ahead it is held: the first-person mod's, or the chosen weapon's own (the weapons mod's)
+	const f32 vd   = PortSprayWeaponViewDistance();
+	const f32 hold = vd > 1.0f && s_forward > 1.0f ? vd / s_forward : 1.0f;
+	Vec tip        = along(along(along(eye, s_right * hold, R), -s_down * hold, U), s_forward * hold, F);
 	s_target     = along(eye, s_aim, F);
 	s_viewEye    = eye;
 	s_viewWay    = F;
