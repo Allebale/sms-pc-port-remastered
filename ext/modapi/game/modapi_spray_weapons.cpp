@@ -96,6 +96,7 @@ f32 s_hitScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f}; // a weapon's hit size
 f32 s_reachScale[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f}; // reach, times its own
 f32 s_viewDistance[WEAPONS];  // first person: how far ahead of the camera it is held (0 the first-person mod's)
 f32 s_farScale = 1.0f;        // long range: enemies and characters drawn and moving this many times further
+bool s_waterScaled;           // ...and FLUDD's drops living that much further from Mario (set back at 1)
 const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
@@ -195,6 +196,13 @@ void afterMovement()
 	const f32 keep = powf(kSlow, dt);
 	if (s_weapon != NORMAL && s_trigger && s_time >= s_ready)
 		fire();
+	// long range: FLUDD's drops too (the game ends every drop farther than 5000 across the ground
+	// from Mario, 6000 drawn: a shot never reached a far enemy); its own again at 1
+	if (gpModelWaterManager && (s_farScale > 1.0f || s_waterScaled)) {
+		gpModelWaterManager->unk5E08 = 5000.0f * s_farScale;
+		gpModelWaterManager->unk5E0C = 6000.0f * s_farScale;
+		s_waterScaled                = s_farScale > 1.0f;
+	}
 	followStraight();
 	followBazooka();
 	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
