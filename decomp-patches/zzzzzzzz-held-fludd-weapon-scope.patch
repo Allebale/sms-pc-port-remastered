@@ -1,0 +1,24 @@
+Reason: the FLUDD weapons' rifle scope (a weapons mod, api->held_fludd set_zoom's SMS_ZOOM_SCOPE) is drawn by the game over the stage's picture and under its HUD (mPerformListGXPost: the HUD's counters, talk boxes, the news ticker), not over everything as a mod's own drawing is. Without such a mod, nothing changes.
+
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -75,6 +75,10 @@
+ // that scales its length by SMSGetVSyncTimesPerSec(); at 60 that asked for
+ // 24 frames of work, 0.8 s. Halve it to keep its 0.4 s.
+ #include "port_framerate.h"
++#ifdef TARGET_PC
++namespace JDrama { class TGraphics; }
++void PortHeldFluddDrawScope(JDrama::TGraphics* graphics); // the FLUDD weapons' rifle scope (ext/modapi/game/modapi_held_fludd.cpp)
++#endif
+ static inline f32 MarDirectorPortSoundFrames(f32 frames)
+ {
+ 	return port_frame_scale() * frames;
+@@ -266,6 +270,8 @@
+ 			u32 sms_mod_cue_ = CUE_ALL;
+ 			if (sms_mod_word(0x80299CF0, &sms_mod_w_) && (sms_mod_w_ >> 16) == 0x3880)
+ 				sms_mod_cue_ = (u32)(s32)(s16)sms_mod_w_;
++			// the FLUDD weapons' rifle scope, over the picture and under the HUD (modapi_held_fludd.cpp)
++			PortHeldFluddDrawScope(&local_140);
+ 			mPerformListGXPost->perform(sms_mod_cue_, &local_140);
+ 		}
+ #else

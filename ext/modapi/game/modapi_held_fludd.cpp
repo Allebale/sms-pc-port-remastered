@@ -17,6 +17,10 @@
 #include <M3DUtil/MActor.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/JDrama/JDRGraphics.hpp>
+#include <JSystem/J2D/J2DOrthoGraph.hpp>
+#include <dolphin/gx.h>
+#include <dolphin/os.h>
+#include "sms_gx/gx_pc.h"
 
 #include <math.h>
 #include <string.h>
@@ -134,6 +138,116 @@ extern "C" int modg_held_fludd_zoom(float fovy, int flags)
 	s_zoomFovy  = fovy > 1.0f && fovy < 170.0f ? fovy : 0.0f;
 	s_zoomFlags = s_zoomFovy > 0.0f ? flags : 0;
 	return 1;
+}
+
+// The rifle's sniper scope (SMS_ZOOM_SCOPE in set_zoom's flags), drawn by the game over the stage's
+// picture and under its HUD (MarDirectorDirect.cpp, before its 2D list): black round a round sight,
+// thin cross hairs with marks along them and a red dot in the middle, coming in with the zoom (a
+// weapons mod's own drawing is over everything, the HUD's counters and talk boxes too).
+namespace {
+OSTime s_scopeSince; // when the scope was asked for, 0 not
+const f32 kScopeIn = 0.3f;
+
+void scopeVertex(f32 x, f32 y, u8 r, u8 g, u8 b, u8 a)
+{
+	GXPosition3f32(x, y, 0.0f);
+	GXColor4u8(r, g, b, a);
+}
+
+// a box from (x0, y0) to (x1, y1)
+void scopeBox(f32 x0, f32 y0, f32 x1, f32 y1, u8 r, u8 g, u8 b, u8 a)
+{
+	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+	scopeVertex(x0, y0, r, g, b, a);
+	scopeVertex(x1, y0, r, g, b, a);
+	scopeVertex(x1, y1, r, g, b, a);
+	scopeVertex(x0, y1, r, g, b, a);
+	GXEnd();
+}
+
+// a ring round (cx, cy) from radius `in` to `out`, `sx` the x units to a y unit (to look round)
+void scopeRing(f32 cx, f32 cy, f32 in, f32 out, f32 sx, u8 r, u8 g, u8 b, u8 a)
+{
+	const int kSteps = 96;
+	for (int i = 0; i < kSteps; i++) {
+		const f32 a0 = 6.2831853f * i / kSteps, a1 = 6.2831853f * (i + 1) / kSteps;
+		const f32 c0 = cosf(a0), s0 = sinf(a0), c1 = cosf(a1), s1 = sinf(a1);
+		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+		scopeVertex(cx + c0 * in * sx, cy + s0 * in, r, g, b, a);
+		scopeVertex(cx + c0 * out * sx, cy + s0 * out, r, g, b, a);
+		scopeVertex(cx + c1 * out * sx, cy + s1 * out, r, g, b, a);
+		scopeVertex(cx + c1 * in * sx, cy + s1 * in, r, g, b, a);
+		GXEnd();
+	}
+}
+} // namespace
+
+void PortHeldFluddDrawScope(JDrama::TGraphics* graphics)
+{
+	if (!(s_zoomFlags & 2) || !graphics) { // SMS_ZOOM_SCOPE
+		s_scopeSince = 0;
+		return;
+	}
+	const OSTime now = OSGetTime();
+	if (!s_scopeSince)
+		s_scopeSince = now;
+	f32 in = (f32)OSTicksToMilliseconds(now - s_scopeSince) / 1000.0f / kScopeIn;
+	in     = in < 0.0f ? 0.0f : in > 1.0f ? 1.0f : in;
+	if (in < 0.05f)
+		return;
+	const JDrama::TRect& vp = graphics->getViewport();
+	const f32 w = (f32)(vp.x2 - vp.x1), h = (f32)(vp.y2 - vp.y1);
+	if (w <= 0.0f || h <= 0.0f)
+		return;
+	J2DOrthoGraph graph(vp);
+	graph.setPort();
+	graph.setup2D();
+	// the picture's x units to its y units as seen (the frame 448 rows high shown at its aspect,
+	// widescreen 4:3 units centred and past the edges), so the sight looks round
+	f32 cw = 640.0f, ch = 480.0f;
+	GXPC_ModLayerCanvas(&cw, &ch);
+	const f32 wide = GXPC_GetWidescreen() > 0.0f ? GXPC_GetWidescreen() : 1.0f;
+	const f32 seen = (cw / ch) * h / (w * wide); // one x unit's width over one y unit's height
+	const f32 sx   = seen > 0.1f ? 1.0f / seen : 1.0f;
+	GXPC_SetWide2D(1);
+	GXSetNumChans(1);
+	GXSetNumTevStages(1);
+	GXSetNumTexGens(0);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_VTX, GX_SRC_VTX, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_SET);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
+	GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+	GXSetCullMode(GX_CULL_NONE);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+
+	const f32 x = w * 0.5f, y = h * 0.5f, rad = h * 0.46f;
+	const u8 a    = (u8)(255.0f * in);
+	const f32 far = (w * wide + h) * 2.0f; // past every edge, widescreen's too
+	scopeRing(x, y, rad, far, sx, 0, 0, 0, a);             // all round the sight
+	scopeRing(x, y, rad - h * 0.006f, rad + h * 0.006f, sx, 20, 20, 20, a); // its rim
+	const u8 ha  = (u8)(230.0f * in);
+	const f32 t  = h * 0.00125f, gap = h * 0.02f, rx = rad * sx;
+	scopeBox(x - rx, y - t, x - gap * sx, y + t, 0, 0, 0, ha); // the cross hairs, open in the middle
+	scopeBox(x + gap * sx, y - t, x + rx, y + t, 0, 0, 0, ha);
+	scopeBox(x - t * sx, y - rad, x + t * sx, y - gap, 0, 0, 0, ha);
+	scopeBox(x - t * sx, y + gap, x + t * sx, y + rad, 0, 0, 0, ha);
+	scopeBox(x - rx, y - 3 * t, x - rx * 0.55f, y + 3 * t, 0, 0, 0, ha); // thicker at the edge
+	scopeBox(x + rx * 0.55f, y - 3 * t, x + rx, y + 3 * t, 0, 0, 0, ha);
+	scopeBox(x - 3 * t * sx, y + rad * 0.55f, x + 3 * t * sx, y + rad, 0, 0, 0, ha);
+	for (int i = 1; i <= 4; i++) { // the marks
+		const f32 d = rad * 0.1f * (f32)i, m = h * 0.008f;
+		scopeBox(x - d * sx - t * sx, y - m, x - d * sx + t * sx, y + m, 0, 0, 0, ha);
+		scopeBox(x + d * sx - t * sx, y - m, x + d * sx + t * sx, y + m, 0, 0, 0, ha);
+		scopeBox(x - m * sx, y + d - t, x + m * sx, y + d + t, 0, 0, 0, ha);
+	}
+	scopeRing(x, y, 0.0f, h * 0.003f, sx, 230, 30, 30, a); // the red dot
+	GXPC_SetWide2D(0);
 }
 
 int PortSprayWeaponId();

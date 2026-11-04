@@ -1221,6 +1221,8 @@ int apiHeldFluddState(SmsHeldFluddState* st)
 	st->weapon       = weapon;
 	st->zoom_fovy    = fovy;
 	st->zoom_flags   = flags;
+	if (st->size >= offsetof(SmsHeldFluddState, game_scope) + sizeof(int))
+		st->game_scope = 1; // this game draws SMS_ZOOM_SCOPE's scope itself, under its HUD
 	return 1;
 }
 
