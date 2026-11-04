@@ -369,7 +369,7 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 // bazooka's burst is thrown away from it, harder the nearer he is (half as hard at its edge), as
 // high as the rocket nozzle takes him from right on it, in the air too (a jump first throws him
 // higher). Made to fling him forward, the way he looks: a burst below him also throws him that
-// way, one in front of him pushes him back only a little. He steers in the air as in any jump, and
+// way, one in front of him (a wall, a corner) throws him up and over, never back. He steers in the air as in any jump, and
 // the landing never stuns.
 void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 {
@@ -403,8 +403,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	f32 along = (dx * fx + dz * fz) * speed;                              // its push the way he looks
 	f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz;       // and to the side
 	if (along < 0.0f)
-		along *= 0.3f;                                                    // back: only a little
-	along += speed * 0.5f * (dy > 0.0f ? dy : 0.0f);                       // from below: forward too
+		along = 0.0f;                                                     // never back (a wall or a corner ahead: up and over)
+	along += speed * (0.3f + 0.5f * (dy > 0.0f ? dy : 0.0f));              // always forward a little, more from below
 	sx *= 0.6f, sz *= 0.6f;
 	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
 	if (!inAir)

@@ -123,6 +123,7 @@ int PortSprayWeaponId();
 void PortWeaponModelShow(int which, MtxPtr viewModel); // modapi_weapon_models.cpp
 void PortWeaponModelHide();
 void PortWeaponModelKeep();
+void PortWeaponModelNoFludd(bool on);
 float PortWeaponModelMuzzle(int which);
 
 f32 PortSprayWeaponShotPhase();
@@ -304,6 +305,7 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
 	s_placed = false;
 	PortWeaponModelHide(); // shown again below, held with the bazooka chosen
+	PortWeaponModelNoFludd(g && PortFluddHeld(g->mMario) && PortSprayWeaponId() >= 2 && PortSprayWeaponId() <= 4);
 	if (g && graphics && !PortFluddHeld(g->mMario))
 		onBack(g, graphics);
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
