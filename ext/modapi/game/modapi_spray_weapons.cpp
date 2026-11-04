@@ -367,6 +367,7 @@ void explode(const JGeometry::TVec3<f32>& at, f32 r)
 // emptied, he goes down at once (the game's own next hit, as the stream's last drop would).
 // Only while the game lets water count (him running his course or waiting), as its own.
 const f32 kShadowShare[WEAPONS] = {0.0f, 0.0f, 0.34f, 0.5f, 0.1f};
+const f32 kShadowHitbox = 3.0f; // the weapons' aim and bursts: Shadow Mario this many times as big
 int s_shadowShot;
 f32 s_shadowAt; // when (a shot's number comes round again after 7: not the same shot then)
 bool sameShadowShot(int shot) { return shot == s_shadowShot && s_time - s_shadowAt < 3.0f; }
@@ -416,7 +417,8 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 				continue;
 			const JGeometry::TVec3<f32>& ep = em->mEnemyMario->mPosition;
 			const f32 x = ep.x - at.x, y = ep.y - at.y, z = ep.z - at.z;
-			if (x * x + z * z <= r * r && fabsf(y) <= 400.0f) {
+			const f32 big = r * kShadowHitbox;
+			if (x * x + z * z <= big * big && fabsf(y) <= 400.0f * kShadowHitbox) {
 				hitTarget(em, weapon, shot, 0.0f, 0.0f);
 				n++;
 			}
@@ -572,7 +574,7 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 
 // The rifle's aim: the first small enemy (or other actor) along the view, short of the map's
 // walls, within its reach; true with where it is hit.
-f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, THitActor* a, f32 most)
+f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, THitActor* a, f32 most, f32 grow = 1.0f)
 {
 	const f32 r  = a->getDamageRadius() > a->getAttackRadius() ? a->getDamageRadius() : a->getAttackRadius();
 	const f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
@@ -580,11 +582,11 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 	const f32 rad0 = (r > 60.0f ? r : 60.0f) + 70.0f * s_hitScale[s_weapon];
 	const f32 cx = a->mPosition.x - eye.x, cy = a->mPosition.y + 0.5f * hh - eye.y, cz = a->mPosition.z - eye.z;
 	const f32 t = cx * f.x + cy * f.y + cz * f.z;
-	if (t < 0.0f || t > most)
+	if (t < 0.0f || t > most + (grow > 1.0f ? 400.0f : 0.0f)) // a bigger one: the ground or a wall just in front still lets it be hit
 		return -1.0f;
-	const f32 rad = rad0 + t * 0.03f * s_hitScale[s_weapon]; // kinder still far away (150 more at 5000)
+	const f32 rad = (rad0 + t * 0.03f * s_hitScale[s_weapon]) * grow; // kinder still far away (150 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
-	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) - 40.0f; // a body's height (and some) counts as near
+	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) * grow - 40.0f; // a body's height (and some) counts as near
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
 	return d2 <= rad * rad ? t : -1.0f;
 }
@@ -594,7 +596,7 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 f32 shotAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, TLiveActor* e, f32 most)
 {
 	if (TEMario* em = dynamic_cast<TEMario*>(e))
-		return em->mEnemyMario && !em->checkLiveFlag(LIVE_FLAG_DEAD) ? alongRay(eye, f, em->mEnemyMario, most) : -1.0f;
+		return em->mEnemyMario && !em->checkLiveFlag(LIVE_FLAG_DEAD) ? alongRay(eye, f, em->mEnemyMario, most, kShadowHitbox) : -1.0f;
 	if (!dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return -1.0f;
 	return alongRay(eye, f, e, most);
