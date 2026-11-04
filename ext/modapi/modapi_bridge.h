@@ -72,6 +72,7 @@ int modg_spray_weapon_set(int weapon, int flags); // first person
 int modg_spray_rocket_jump(float strength);
 int modg_spray_view_distance(int weapon, float distance);
 int modg_spray_far_scale(float scale);
+int modg_spray_shadow_damage(float scale);
 int modg_held_fludd_view(int on);
 int modg_held_fludd_zoom(float fovy, int flags);
 int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags);

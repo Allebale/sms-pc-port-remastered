@@ -367,6 +367,7 @@ void explode(const JGeometry::TVec3<f32>& at, f32 r)
 // emptied, he goes down at once (the game's own next hit, as the stream's last drop would).
 // Only while the game lets water count (him running his course or waiting), as its own.
 const f32 kShadowShare[WEAPONS] = {0.0f, 0.0f, 0.34f, 0.5f, 0.1f};
+f32 s_shadowDamage = 1.0f; // a mod's setting: how much harder (above 1) or softer each hit is on him
 const f32 kShadowHitbox = 3.0f; // the weapons' aim and bursts: Shadow Mario this many times as big
 int s_shadowShot;
 f32 s_shadowAt; // when (a shot's number comes round again after 7: not the same shot then)
@@ -383,7 +384,7 @@ void shadowHit(TEMario* em, int weapon, int shot, bool gameCounted)
 	s_shadowShot   = shot;
 	s_shadowAt     = s_time;
 	const int most = m->getSettingsParams()->mWaterCtMax.get();
-	int take       = (int)((f32)most * kShadowShare[weapon] + 0.5f) - (gameCounted ? 1 : 0); // the game took one itself
+	int take       = (int)((f32)most * kShadowShare[weapon] * s_shadowDamage + 0.5f) - (gameCounted ? 1 : 0); // the game took one itself
 	if (take < 1)
 		return;
 	m->mWaterCounter = (s16)(m->mWaterCounter > take ? m->mWaterCounter - take : 0);
@@ -1047,6 +1048,15 @@ extern "C" int modg_spray_far_scale(float scale)
 	if (k != s_farScale)
 		fprintf(stderr, "[weapons] long range: enemies and characters out to %.1f times as far\n", k);
 	s_farScale = k;
+	return 1;
+}
+
+extern "C" int modg_spray_shadow_damage(float scale)
+{
+	const f32 k = scale > 0.0f ? (scale < 10.0f ? scale : 10.0f) : 1.0f;
+	if (k != s_shadowDamage)
+		fprintf(stderr, "[weapons] Shadow Mario: each hit takes %.2f times as much of his water\n", k);
+	s_shadowDamage = k;
 	return 1;
 }
 
