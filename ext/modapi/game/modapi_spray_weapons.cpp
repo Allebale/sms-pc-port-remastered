@@ -577,7 +577,9 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, THitActor* a, f32 most, f32 grow = 1.0f)
 {
 	const f32 r  = a->getDamageRadius() > a->getAttackRadius() ? a->getDamageRadius() : a->getAttackRadius();
-	const f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
+	f32 hh = a->getDamageHeight() > a->getAttackHeight() ? a->getDamageHeight() : a->getAttackHeight();
+	if (grow > 1.0f && hh < 160.0f)
+		hh = 160.0f; // Shadow Mario: his whole body (his own hit height is only his feet)
 	// the rifle's: each enemy hit within a good deal more than its own size, so it is easy to hit
 	const f32 rad0 = (r > 60.0f ? r : 60.0f) + 70.0f * s_hitScale[s_weapon];
 	const f32 cx = a->mPosition.x - eye.x, cy = a->mPosition.y + 0.5f * hh - eye.y, cz = a->mPosition.z - eye.z;
@@ -612,8 +614,10 @@ TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3
 		const f32 next = most + kPiece < reach ? most + kPiece : reach;
 		JGeometry::TVec3<f32> a(eye.x + f.x * most, eye.y + f.y * most, eye.z + f.z * most);
 		JGeometry::TVec3<f32> b(eye.x + f.x * next, eye.y + f.y * next, eye.z + f.z * next), wall;
-		if (!gpMap->isInArea(a.x, a.z) || !gpMap->isInArea(b.x, b.z))
-			break;
+		if (!gpMap->isInArea(a.x, a.z) || !gpMap->isInArea(b.x, b.z)) {
+			most = reach; // past the stage's edge: no wall known in front, so the whole reach (an enemy aimed high
+			break;        // at, the line leaving the stage behind him, is still on it)
+		}
 		if (gpMap->intersectLine(a, b, true, &wall)) {
 			const f32 x = wall.x - eye.x, y = wall.y - eye.y, z = wall.z - eye.z;
 			most = sqrtf(x * x + y * y + z * z);
