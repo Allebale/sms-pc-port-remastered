@@ -251,25 +251,44 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 	}
 	MTXConcat(graphics->getViewMtx(), place, viewModel);
 	PortWeaponModelShow(3 + which, viewModel); // all of FLUDD left out, the pack in its place
-	// its weapon on top, kicking back and up as it fires (about where it sits on the neck)
+	// its weapon on top, held level and pointing ahead whatever his body's lean as he walks or runs
+	// (lying in a dive: the way his head points), kicking back and up as it fires, turned about
+	// where it sits on the neck
+	const f32 py = 2.0f, pz = 21.0f; // that point, in the pack's units (make_pack.py)
+	const Vec pivot = {at.x + fwd.x * py + up.x * pz, at.y + fwd.y * py + up.y * pz, at.z + fwd.z * py + up.z * pz};
+	Vec ahead = fabsf(fwd.y) < 0.7f ? fwd : up; // across the ground
+	ahead.y   = 0.0f;
+	if (!unit(ahead))
+		ahead = face;
+	const Vec gUp = {0.0f, 1.0f, 0.0f};
+	Vec gRight    = cross(ahead, gUp);
+	unit(gRight);
+	Mtx level;
+	const f32 gc[3][3] = {{gRight.x, ahead.x, gUp.x}, {gRight.y, ahead.y, gUp.y}, {gRight.z, ahead.z, gUp.z}};
+	const f32 pv[3]    = {pivot.x, pivot.y, pivot.z};
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++)
+			level[r][c] = gc[r][c];
+		level[r][3] = pv[r] - (gc[r][1] * py + gc[r][2] * pz); // the pivot where it is on the pack
+	}
 	{
-		const f32 kick  = phase >= 0.0f ? (1.0f - phase) * (1.0f - phase) : 0.0f;
-		const f32 back  = kick * (which == 1 ? 9.0f : which == 0 ? 6.0f : 3.5f);
-		const f32 tilt  = kick * (which == 1 ? 0.2f : which == 0 ? 0.25f : 0.12f);
-		const f32 py = 2.0f, pz = 21.0f; // the pivot, in the pack's units (make_pack.py)
+		const f32 kick = phase >= 0.0f ? (1.0f - phase) * (1.0f - phase) : 0.0f;
+		const f32 back = kick * (which == 1 ? 9.0f : which == 0 ? 6.0f : 3.5f);
+		const f32 tilt = kick * (which == 1 ? 0.2f : which == 0 ? 0.25f : 0.12f);
 		const f32 c = cosf(tilt), s = sinf(tilt);
 		Mtx kicked, gunWorld, gunView;
 		MTXIdentity(kicked);
 		kicked[1][1] = c, kicked[1][2] = -s, kicked[2][1] = s, kicked[2][2] = c;
 		kicked[1][3] = py - (c * py - s * pz) - back;
 		kicked[2][3] = pz - (s * py + c * pz);
-		MTXConcat(place, kicked, gunWorld);
+		MTXConcat(level, kicked, gunWorld);
 		MTXConcat(graphics->getViewMtx(), gunWorld, gunView);
 		PortWeaponModelShowSecond(6 + which, gunView);
 	}
-	const float* mz = PortWeaponPackMuzzle(which);
-	s_backMuzzle.set(at.x + right.x * mz[0] + fwd.x * mz[1] + up.x * mz[2], at.y + right.y * mz[0] + fwd.y * mz[1] + up.y * mz[2],
-	                 at.z + right.z * mz[0] + fwd.z * mz[1] + up.z * mz[2]);
+	const float* mz = PortWeaponPackMuzzle(which); // the shots from its muzzle, held still
+	s_backMuzzle.set(level[0][0] * mz[0] + level[0][1] * mz[1] + level[0][2] * mz[2] + level[0][3],
+	                 level[1][0] * mz[0] + level[1][1] * mz[1] + level[1][2] * mz[2] + level[1][3],
+	                 level[2][0] * mz[0] + level[2][1] * mz[1] + level[2][2] * mz[2] + level[2][3]);
 	s_haveBackMuzzle = true;
 }
 
