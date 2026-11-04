@@ -218,7 +218,8 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 		if (d > best)
 			best = d, ui = c;
 	}
-	if (bestF > 0.9f && best > 0.9f && !(g->mMario->mStatus & MARIO_STATUS_FLAG_JUMPING)) { // standing up straight
+	const u32 st = g->mMario->mStatus;
+	if (bestF > 0.9f && best > 0.9f && (st == MARIO_STATUS_WAIT || st == MARIO_STATUS_RUN)) { // standing or running (not lying)
 		s_packFwd     = fi, s_packUp = ui;
 		s_packFwdSign = axis[fi].x * face.x + axis[fi].z * face.z < 0.0f ? -1.0f : 1.0f;
 		s_packUpSign  = axis[ui].y < 0.0f ? -1.0f : 1.0f;
@@ -256,12 +257,17 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 	// where it sits on the neck
 	const f32 py = 2.0f, pz = 21.0f; // that point, in the pack's units (make_pack.py)
 	const Vec pivot = {at.x + fwd.x * py + up.x * pz, at.y + fwd.y * py + up.y * pz, at.z + fwd.z * py + up.z * pz};
-	Vec ahead = fabsf(fwd.y) < 0.7f ? fwd : up; // across the ground
-	ahead.y   = 0.0f;
-	if (!unit(ahead))
-		ahead = face;
-	const Vec gUp = {0.0f, 1.0f, 0.0f};
-	Vec gRight    = cross(ahead, gUp);
+	// level while he is up (walking, running, jumping); lying down (a belly slide, asleep) along
+	// him with the pack, as FLUDD's nozzle lies
+	Vec ahead = up, gUp = {-fwd.x, -fwd.y, -fwd.z}; // lying: along him, the way his head is, its top off his back
+	if (up.y > 0.6f) {
+		ahead = fwd;
+		ahead.y = 0.0f;
+		if (!unit(ahead))
+			ahead = face;
+		gUp.x = 0.0f, gUp.y = 1.0f, gUp.z = 0.0f;
+	}
+	Vec gRight = cross(ahead, gUp);
 	unit(gRight);
 	Mtx level;
 	const f32 gc[3][3] = {{gRight.x, ahead.x, gUp.x}, {gRight.y, ahead.y, gUp.y}, {gRight.z, ahead.z, gUp.z}};

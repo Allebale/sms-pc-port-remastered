@@ -689,6 +689,12 @@ void fire()
 	}
 	const f32 reach = k.straight ? 1.0f : s_reachScale[s_weapon]; // further: faster and longer lived
 	const f32 pow   = n->mEmitParams.mEmitPow.get() * k.pow * (reach > 0.0f ? sqrtf(reach) : 1.0f);
+	if (!PortFluddHeld(m)) { // on his back (third person): the drops start a frame's flight ahead of the muzzle, so their
+		                     // streak (drawn back along their way) starts at it, not over the weapon and behind
+		info.mPos.value.set(from.x + way.x * pow, from.y + way.y * pow, from.z + way.z * pow);
+		if (st)
+			st->from = info.mPos.value;
+	}
 	const s16 base = n->mEmitParams.mAttack.get();
 	info.mNum.set(1);
 	info.mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (shot << kTagShift)));
