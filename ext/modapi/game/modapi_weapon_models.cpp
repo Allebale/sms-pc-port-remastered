@@ -122,6 +122,11 @@ void PortWeaponModelShowSecond(int which, MtxPtr viewModel)
 }
 
 int s_lastShown = -1, s_lastShown2 = -1; // as last shown, to keep (PortWeaponModelKeep)
+bool s_noFludd; // FLUDD held with a weapon chosen: never drawn itself, its model or not
+
+// This frame, FLUDD held in view with a weapon (not the normal spray) chosen: FLUDD itself is left
+// out however its placing goes (a frame it is not placed showed all of it in view).
+void PortWeaponModelNoFludd(bool on) { s_noFludd = on; }
 
 void PortWeaponModelHide()
 {
@@ -142,7 +147,7 @@ void PortWeaponModelKeep()
 bool PortWeaponModelEntry()
 {
 	if (s_shown < 0 || !j3dSys.getDrawBuffer(0))
-		return false;
+		return s_noFludd;
 	j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
 	return true;
 }
