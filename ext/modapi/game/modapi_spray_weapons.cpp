@@ -406,22 +406,27 @@ void hitTarget(TLiveActor* a, int weapon, int shot, f32 dx, f32 dz)
 	}
 }
 
+// Shadow Mario in a burst (where he is seen, his hitbox bigger)
+bool burstShadow(TEMario* em, int weapon, int shot, const JGeometry::TVec3<f32>& at, f32 r)
+{
+	if (!em->mEnemyMario || em->checkLiveFlag(LIVE_FLAG_DEAD))
+		return false;
+	const JGeometry::TVec3<f32>& ep = em->mEnemyMario->mPosition;
+	const f32 x = ep.x - at.x, y = ep.y + 80.0f - at.y, z = ep.z - at.z, big = r * kShadowHitbox;
+	if (x * x + z * z > big * big || fabsf(y) > 400.0f * kShadowHitbox)
+		return false;
+	hitTarget(em, weapon, shot, 0.0f, 0.0f);
+	return true;
+}
+
 int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>& at, f32 r)
 {
 	if (!mgr)
 		return 0;
 	int n = 0;
 	for (int i = 0; i < mgr->getObjNum(); i++) {
-		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) { // Shadow Mario in the burst (where he is seen)
-			if (!em->mEnemyMario)
-				continue;
-			const JGeometry::TVec3<f32>& ep = em->mEnemyMario->mPosition;
-			const f32 x = ep.x - at.x, y = ep.y - at.y, z = ep.z - at.z;
-			const f32 big = r * kShadowHitbox;
-			if (x * x + z * z <= big * big && fabsf(y) <= 400.0f * kShadowHitbox) {
-				hitTarget(em, weapon, shot, 0.0f, 0.0f);
-				n++;
-			}
+		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) {
+			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 			continue;
 		}
 		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
@@ -511,6 +516,9 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		n += burstIn(*it, weapon, shot, at, r);
 	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
 		n += burstIn(*it, weapon, shot, at, r);
+	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
+		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
+			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	explode(at, r);
 	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies in it\n", at.x, at.y, at.z, n);
@@ -630,6 +638,12 @@ TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3
 	TLiveActor* best = 0;
 	f32 bestT        = most;
 	if (gpConductor) {
+		for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
+			if (TEMario* em = dynamic_cast<TEMario*>(*it)) { // a Shadow Mario on his own (the plaza's): no manager
+				const f32 t = shotAlong(eye, f, em, bestT);
+				if (t >= 0.0f && t < bestT)
+					bestT = t, best = em;
+			}
 		for (int list = 0; list < 2; list++) {
 			JGadget::TList<TLiveManager*> none;
 			if (list == 0) {
@@ -786,7 +800,8 @@ void fire()
 		st->weapon    = s_weapon;
 		st->speed     = 0.0f;
 		st->laneCount = 0;
-		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon], e ? "an enemy" : "nothing", l);
+		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon],
+		        dynamic_cast<TEMario*>(e) ? "Shadow Mario" : e ? "an enemy" : "nothing", l);
 	}
 	const f32 reach = k.straight ? 1.0f : s_reachScale[s_weapon]; // further: faster and longer lived
 	const f32 pow   = n->mEmitParams.mEmitPow.get() * k.pow * (reach > 0.0f ? sqrtf(reach) : 1.0f);
