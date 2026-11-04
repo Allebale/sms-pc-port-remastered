@@ -525,11 +525,61 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies in it\n", at.x, at.y, at.z, n);
 }
 
+// A weapon pushing less than the game's own stream (its push under 100 percent): the game's own push
+// of a drop (a small enemy's water reaction, its velocity) only so much of it. Its velocity before the
+// hit (objectHit), and after it the change the game made taken down (objectHitDone).
+f32 s_gamePush[WEAPONS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+TSmallEnemy* s_softened;
+JGeometry::TVec3<f32> s_softenedV;
+
+int dropWeapon(void* sender)
+{
+	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+	TModelWaterManager* w = gpModelWaterManager;
+	if (!w || !drop || drop->mParticleIndex < 0 || drop->mParticleIndex >= (int)w->mParticleCount)
+		return -1;
+	return (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0xf;
+}
+
+int objectHit(void* object, void* sender, unsigned message)
+{
+	s_softened = 0;
+	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
+		return 0;
+	const int weapon = dropWeapon(sender);
+	if (weapon <= NORMAL || weapon >= WEAPONS || s_gamePush[weapon] >= 1.0f)
+		return 0;
+	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object))) {
+		s_softened  = e;
+		s_softenedV = e->getVelocity();
+	}
+	return 0; // the game's own hit still: only its push taken down after
+}
+
+void softenPush(void* object, void* sender)
+{
+	TSmallEnemy* e = s_softened;
+	s_softened     = 0;
+	if (!e || static_cast<THitActor*>(e) != static_cast<THitActor*>(object))
+		return;
+	const int weapon = dropWeapon(sender);
+	if (weapon <= NORMAL || weapon >= WEAPONS)
+		return;
+	const f32 k = s_gamePush[weapon];
+	JGeometry::TVec3<f32> v = e->getVelocity();
+	v.x = s_softenedV.x + (v.x - s_softenedV.x) * k;
+	v.z = s_softenedV.z + (v.z - s_softenedV.z) * k;
+	if (v.y > s_softenedV.y)
+		v.y = s_softenedV.y + (v.y - s_softenedV.y) * k;
+	e->setVelocity(v);
+}
+
 // a drop reached something: if it is a weapon's and an enemy, shoved (and maybe defeated)
 void objectHitDone(void* object, void* sender, unsigned message, int)
 {
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender || !gpModelWaterManager)
 		return;
+	softenPush(object, sender);
 	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
 	TModelWaterManager* w = gpModelWaterManager;
 	if (!drop || drop->mParticleIndex < 0 || drop->mParticleIndex >= (int)w->mParticleCount)
@@ -953,6 +1003,7 @@ struct Register {
 		s_extension.name          = "spray weapons";
 		s_extension.stageSetup    = stageSetup;
 		s_extension.afterMovement = afterMovement;
+		s_extension.objectHit     = objectHit;
 		s_extension.objectHitDone = objectHitDone;
 		port_ext_register(&s_extension);
 	}
@@ -1097,10 +1148,12 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 	w               = d;
 	s_reachScale[weapon] = 1.0f;
 	s_hitScale[weapon]   = 1.0f;
+	s_gamePush[weapon]   = 1.0f;
 	if (!has)
 		return 1;
 	w.every    = every >= 0.05f ? every : 0.05f;
-	w.shove    = d.shove * (push >= 0.0f ? push : 0.0f);
+	w.shove    = d.shove * (push >= 1.0f ? push : 0.0f); // under 100 percent: none of its own, and the game's
+	s_gamePush[weapon] = push >= 1.0f ? 1.0f : push > 0.0f ? push : 0.0f; // own push only that much of it
 	w.lift     = d.lift * (lift >= 0.0f ? lift : push >= 0.0f ? push : 0.0f); // its own, or with the push (lift < 0)
 	w.size     = d.size * (dropSize > 0.05f ? dropSize : 1.0f);
 	w.toDefeat = toDefeat >= 1 ? toDefeat : 1;
