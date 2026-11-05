@@ -34,6 +34,14 @@
 #include "port_pause_quit.h"
 #include "port_savestate.h"
 
+#include <string>
+#ifdef _WIN32
+#include <direct.h>
+#include <wchar.h>
+#else
+#include <sys/stat.h>
+#endif
+
 extern "C" void* port_low_alloc(unsigned long size);
 extern "C" __attribute__((weak)) int GXPC_RequestQuit(void);
 extern "C" __attribute__((weak)) int GXPC_TexturePackHas(const void* data, unsigned fmt, unsigned w, unsigned h);
@@ -378,6 +386,8 @@ float outlineWidth(const Ink& ink, int scale)
 	return best;
 }
 
+u32 sRenderedBytes; // the last picture render() made: its size, header and all
+
 // The word's letters white in a black outline (anti-aliased), as a picture
 // with a native ResTIMG header like the menu's own: IA4 at the disc's size,
 // or IA8 with mipmaps down to the disc's size at a pack's.
@@ -413,7 +423,10 @@ const ResTIMG* render(const Ink& word, int scale, float outline, const ResTIMG& 
 		return nullptr;
 	}
 	memcpy(buf, &like, 0x20);
+	sRenderedBytes     = 0x20 + bytes;
 	ResTIMG* t         = (ResTIMG*)buf;
+	if (!t->alphaEnabled)
+		t->alphaEnabled = 1; // its outline round the letters, the rest clear
 	t->format          = scale == 1 ? GX_TF_IA4 : GX_TF_IA8;
 	t->width           = (u16)w;
 	t->height          = (u16)h;
@@ -473,11 +486,76 @@ const ResTIMG* render(const Ink& word, int scale, float outline, const ResTIMG& 
 // style (white, in the menu's outline).
 #include "pause_quit_fallback.inc"
 
+// The picture made from the plain game's letters is kept in a file of its own (in the port's data
+// folder, sms-port, the same for every build and mod), so a game whose letters differ (Super Mario
+// Eclipse's) shows the very same QUIT GAME: quit-game-<scale>.timg, the picture as made (native
+// header) after its layout width.
+FILE* cacheOpen(int scale, bool write)
+{
+	char name[32];
+	snprintf(name, sizeof name, "/quit-game-%d.timg", scale);
+#ifdef _WIN32
+	const wchar_t* base = _wgetenv(L"APPDATA");
+	if (!base)
+		return nullptr;
+	std::wstring dir = std::wstring(base) + L"\\sms-port";
+	if (write)
+		_wmkdir(dir.c_str());
+	std::wstring path = dir;
+	for (const char* c = name; *c; c++)
+		path += (wchar_t)*c;
+	return _wfopen(path.c_str(), write ? L"wb" : L"rb");
+#else
+	std::string dir;
+	if (const char* x = getenv("XDG_DATA_HOME"))
+		dir = std::string(x) + "/sms-port";
+	else
+		dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.local/share/sms-port";
+	if (write)
+		for (size_t i = 1; i <= dir.size(); i++)
+			if (i == dir.size() || dir[i] == '/')
+				mkdir(dir.substr(0, i).c_str(), 0755);
+	return fopen((dir + name).c_str(), write ? "wb" : "rb");
+#endif
+}
+
+void cacheSave(const ResTIMG* art, int scale, int layoutW)
+{
+	FILE* f = cacheOpen(scale, true);
+	if (!f)
+		return;
+	const u32 head[3] = { 0x51475431u, (u32)layoutW, sRenderedBytes }; // 'QGT1'
+	fwrite(head, sizeof head, 1, f);
+	fwrite(art, 1, sRenderedBytes, f);
+	fclose(f);
+}
+
+const ResTIMG* cacheLoad(int* layoutW)
+{
+	for (int scale = kMaxScale; scale >= 1; scale--) {
+		FILE* f = cacheOpen(scale, false);
+		if (!f)
+			continue;
+		u32 head[3] = { 0, 0, 0 };
+		u8* buf     = nullptr;
+		if (fread(head, sizeof head, 1, f) == 1 && head[0] == 0x51475431u && head[2] > 0x20 && head[2] < (16u << 20)
+		    && (buf = (u8*)port_low_alloc(head[2])) && fread(buf, 1, head[2], f) == head[2]) {
+			fclose(f);
+			*layoutW = (int)head[1];
+			OSReport("[pause] QUIT GAME: the plain game's picture, kept from it (%d times its size)\n", scale);
+			return (const ResTIMG*)buf;
+		}
+		fclose(f);
+	}
+	return nullptr;
+}
+
 const ResTIMG* renderFallback(int* layoutW, const ResTIMG* like)
 {
 	ResTIMG plain;
 	memset(&plain, 0, sizeof plain);
-	plain.format    = GX_TF_IA4;
+	plain.format       = GX_TF_IA4;
+	plain.alphaEnabled = 1;
 	plain.minFilter = GX_LINEAR;
 	plain.magFilter = GX_LINEAR;
 	Ink word;
@@ -562,11 +640,16 @@ const ResTIMG* make(bool pack, int* layoutW)
 		         tx1.img ? "CONTINUE" : "no CONTINUE", tx3.img ? " EXIT AREA" : " no EXIT AREA",
 		         quit.img ? "found" : "missing", mono.img ? "found" : "missing", ok ? "read" : "not read",
 		         like ? "found" : "missing");
+		if ((art = cacheLoad(layoutW))) {
+			OSReport("[pause] QUIT GAME item: QUIT GAME (kept from the plain game)\n");
+			return art;
+		}
 		art = renderFallback(layoutW, like);
 		w   = *layoutW;
 		in.scale = 1;
 		outline  = kOutline;
-	}
+	} else if (us)
+		cacheSave(art, in.scale, *layoutW); // for games whose letters differ (above)
 	OSReport("[pause] QUIT GAME item: %s, %d x %d, outline %.2f%s\n",
 	         !art             ? "no picture"
 	         : w == kFallbackW && outline == kOutline && !us ? "QUIT GAME (its own letters)"
