@@ -46,6 +46,8 @@
 #include <Enemy/Emario.hpp>
 #include <Enemy/EnemyMario.hpp>
 #include <MoveBG/MapObjManager.hpp>
+#include <MoveBG/MapObjBall.hpp>
+#include <MoveBG/MapObjTree.hpp>
 #include "port_framerate.h"
 
 #include <math.h>
@@ -507,6 +509,52 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 
 // The bazooka's burst where its drop first hits an enemy or lands: every small enemy near,
 // thrown away from it.
+// The bazooka's burst shakes the things round it: fruit, balls and the like (TMapObjBall) are
+// thrown out and up from it, as a kick throws them (fruit on a tree falls off), and trees' leaves
+// sway (TMapObjTree), harder nearer. Not one being held, appearing or gone.
+int shakeObjects(const JGeometry::TVec3<f32>& at, f32 r)
+{
+	const f32 lift = kWeapons[BAZOOKA].lift > 1.0f ? kWeapons[BAZOOKA].lift : 20.0f;
+	int n = 0;
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+			TLiveActor* a = (*it)->getObj(i);
+			if (!a || a->checkLiveFlag(LIVE_FLAG_DEAD) || a->checkLiveFlag(LIVE_FLAG_HIDDEN))
+				continue;
+			const f32 x = a->mPosition.x - at.x, y = a->mPosition.y - at.y, z = a->mPosition.z - at.z;
+			const f32 d = sqrtf(x * x + z * z);
+			if (d > r * 1.3f || fabsf(y) > r)
+				continue;
+			const f32 near1 = 1.0f - d / (r * 1.3f); // 1 at the middle, 0 at the edge
+			if (TMapObjBall* b = dynamic_cast<TMapObjBall*>(a)) {
+				const int st = b->mState;
+				if (st == TMapObjGeneral::STATE_HOLDING || st == TMapObjGeneral::STATE_APPEARING
+				    || st == TMapObjGeneral::STATE_BREAKING || st == TMapObjGeneral::STATE_WAITING_TO_APPEAR
+				    || st == TMapObjGeneral::STATE_BURIED || st == TMapObjGeneral::STATE_SINKING)
+					continue;
+				TResetFruit* fruit = dynamic_cast<TResetFruit*>(b);
+				if (fruit && (st == TMapObjGeneral::STATE_ROTTING || st == TMapObjGeneral::STATE_BROKEN))
+					continue;
+				const f32 out = lift * 0.55f * (0.35f + 0.65f * near1);
+				const f32 dx = d > 1.0f ? x / d : 1.0f, dz = d > 1.0f ? z / d : 0.0f;
+				b->mVelocity.x += dx * out;
+				b->mVelocity.z += dz * out;
+				b->mVelocity.y = lift * 0.5f * (0.4f + 0.6f * near1);
+				b->mPosition.y += 6.0f;
+				b->offLiveFlag(LIVE_FLAG_UNK10); // moving again (as kicked)
+				if (fruit)
+					fruit->makeObjLiving(); // off its tree or its spot, as a kicked one
+				n++;
+			} else if (TMapObjTree* t = dynamic_cast<TMapObjTree*>(a)) {
+				const f32 push = (t->mLeafHipDropImpulse > 0.0f ? t->mLeafHipDropImpulse : 0.05f) * (0.5f + near1);
+				for (int l = 0; t->mLeaves && l < t->mLeafNum; l++)
+					t->mLeaves[l].mAngularVelocity += (l & 1) ? push : -push;
+				n++;
+			}
+		}
+	return n;
+}
+
 void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 {
 	const f32 r = kWeapons[weapon].burst;
@@ -520,9 +568,10 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
+	const int shaken = shakeObjects(at, r);
 	explode(at, r);
 	rocketJump(at, r);
-	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies in it\n", at.x, at.y, at.z, n);
+	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies and %d things in it\n", at.x, at.y, at.z, n, shaken);
 }
 
 // A weapon pushing less than the game's own stream (its push under 100 percent): the game's own push
