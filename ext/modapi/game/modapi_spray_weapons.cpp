@@ -113,6 +113,8 @@ const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
 bool s_third;        // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
 f32 s_rocketJump;     // the bazooka's burst throws Mario too (a rocket jump), times its own; 0 not (the mod's menu)
 bool s_rocketAir;     // he is in the air from one (his fall then hurts him no more than a jump's)
+f32 s_rocketVX, s_rocketVZ, s_rocketTop; // his speed across the ground in the air from one, and its most
+void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
@@ -213,9 +215,10 @@ void afterMovement()
 	followBazooka();
 	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
 		TMario* m = gpMarioOriginal;
-		if (m && (m->mStatus & MARIO_STATUS_FLAG_JUMPING) && !m->checkFlag(MARIO_FLAG_IN_WATER))
+		if (m && (m->mStatus & MARIO_STATUS_FLAG_JUMPING) && !m->checkFlag(MARIO_FLAG_IN_WATER)) {
 			m->unk104 = m->mPosition.y;
-		else
+			rocketSteer(m);
+		} else
 			s_rocketAir = false;
 	}
 	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
@@ -451,6 +454,38 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 // higher). Made to fling him forward, the way he looks: a burst below him also throws him that
 // way, one in front of him (a wall, a corner) throws him up and over, never back. He steers in the air as in any jump, and
 // the landing never stuns.
+// In the air from a rocket jump he steers freely, as in Team Fortress 2: the stick pushes his speed
+// across the ground its way (towards where it points, turning him round in a moment, slowing him
+// pulled back), never faster than the jump threw him (or 30). His speed is kept here each tick, so
+// nothing turning him (the view) takes it another way.
+void rocketSteer(TMario* m)
+{
+	f32 vx = s_rocketVX, vz = s_rocketVZ;
+	const f32 mag = m->mIntendedMag / 32.0f;
+	if (mag > 0.05f) {
+		const f32 iy = m->mIntendedYaw * (3.14159265f / 32768.0f);
+		const f32 wx = sinf(iy), wz = cosf(iy);
+		const f32 push = 2.4f * (mag > 1.0f ? 1.0f : mag) * port_frame_scale(); // a 30th of a second's
+		vx += wx * push, vz += wz * push;
+		// and the way it already goes turned towards the stick's (steering, not only pushing)
+		const f32 v = sqrtf(vx * vx + vz * vz);
+		if (v > 0.5f) {
+			const f32 k = 0.12f * mag * port_frame_scale();
+			vx += (wx * v - vx) * k, vz += (wz * v - vz) * k;
+		}
+	}
+	const f32 v = sqrtf(vx * vx + vz * vz);
+	if (v > s_rocketTop)
+		vx *= s_rocketTop / v, vz *= s_rocketTop / v;
+	s_rocketVX = vx, s_rocketVZ = vz;
+	const f32 h = sqrtf(vx * vx + vz * vz);
+	if (h > 0.5f) {
+		m->mFaceAngle.y = (s16)(atan2f(vx, vz) * (32768.0f / 3.14159265f));
+		m->mForwardVel  = h;
+	} else
+		m->mForwardVel = 0.0f;
+}
+
 void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 {
 	TMario* m = gpMarioOriginal;
@@ -504,6 +539,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 		m->mForwardVel  = fwd;
 	}
 	s_rocketAir = true;
+	s_rocketVX  = hx, s_rocketVZ = hz; // steered from here (rocketSteer)
+	s_rocketTop = h > 30.0f ? h : 30.0f;
 	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f\n", dist, inAir ? " (in the air)" : "", up, h);
 }
 
