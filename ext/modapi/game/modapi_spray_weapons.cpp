@@ -515,12 +515,10 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 		const f32 face = m->mFaceAngle.y * (3.14159265f / 32768.0f);
 		fx = sinf(face), fz = cosf(face);
 	}
-	f32 along = (dx * fx + dz * fz) * speed;                              // its push the way he looks
-	f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz;       // and to the side
-	if (along < 0.0f)
-		along = 0.0f;                                                     // never back (a wall or a corner ahead: up and over)
-	along += speed * (0.3f + 0.5f * (dy > 0.0f ? dy : 0.0f));              // always forward a little, more from below
-	sx *= 0.6f, sz *= 0.6f;
+	// thrown straight away from the burst, as in Team Fortress 2: a burst behind him throws him
+	// forward, one in front back (aim a little behind to fly forward)
+	const f32 along = (dx * fx + dz * fz) * speed;                        // its push the way he looks
+	const f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz; // and to the side
 	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
 	if (!inAir)
 		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
