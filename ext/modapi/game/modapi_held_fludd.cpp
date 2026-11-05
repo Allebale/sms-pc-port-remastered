@@ -21,6 +21,7 @@
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
 #include "sms_gx/gx_pc.h"
+#include "port_menu_draw.h"
 
 #include <math.h>
 #include <string.h>
@@ -202,6 +203,7 @@ void PortHeldFluddDrawScope(JDrama::TGraphics* graphics)
 	J2DOrthoGraph graph(vp);
 	graph.setPort();
 	graph.setup2D();
+	PortMenu::wholeScreen(w, h); // to the last row too (the game's 2D port leaves it out)
 	// the picture's x units to its y units as seen (the frame 448 rows high shown at its aspect,
 	// widescreen 4:3 units centred and past the edges), so the sight looks round
 	f32 cw = 640.0f, ch = 480.0f;
