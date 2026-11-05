@@ -229,9 +229,12 @@ void vertex(f32 x, f32 y, f32 z, f32 s, f32 t, f32 shade)
 {
 	const u8 k = (u8)(255.0f * (shade > 1.0f ? 1.0f : shade));
 	GXPosition3f32(x, y, z);
-	GXColor4u8(k, k, k, 255);
+	GXColor4u8(k, k, k, 0); // alpha 0 into the picture: the stage's specular pass (its shine, the surface
+	                        // seen mirrored) takes the picture's alpha for where things shine
 	GXTexCoord2f32(s, t);
 }
+
+void drawWalls();
 
 class TunnelPacket : public J3DPacket {
 public:
@@ -239,29 +242,16 @@ public:
 };
 TunnelPacket s_packet;
 
-// The packet is drawn with the stage's own (the game's camera set): its view and projection kept,
-// the walls drawn with them after the whole stage (PortTunnelWallsDraw), so nothing the stage draws
-// later (the surface, see-through for the game's camera above) shows over them.
-Mtx s_view;
-f32 s_projection[7], s_viewport[6];
-bool s_captured;
-
 void TunnelPacket::draw()
 {
-	if (!s_on)
-		return;
-	MTXCopy(j3dSys.getViewMtx(), s_view);
-	GXGetProjectionv(s_projection);
-	GXGetViewportv(s_viewport);
-	s_captured = true;
+	if (s_on)
+		drawWalls();
 }
 
 void drawWalls()
 {
 	if (!makeTexture())
 		return;
-	GXSetProjectionv(s_projection);
-	GXSetViewport(s_viewport[0], s_viewport[1], s_viewport[2], s_viewport[3], s_viewport[4], s_viewport[5]);
 	GXTexObj tex;
 	GXInitTexObj(&tex, s_tex, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
 	GXInitTexObjLOD(&tex, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
@@ -269,7 +259,7 @@ void drawWalls()
 	Mtx identity;
 	MTXIdentity(identity);
 	GXSetCurrentMtx(GX_PNMTX0);
-	GXLoadPosMtxImm(s_view, GX_PNMTX0);
+	GXLoadPosMtxImm(j3dSys.getViewMtx(), GX_PNMTX0);
 	GXLoadNrmMtxImm(identity, GX_PNMTX0);
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
@@ -330,13 +320,4 @@ void PortTunnelWallsEntry()
 	gather();
 	if (s_on && j3dSys.getDrawBuffer(0))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
-}
-
-// After the stage is drawn, before its 2D (MarDirectorDirect.cpp): the walls, with the stage's
-// camera as it drew.
-void PortTunnelWallsDraw()
-{
-	if (s_on && s_captured)
-		drawWalls();
-	s_captured = false;
 }
