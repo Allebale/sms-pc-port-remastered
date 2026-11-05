@@ -1,4 +1,4 @@
-Reason: the FLUDD weapons' rifle scope (a weapons mod, api->held_fludd set_zoom's SMS_ZOOM_SCOPE) is drawn by the game over the stage's picture and under its HUD (mPerformListGXPost: the HUD's counters, talk boxes, the news ticker), not over everything as a mod's own drawing is. And in an underground passage in first person, with the walls drawn there (modapi_tunnel_walls.cpp), the see-through pass the game draws for its camera above (the stage over Mario faintly, mPerformListSilhouette) is left out: it showed through the walls. Without such mods, nothing changes.
+Reason: the FLUDD weapons' rifle scope (a weapons mod, api->held_fludd set_zoom's SMS_ZOOM_SCOPE) is drawn by the game over the stage's picture and under its HUD (mPerformListGXPost: the HUD's counters, talk boxes, the news ticker), not over everything as a mod's own drawing is. And in an underground passage in first person, the walls drawn there (modapi_tunnel_walls.cpp) go over the whole stage at the same point, so the surface the game draws see-through for its camera above does not show over them. Without such mods, nothing changes.
 
 --- a/src/System/MarDirectorDirect.cpp
 +++ b/src/System/MarDirectorDirect.cpp
@@ -9,31 +9,17 @@ Reason: the FLUDD weapons' rifle scope (a weapons mod, api->held_fludd set_zoom'
 +#ifdef TARGET_PC
 +namespace JDrama { class TGraphics; }
 +void PortHeldFluddDrawScope(JDrama::TGraphics* graphics); // the FLUDD weapons' rifle scope (ext/modapi/game/modapi_held_fludd.cpp)
-+bool PortTunnelWallsOn(); // first person in an underground passage, its walls drawn (ext/modapi/game/modapi_tunnel_walls.cpp)
++void PortTunnelWallsDraw(); // first person in an underground passage: its walls (ext/modapi/game/modapi_tunnel_walls.cpp)
 +#endif
  static inline f32 MarDirectorPortSoundFrames(f32 frames)
  {
  	return port_frame_scale() * frames;
-@@ -254,8 +259,13 @@
- 			unk38->perform(CUE_ALL, &local_140);
- 			unk3C->perform(CUE_ALL, &local_140);
- 			mPerformListGX->perform(CUE_ALL, &local_140);
--			if ((gpSilhouetteManager->unk48 > 0.0f ? true : false)
--			    || gpCamera->unk2C8 != -1) {
-+			if (((gpSilhouetteManager->unk48 > 0.0f ? true : false)
-+			    || gpCamera->unk2C8 != -1)
-+#ifdef TARGET_PC
-+			    // not under the tunnel walls a first-person camera has (modapi_tunnel_walls.cpp)
-+			    && !PortTunnelWallsOn()
-+#endif
-+			    ) {
- 				mPerformListSilhouette->perform(CUE_ALL, &local_140);
- 			}
- 	#ifdef TARGET_PC
-@@ -266,6 +276,8 @@
+@@ -266,6 +271,10 @@
  			u32 sms_mod_cue_ = CUE_ALL;
  			if (sms_mod_word(0x80299CF0, &sms_mod_w_) && (sms_mod_w_ >> 16) == 0x3880)
  				sms_mod_cue_ = (u32)(s32)(s16)sms_mod_w_;
++			// first person in an underground passage: its walls over the stage (modapi_tunnel_walls.cpp)
++			PortTunnelWallsDraw();
 +			// the FLUDD weapons' rifle scope, over the picture and under the HUD (modapi_held_fludd.cpp)
 +			PortHeldFluddDrawScope(&local_140);
  			mPerformListGXPost->perform(sms_mod_cue_, &local_140);

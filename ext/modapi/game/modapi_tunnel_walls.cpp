@@ -32,7 +32,7 @@ const f32 kHeight     = 420.0f;  // the tunnel's height, unless a roof or the gr
 const f32 kTileWidth  = 300.0f;  // a wall panel's width
 const int kMostWalls  = 600;
 const int kMostRoof   = 600;  // the floor's collision triangles taken for the ceiling
-const int kMostPieces = 6000; // the ceiling in small pieces, each open or not
+const int kMostPieces = 600;  // the ceiling's pieces
 const int kTex        = 64;
 
 struct Quad {
@@ -143,53 +143,19 @@ void addWall(const TBGCheckData* d)
 	q.shade = 0.62f + 0.38f * fabsf(n.x * 0.55f + n.z * 0.83f);
 }
 
-// Is the ceiling open at (x, z): a shaft up to the surface (a manhole's pipe) above, the ground
-// above there far higher than the tunnel's top (or none at all)?
-bool openAbove(f32 x, f32 z)
+void addRoof(const TBGCheckData* d)
 {
-	const TBGCheckData* above = 0;
-	const f32 up = gpMap->checkGround(x, s_bottom + 3000.0f, z, &above);
-	return !above || up < s_bottom + 100.0f || up > s_top + 150.0f;
-}
-
-// A piece of the ceiling over the floor's triangle (x, z of a, b, c), split until small, each piece
-// left out where a shaft goes up.
-void addPiece(const f32* a, const f32* b, const f32* c, int depth)
-{
-	if (s_roofCount >= kMostPieces)
+	if (s_roofCount >= kMostPieces || !d->isUnderground() || fabsf(d->mMaxY - s_bottom) > 150.0f || seen(d))
 		return;
-	f32 most = 0.0f;
-	const f32* q[3] = {a, b, c};
-	for (int i = 0; i < 3; i++) {
-		const f32 dx = q[i][0] - q[(i + 1) % 3][0], dz = q[i][1] - q[(i + 1) % 3][1];
-		most = dx * dx + dz * dz > most ? dx * dx + dz * dz : most;
-	}
-	if (most > 110.0f * 110.0f && depth < 7) {
-		const f32 ab[2] = {(a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f};
-		const f32 bc[2] = {(b[0] + c[0]) * 0.5f, (b[1] + c[1]) * 0.5f};
-		const f32 ca[2] = {(c[0] + a[0]) * 0.5f, (c[1] + a[1]) * 0.5f};
-		addPiece(a, ab, ca, depth + 1);
-		addPiece(ab, b, bc, depth + 1);
-		addPiece(ca, bc, c, depth + 1);
-		addPiece(ab, bc, ca, depth + 1);
-		return;
-	}
-	if (openAbove((a[0] + b[0] + c[0]) / 3.0f, (a[1] + b[1] + c[1]) / 3.0f)) {
+	s_floorCount++;
+	if (d->mBGType == BG_TYPE_UNDERGROUND_SUPER_JUMP) { // the floor under a manhole's shaft: open above
 		s_openCount++;
 		return;
 	}
 	Tri& t = s_roof[s_roofCount++];
+	const JGeometry::TVec3<f32>* p[3] = {&d->mPoint1, &d->mPoint2, &d->mPoint3};
 	for (int i = 0; i < 3; i++)
-		t.p[i][0] = q[i][0], t.p[i][1] = s_top, t.p[i][2] = q[i][1];
-}
-
-void addRoof(const TBGCheckData* d)
-{
-	if (s_floorCount >= kMostRoof || !d->isUnderground() || fabsf(d->mMaxY - s_bottom) > 150.0f || seen(d))
-		return;
-	s_floorCount++;
-	const f32 a[2] = {d->mPoint1.x, d->mPoint1.z}, b[2] = {d->mPoint2.x, d->mPoint2.z}, c[2] = {d->mPoint3.x, d->mPoint3.z};
-	addPiece(a, b, c, 0);
+		t.p[i][0] = p[i]->x, t.p[i][1] = s_top, t.p[i][2] = p[i]->z;
 }
 
 void walk(const TBGCheckList* l, bool walls)
@@ -208,6 +174,11 @@ void gather()
 	if (!m || !c || !gpMap || !PortFirstPersonView())
 		return;
 	const TBGCheckData* g = m->getGroundPlane();
+	static unsigned s_lastType = 0;
+	if (g && g->mBGType != s_lastType && m->mPosition.y < s_keyBottom + 600.0f && s_keyX != -99999) {
+		s_lastType = g->mBGType; // what he stands on, as it changes down there
+		fprintf(stderr, "[tunnel] ground 0x%x at (%.0f, %.0f, %.0f)\n", s_lastType, m->mPosition.x, m->mPosition.y, m->mPosition.z);
+	}
 	if (!g || !g->isUnderground())
 		return;
 	const JGeometry::TVec3<f32>& at = m->mPosition;
@@ -220,11 +191,13 @@ void gather()
 	const f32 r = gpMap->checkRoof(at.x, s_bottom + 40.0f, at.z, &roof);
 	if (roof && r > s_bottom + 160.0f && r < s_top)
 		s_top = r;
-	const TBGCheckData* above = 0; // something above him: down in a tunnel (the manholes' tops are marked
-	const f32 up = gpMap->checkGround(at.x, s_bottom + 3000.0f, at.z, &above); // underground too, up top)
-	if (!above || up < s_bottom + 180.0f)
+	// the manholes' tops up on the surface are marked underground too: there the ground found from
+	// high above is his own (nothing over him); down in a tunnel it is the stage's above, or none
+	const TBGCheckData* above = 0;
+	const f32 up = gpMap->checkGround(at.x, s_bottom + 3000.0f, at.z, &above);
+	if (above && up < s_bottom + 60.0f)
 		return;
-	if (up - 6.0f < s_top)
+	if (above && up - 6.0f < s_top)
 		s_top = up - 6.0f;
 	const int cells = (int)(kReach / 1024.0f);
 	const int gx = (int)((at.x + c->mGridExtentX) / 1024.0f), gz = (int)((at.z + c->mGridExtentY) / 1024.0f);
@@ -247,8 +220,8 @@ void gather()
 	static int s_logged = -1;
 	if (s_on && s_logged != s_wallCount) {
 		s_logged = s_wallCount;
-		fprintf(stderr, "[tunnel] first person underground: %d walls, %d ceiling pieces (%d open to a shaft), floor %.0f, ceiling %.0f\n",
-		        s_wallCount, s_roofCount, s_openCount, s_bottom, s_top);
+		fprintf(stderr, "[tunnel] first person underground (ground 0x%x): %d walls, %d ceiling pieces (%d left open under a shaft), floor %.0f, ceiling %.0f\n",
+		        (unsigned)g->mBGType, s_wallCount, s_roofCount, s_openCount, s_bottom, s_top);
 	}
 }
 
@@ -266,10 +239,29 @@ public:
 };
 TunnelPacket s_packet;
 
+// The packet is drawn with the stage's own (the game's camera set): its view and projection kept,
+// the walls drawn with them after the whole stage (PortTunnelWallsDraw), so nothing the stage draws
+// later (the surface, see-through for the game's camera above) shows over them.
+Mtx s_view;
+f32 s_projection[7], s_viewport[6];
+bool s_captured;
+
 void TunnelPacket::draw()
 {
-	if (!s_on || !makeTexture())
+	if (!s_on)
 		return;
+	MTXCopy(j3dSys.getViewMtx(), s_view);
+	GXGetProjectionv(s_projection);
+	GXGetViewportv(s_viewport);
+	s_captured = true;
+}
+
+void drawWalls()
+{
+	if (!makeTexture())
+		return;
+	GXSetProjectionv(s_projection);
+	GXSetViewport(s_viewport[0], s_viewport[1], s_viewport[2], s_viewport[3], s_viewport[4], s_viewport[5]);
 	GXTexObj tex;
 	GXInitTexObj(&tex, s_tex, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
 	GXInitTexObjLOD(&tex, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
@@ -277,7 +269,7 @@ void TunnelPacket::draw()
 	Mtx identity;
 	MTXIdentity(identity);
 	GXSetCurrentMtx(GX_PNMTX0);
-	GXLoadPosMtxImm(j3dSys.getViewMtx(), GX_PNMTX0);
+	GXLoadPosMtxImm(s_view, GX_PNMTX0);
 	GXLoadNrmMtxImm(identity, GX_PNMTX0);
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
@@ -338,4 +330,13 @@ void PortTunnelWallsEntry()
 	gather();
 	if (s_on && j3dSys.getDrawBuffer(0))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
+}
+
+// After the stage is drawn, before its 2D (MarDirectorDirect.cpp): the walls, with the stage's
+// camera as it drew.
+void PortTunnelWallsDraw()
+{
+	if (s_on && s_captured)
+		drawWalls();
+	s_captured = false;
 }
