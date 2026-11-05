@@ -127,9 +127,6 @@ int s_view;          // the first-person camera is on
 f32 s_zoomFovy;      // the rifle's zoom: the field of view to narrow the camera to (0 none)
 int s_zoomFlags;     // SMS_ZOOM_FIRST_PERSON, SMS_ZOOM_SCOPE
 
-// A first-person mod's camera is on (modapi_tunnel_walls.cpp)
-bool PortFirstPersonView() { return s_view != 0; }
-
 extern "C" int modg_held_fludd_view(int on)
 {
 	s_view = on != 0;
