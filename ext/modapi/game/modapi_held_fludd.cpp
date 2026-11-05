@@ -127,6 +127,9 @@ int s_view;          // the first-person camera is on
 f32 s_zoomFovy;      // the rifle's zoom: the field of view to narrow the camera to (0 none)
 int s_zoomFlags;     // SMS_ZOOM_FIRST_PERSON, SMS_ZOOM_SCOPE
 
+// A first-person mod's camera is on (modapi_tunnel_walls.cpp)
+bool PortFirstPersonView() { return s_view != 0; }
+
 extern "C" int modg_held_fludd_view(int on)
 {
 	s_view = on != 0;
@@ -228,8 +231,8 @@ void PortHeldFluddDrawScope(JDrama::TGraphics* graphics)
 
 	const f32 x = w * 0.5f, y = h * 0.5f, rad = h * 0.46f;
 	const u8 a    = (u8)(255.0f * in);
-	const f32 far = (w * wide + h) * 2.0f; // past every edge, widescreen's too
-	scopeRing(x, y, rad, far, sx, 0, 0, 0, a);             // all round the sight
+	const f32 outer = (w * wide + h) * 2.0f; // past every edge, widescreen's too
+	scopeRing(x, y, rad, outer, sx, 0, 0, 0, a);             // all round the sight
 	scopeRing(x, y, rad - h * 0.006f, rad + h * 0.006f, sx, 20, 20, 20, a); // its rim
 	const u8 ha  = (u8)(230.0f * in);
 	const f32 t  = h * 0.00125f, gap = h * 0.02f, rx = rad * sx;

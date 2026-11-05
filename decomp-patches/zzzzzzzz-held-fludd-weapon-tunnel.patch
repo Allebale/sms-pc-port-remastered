@@ -1,0 +1,25 @@
+Reason: walls and a ceiling for the underground passages (the manholes' tunnels under Delfino Plaza) while a first-person mod's camera is on: the game drew only their floor, for its camera looking straight down. Entered with the map's opaque draw (TMap::perform's CUE_ENTRY). Without a first-person mod, or anywhere else, nothing changes.
+
+--- a/src/Map/Map.cpp
++++ b/src/Map/Map.cpp
+@@ -30,6 +30,9 @@
+ #ifdef TARGET_PC
+ #include <sms_modhook.h>
+ #include <sms_modhook.h>
++#ifdef TARGET_PC
++void PortTunnelWallsEntry(); // ext/modapi/game/modapi_tunnel_walls.cpp
++#endif
+ #endif
+ 
+ TMap* gpMap;
+@@ -533,6 +536,10 @@
+ 				return;
+ 		} else {
+ 			mXlu->changeNormalJoint();
++#ifdef TARGET_PC
++			// first person in an underground passage: its walls and ceiling (modapi_tunnel_walls.cpp)
++			PortTunnelWallsEntry();
++#endif
+ 		}
+ 	}
+ 

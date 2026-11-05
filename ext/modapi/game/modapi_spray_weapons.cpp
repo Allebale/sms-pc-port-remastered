@@ -728,7 +728,7 @@ struct Straight {
 	JGeometry::TVec3<f32> from, way;           // its line
 	JGeometry::TVec3<f32> lanes[kMostLanes];   // each drop's own way (a spread)
 	int laneCount;
-	f32 far, speed;
+	f32 reachTo, speed;
 	f32 aim;             // how far away what it was aimed at is
 	TLiveActor* target;  // far away (long range), or Shadow Mario: what it was aimed at, hit as the shot gets there
 	int weapon;
@@ -845,7 +845,7 @@ void fire()
 		st->shot      = shot;
 		st->from      = from;
 		st->way       = way;
-		st->far       = s_weapon == BAZOOKA ? l + 200.0f : reachNow;
+		st->reachTo   = s_weapon == BAZOOKA ? l + 200.0f : reachNow;
 		st->aim       = l;
 		st->target    = (l > 3000.0f || dynamic_cast<TEMario*>(e)) && s_weapon != BAZOOKA ? e : 0;
 		st->weapon    = s_weapon;
@@ -932,7 +932,7 @@ void followStraight()
 			continue;
 		}
 		const f32 x = p.x - st->from.x, y = p.y - st->from.y, z = p.z - st->from.z;
-		if (x * x + y * y + z * z > st->far * st->far)
+		if (x * x + y * y + z * z > st->reachTo * st->reachTo)
 			continue; // past it: falls as any drop
 		JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
 		if (st->speed <= 0.0f)
