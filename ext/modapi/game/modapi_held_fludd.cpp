@@ -252,6 +252,26 @@ void PortHeldFluddDrawScope(JDrama::TGraphics* graphics)
 	GXPC_SetWide2D(0);
 }
 
+// The scope's place in the game's last list, after the characters and before the HUD
+// (MarDirectorInitECT.cpp): drawn there each frame.
+namespace {
+class TScopeObj : public JDrama::TViewObj {
+public:
+	TScopeObj()
+	    : JDrama::TViewObj("<FLUDD weapons scope>")
+	{
+	}
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics)
+	{
+		if (cue & 0x8) // CUE_DRAW
+			PortHeldFluddDrawScope(graphics);
+	}
+};
+TScopeObj s_scopeObj;
+} // namespace
+
+JDrama::TViewObj* PortHeldFluddScopeObj() { return &s_scopeObj; }
+
 int PortSprayWeaponId();
 bool PortFluddHeld(TMario* mario);
 extern "C" int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags)
