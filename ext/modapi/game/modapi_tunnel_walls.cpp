@@ -12,6 +12,8 @@
 #include <Map/MapData.hpp>
 #include <Map/MapCollisionData.hpp>
 #include <Player/Mario.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JDrama/JDRViewObj.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DPacket.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DDrawBuffer.hpp>
@@ -312,6 +314,49 @@ void drawWalls()
 // Mario down in a tunnel in first person, its walls drawn (MarDirectorDirect.cpp: the see-through
 // pass the game draws there for its camera above, the stage over him faintly, is left out then).
 bool PortTunnelWallsOn() { return s_on; }
+
+// The stage's screen effects over the whole picture (GX Post), left out while the walls are drawn:
+// a composite of the picture copied earlier (合成3), the sun's shine and glow, and its lens flare.
+// They put the surface, seen from below without the walls, faintly over them.
+namespace {
+const char* const kScreenEffects[] = {"合成3", "スペキュラシーン", "太陽遮蔽物グロー", "レンズフレア"};
+const int kScreenEffectCount = 4;
+JDrama::TViewObj* s_hidden[kScreenEffectCount];
+u16 s_hiddenFlags[kScreenEffectCount];
+} // namespace
+
+void PortTunnelWallsPostBegin()
+{
+	for (int i = 0; i < kScreenEffectCount; i++)
+		s_hidden[i] = 0;
+	if (!s_on)
+		return;
+	static int s_told = -1;
+	int found = 0;
+	for (int i = 0; i < kScreenEffectCount; i++) {
+		JDrama::TViewObj* o = static_cast<JDrama::TViewObj*>(JDrama::TNameRefGen::search2(kScreenEffects[i]));
+		if (!o)
+			continue;
+		s_hidden[i]      = o;
+		s_hiddenFlags[i] = o->unkC.get();
+		o->unkC.set(0xFFFF); // no cue reaches it (testPerform)
+		found |= 1 << i;
+	}
+	if (found != s_told) {
+		s_told = found;
+		fprintf(stderr, "[tunnel] screen effects left out: composite %d, shine %d, sun glow %d, lens flare %d\n", found & 1,
+		        (found >> 1) & 1, (found >> 2) & 1, (found >> 3) & 1);
+	}
+}
+
+void PortTunnelWallsPostEnd()
+{
+	for (int i = 0; i < kScreenEffectCount; i++)
+		if (s_hidden[i]) {
+			s_hidden[i]->unkC.set(s_hiddenFlags[i]);
+			s_hidden[i] = 0;
+		}
+}
 
 // As the stage's map is entered for drawing (TMap::perform's opaque CUE_ENTRY): the tunnel's walls
 // with it, when Mario is down there in first person.
