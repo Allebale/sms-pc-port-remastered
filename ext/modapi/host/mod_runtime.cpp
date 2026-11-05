@@ -1200,8 +1200,22 @@ int apiHeldFluddState(SmsHeldFluddState* st)
 	return 1;
 }
 
+// mouse look (platform/pad/pad.cpp)
+extern "C" int port_mouse_take_look(float* dx, float* dy);
+int apiHeldFluddTakeMouse(float* dx, float* dy)
+{
+	float x = 0.0f, y = 0.0f;
+	const int on = port_mouse_take_look(&x, &y);
+	if (dx)
+		*dx = on ? x : 0.0f;
+	if (dy)
+		*dy = on ? y : 0.0f;
+	return on;
+}
+
 const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
-                                     apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState};
+                                     apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState,
+                                     apiHeldFluddTakeMouse};
 
 // ------------------------------------------------------------------ the API: multiplayer
 

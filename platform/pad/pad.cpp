@@ -373,6 +373,10 @@ bool g_cstickOrbit;
 // mouse look (see above): its speed, and the motion not yet given to the camera
 float g_mouseSens = 1.0f;
 int g_mouseDX, g_mouseDY;
+// The same motion for a first-person mod's mouse look (api->held_fludd take_mouse), taken apart
+// from the camera's: dropped when nothing takes it (g_lookTaken), as the camera's.
+int g_lookDX, g_lookDY;
+u32 g_lookTaken;
 // The PADRead at which a camera last took the mouse's motion. Motion no camera
 // takes (a fixed or talk camera, a cutscene, the pause menu) is dropped once
 // kMouseKeepReads go by without one, instead of turning the normal camera by
@@ -611,6 +615,8 @@ void on_event(const union SDL_Event* ev)
 		if (GXPC_MouseCaptured && GXPC_MouseCaptured()) {
 			g_mouseDX += m->xrel;
 			g_mouseDY += m->yrel;
+			g_lookDX += m->xrel; // and for a first-person mod's look (port_mouse_take_look)
+			g_lookDY += m->yrel;
 			g_keySeen = g_reads;
 		}
 		break;
@@ -1506,6 +1512,8 @@ extern "C" u32 PADRead(PADStatus* status)
 	g_reads++;
 	if (g_reads - g_mouseTaken > kMouseKeepReads)
 		g_mouseDX = g_mouseDY = 0;
+	if (g_reads - g_lookTaken > kMouseKeepReads)
+		g_lookDX = g_lookDY = 0;
 	if (sms_gx_pump_events)
 		sms_gx_pump_events();
 	// GameCube adapter (gc_adapter.cpp): its first and second ports with a controller
@@ -1627,6 +1635,17 @@ extern "C" u32 PADRead(PADStatus* status)
 // While split-screen co-op runs the second player's camera (ext/coop), the
 // mouse is the first player's: it gives that camera nothing.
 extern "C" int port_coop_in_p2 = 0;
+
+// A first-person mod's mouse look (api->held_fludd take_mouse, mod_runtime.cpp): the mouse's motion
+// in pixels since it last took it (right and down positive), and 1 while the mouse is captured.
+extern "C" int port_mouse_take_look(float* dx, float* dy)
+{
+	*dx = (float)g_lookDX;
+	*dy = (float)g_lookDY;
+	g_lookDX = g_lookDY = 0;
+	g_lookTaken = g_reads;
+	return GXPC_MouseCaptured && GXPC_MouseCaptured() && !port_coop_in_p2 ? 1 : 0;
+}
 
 extern "C" int port_camera_take_mouse(f32* dx, f32* dy)
 {
