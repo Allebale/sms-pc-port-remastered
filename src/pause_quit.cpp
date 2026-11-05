@@ -482,8 +482,8 @@ const ResTIMG* render(const Ink& word, int scale, float outline, const ResTIMG& 
 }
 
 // When none of that can be made (a mod's own pause menu or file select pictures, such as Super Mario
-// Eclipse's: the log says which was missing), the word is drawn from letters kept here, in the same
-// style (white, in the menu's outline).
+// Eclipse's: the log says which was missing), the word is drawn from letters kept here, in the Super
+// Mario 256 font, in the same style (white, in the menu's outline), at 4 times the size (sharp).
 #include "pause_quit_fallback.inc"
 
 // The picture made from the plain game's letters is kept in a file of its own (in the port's data
@@ -559,11 +559,11 @@ const ResTIMG* renderFallback(int* layoutW, const ResTIMG* like)
 	plain.minFilter = GX_LINEAR;
 	plain.magFilter = GX_LINEAR;
 	Ink word;
-	if (!inkNew(word, kFallbackW, kH))
+	if (!inkNew(word, kFallbackPixW, kFallbackPixH))
 		return nullptr;
-	for (int i = 0; i < kFallbackW * kH; i++)
-		word.v[i] = kFallback[i] / 255.0f;
-	const ResTIMG* art = render(word, 1, kOutline, like ? *like : plain);
+	for (int i = 0; i < kFallbackPixW * kFallbackPixH; i++)
+		word.v[i] = ((kFallback[i / 2] >> (i & 1 ? 0 : 4)) & 15) / 15.0f;
+	const ResTIMG* art = render(word, kFallbackScale, kOutline * kFallbackScale, like ? *like : plain);
 	inkFree(word);
 	*layoutW = art ? kFallbackW : 0;
 	return art;
@@ -720,14 +720,14 @@ const ResTIMG* make(bool pack, int* layoutW)
 			return art;
 		}
 		art = renderFallback(layoutW, like);
-		w   = *layoutW;
-		in.scale = 1;
-		outline  = kOutline;
+		w   = *layoutW * kFallbackScale;
+		in.scale = kFallbackScale;
+		outline  = kOutline * kFallbackScale;
 	} else if (plain)
 		cacheSave(art, in.scale, *layoutW); // for games whose letters differ (above)
 	OSReport("[pause] QUIT GAME item: %s, %d x %d, outline %.2f%s\n",
 	         !art             ? "no picture"
-	         : w == kFallbackW && outline == kOutline && !us ? "QUIT GAME (its own letters)"
+	         : w == kFallbackW * kFallbackScale && !us ? "QUIT GAME (in the Super Mario 256 font)"
 	         : otherExit      ? "QUIT GAME (EXIT AREA's letters from SAVE and CONTINUE)"
 	         : us             ? "QUIT GAME"
 	                          : "the file select's QUIT",
