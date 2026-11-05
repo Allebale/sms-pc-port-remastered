@@ -824,6 +824,9 @@ int s_nextStraight;
 int s_bazookaShot;   // the bazooka's drop in flight (its shot), to burst where it lands
 JGeometry::TVec3<f32> s_bazookaAt;
 bool s_bazookaSeen;
+JGeometry::TVec3<f32> s_bazookaAim; // where this shot is aimed (the map or an enemy along the view), and how far
+f32 s_bazookaAimDist;
+const f32 kBazookaNow = 900.0f; // aimed nearer: it bursts there as it fires (a rocket jump's, at the ground near him)
 const f32 kRifleReach = 60000.0f; // as far as the stage goes
 
 // FLUDD can fire a weapon now: held in view, or (SMS_SPRAY_THIRD_PERSON) on his back as the game has it
@@ -931,6 +934,8 @@ void fire()
 		st->way       = way;
 		st->reachTo   = s_weapon == BAZOOKA ? l + 200.0f : reachNow;
 		st->aim       = l;
+		if (s_weapon == BAZOOKA)
+			s_bazookaAim = at, s_bazookaAimDist = l;
 		st->target    = (l > 3000.0f || dynamic_cast<TEMario*>(e)) && s_weapon != BAZOOKA ? e : 0;
 		st->weapon    = s_weapon;
 		st->speed     = 0.0f;
@@ -979,6 +984,10 @@ void fire()
 	if (s_weapon == BAZOOKA) {
 		s_bazookaShot = shot;
 		s_bazookaSeen = false;
+		if (s_bazookaAimDist < kBazookaNow && s_burst != shot) { // near: at once, not as its drop lands
+			s_burst = shot;
+			burst(BAZOOKA, shot, s_bazookaAim);
+		}
 	}
 	s_soundUntil = s_time + (s_weapon == BAZOOKA ? 0.45f : s_weapon == SMG ? 0.1f : 0.3f);
 	if (s_told != s_weapon) {
@@ -1038,7 +1047,8 @@ void followStraight()
 		const f32 along = (at.x - st->from.x) * way.x + (at.y - st->from.y) * way.y + (at.z - st->from.z) * way.z;
 		// far away (long range): faster, to get there in about half a second, not seconds (an enemy
 		// walked out of the way meanwhile)
-		const f32 quick = st->aim > 3000.0f || (st->target && dynamic_cast<TEMario*>(st->target)) ? st->aim / 15.0f : 0.0f;
+		const f32 quick = st->weapon == BAZOOKA ? st->aim / 6.0f // the bazooka's there in a fifth of a second
+		                  : st->aim > 3000.0f || (st->target && dynamic_cast<TEMario*>(st->target)) ? st->aim / 15.0f : 0.0f;
 		const f32 extra = quick > st->speed ? (quick - st->speed) * port_frame_scale() : 0.0f;
 		if (along > 0.0f)
 			at.set(st->from.x + way.x * (along + extra), st->from.y + way.y * (along + extra), st->from.z + way.z * (along + extra));
