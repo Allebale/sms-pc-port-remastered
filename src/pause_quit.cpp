@@ -468,6 +468,29 @@ const ResTIMG* render(const Ink& word, int scale, float outline, const ResTIMG& 
 	return t;
 }
 
+// When none of that can be made (a mod's own pause menu or file select pictures, such as Super Mario
+// Eclipse's: the log says which was missing), the word is drawn from letters kept here, in the same
+// style (white, in the menu's outline).
+#include "pause_quit_fallback.inc"
+
+const ResTIMG* renderFallback(int* layoutW, const ResTIMG* like)
+{
+	ResTIMG plain;
+	memset(&plain, 0, sizeof plain);
+	plain.format    = GX_TF_IA4;
+	plain.minFilter = GX_LINEAR;
+	plain.magFilter = GX_LINEAR;
+	Ink word;
+	if (!inkNew(word, kFallbackW, kH))
+		return nullptr;
+	for (int i = 0; i < kFallbackW * kH; i++)
+		word.v[i] = kFallback[i] / 255.0f;
+	const ResTIMG* art = render(word, 1, kOutline, like ? *like : plain);
+	inkFree(word);
+	*layoutW = art ? kFallbackW : 0;
+	return art;
+}
+
 struct Art {
 	bool tried;
 	const ResTIMG* timg;
@@ -533,8 +556,20 @@ const ResTIMG* make(bool pack, int* layoutW)
 	free(quitFile);
 	free(monoFile);
 	*layoutW = art ? w / in.scale : 0;
+	if (!art) {
+		OSReport("[pause] QUIT GAME: the disc's letters not usable (menu words %s%s, file select's QUIT %s, MONO %s, "
+		         "letters %s, EXIT AREA's picture %s): its own letters\n",
+		         tx1.img ? "CONTINUE" : "no CONTINUE", tx3.img ? " EXIT AREA" : " no EXIT AREA",
+		         quit.img ? "found" : "missing", mono.img ? "found" : "missing", ok ? "read" : "not read",
+		         like ? "found" : "missing");
+		art = renderFallback(layoutW, like);
+		w   = *layoutW;
+		in.scale = 1;
+		outline  = kOutline;
+	}
 	OSReport("[pause] QUIT GAME item: %s, %d x %d, outline %.2f%s\n",
 	         !art             ? "no picture"
+	         : w == kFallbackW && outline == kOutline && !us ? "QUIT GAME (its own letters)"
 	         : us             ? "QUIT GAME"
 	                          : "the file select's QUIT",
 	         w, kH * in.scale, outline, art && in.scale > 1 ? " (from the texture pack's)" : "");
