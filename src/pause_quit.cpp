@@ -569,6 +569,64 @@ const ResTIMG* renderFallback(int* layoutW, const ResTIMG* like)
 	return art;
 }
 
+// The white letters of a picture as runs of columns (a letter each), at most `most`.
+int letterRuns(const Ink& ink, int (*runs)[2], int most)
+{
+	int n = 0, start = -1;
+	for (int x = 0; x <= ink.w; x++) {
+		bool white = false;
+		for (int y = 0; x < ink.w && y < ink.h && !white; y++)
+			white = ink.at(x, y) >= 0.5f;
+		if (white && start < 0)
+			start = x;
+		else if (!white && start >= 0) {
+			if (n < most) {
+				runs[n][0] = start;
+				runs[n][1] = x;
+			}
+			n++;
+			start = -1;
+		}
+	}
+	return n;
+}
+
+// Columns x0 to x1 - 1 of a picture (white and alpha, with `pad` more each side for the outline)
+// into an Ink at x.
+void copyColumns(Ink& to, int x, const Ink& from, int x0, int x1, int pad)
+{
+	for (int c = x0 - pad; c < x1 + pad; c++)
+		for (int y = 0; y < to.h && y < from.h; y++) {
+			const int tx = x + c - x0;
+			if (c < 0 || c >= from.w || tx < 0 || tx >= to.w)
+				continue;
+			to(tx, y)               = fmaxf(to(tx, y), from.at(c, y));
+			to.a[y * to.w + tx] = fmaxf(to.a[y * to.w + tx], from.a[y * from.w + c]);
+		}
+}
+
+// A game whose EXIT AREA is not the plain game's (Super Mario Eclipse's) but whose CONTINUE and
+// SAVE are: EXIT AREA's A and E (the only letters taken from it) put where they are in it, from
+// SAVE's A and CONTINUE's E, so QUIT GAME is made just as in the plain game.
+bool exitAreaFromOthers(const Ink& tx1, const Source& tx2src, Ink& tx3)
+{
+	Ink tx2;
+	memset(&tx2, 0, sizeof tx2);
+	if (!decodeIA4(tx2src, tx2))
+		return false;
+	int save[8][2], cont[12][2];
+	const int ns = letterRuns(tx2, save, 8), nc = letterRuns(tx1, cont, 12);
+	bool ok = ns == 4 && nc == 8 && inkNew(tx3, 100, kH); // S A V E, C O N T I N U E
+	if (ok) {
+		copyColumns(tx3, 51 + (10 - (save[1][1] - save[1][0])) / 2, tx2, save[1][0], save[1][1], 3);
+		copyColumns(tx3, 74 + (11 - (cont[7][1] - cont[7][0])) / 2, tx1, cont[7][0], cont[7][1], 3);
+	}
+	OSReport("[pause] QUIT GAME: EXIT AREA's A and E from SAVE and CONTINUE (%d and %d letters found)%s\n", ns, nc,
+	         ok ? "" : ", not usable");
+	inkFree(tx2);
+	return ok;
+}
+
 struct Art {
 	bool tried;
 	const ResTIMG* timg;
@@ -584,14 +642,31 @@ const ResTIMG* make(bool pack, int* layoutW)
 	u8* quitFile = (u8*)port_disc_archive_file("/data/option.szs", "select_quit.bti", &quitSize);
 	u8* monoFile = (u8*)port_disc_archive_file("/data/option.szs", "select_mono.bti", &monoSize);
 	const Source quit = discPicture(quitFile, quitSize), mono = discPicture(monoFile, monoSize);
-	const bool us = isUS(tx1, 96, 0x64F46869u) && isUS(tx3, 100, 0x7BAC9E8Bu) && isUS(quit, 68, 0x932BE423u)
-	                && isUS(mono, 72, 0xC51053BEu);
+	bool us = isUS(tx1, 96, 0x64F46869u) && isUS(tx3, 100, 0x7BAC9E8Bu) && isUS(quit, 68, 0x932BE423u)
+	          && isUS(mono, 72, 0xC51053BEu);
+	const bool plain = us;
+	// no plain EXIT AREA, but the plain CONTINUE and file select (Super Mario Eclipse): made from
+	// CONTINUE and SAVE instead, at the disc's size
+	const bool otherExit = !us && !tx3.img && isUS(tx1, 96, 0x64F46869u) && isUS(mono, 72, 0xC51053BEu);
 
 	Letters in;
 	memset(&in, 0, sizeof in);
 	in.scale = 1;
 	bool ok  = false;
-	if (pack) {
+	if (otherExit) {
+		if (pack) {
+			free(quitFile);
+			free(monoFile);
+			*layoutW = 0;
+			return nullptr; // the disc's size only (the next try)
+		}
+		const ResTIMG* tx1Header = nullptr;
+		gamePicture("pause_tx_1", &tx1Header);
+		like = tx1Header;
+		ok   = decodeIA4(tx1, in.tx1) && decodeIA4(quit, in.quit) && decodeIA4(mono, in.mono)
+		     && exitAreaFromOthers(in.tx1, gamePicture("pause_tx_2", nullptr), in.tx3);
+		us = ok;
+	} else if (pack) {
 		// the pack's pictures, all at the same scale as its EXIT AREA's (in
 		// another language, only its QUIT, and EXIT AREA for the outline)
 		int w = 0, h = 0;
@@ -648,11 +723,12 @@ const ResTIMG* make(bool pack, int* layoutW)
 		w   = *layoutW;
 		in.scale = 1;
 		outline  = kOutline;
-	} else if (us)
+	} else if (plain)
 		cacheSave(art, in.scale, *layoutW); // for games whose letters differ (above)
 	OSReport("[pause] QUIT GAME item: %s, %d x %d, outline %.2f%s\n",
 	         !art             ? "no picture"
 	         : w == kFallbackW && outline == kOutline && !us ? "QUIT GAME (its own letters)"
+	         : otherExit      ? "QUIT GAME (EXIT AREA's letters from SAVE and CONTINUE)"
 	         : us             ? "QUIT GAME"
 	                          : "the file select's QUIT",
 	         w, kH * in.scale, outline, art && in.scale > 1 ? " (from the texture pack's)" : "");
