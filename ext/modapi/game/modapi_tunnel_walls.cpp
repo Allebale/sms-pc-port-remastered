@@ -31,7 +31,8 @@ const f32 kReach      = 4096.0f; // the walls this far round Mario (the collisio
 const f32 kHeight     = 420.0f;  // the tunnel's height, unless a roof or the ground above is lower
 const f32 kTileWidth  = 300.0f;  // a wall panel's width
 const int kMostWalls  = 600;
-const int kMostRoof   = 600;
+const int kMostRoof   = 600;  // the floor's collision triangles taken for the ceiling
+const int kMostPieces = 6000; // the ceiling in small pieces, each open or not
 const int kTex        = 64;
 
 struct Quad {
@@ -43,8 +44,10 @@ int s_wallCount;
 struct Tri {
 	f32 p[3][3];
 };
-Tri s_roof[kMostRoof];
-int s_roofCount;
+Tri s_roof[kMostPieces];
+int s_roofCount, s_floorCount, s_openCount;
+int s_keyX = -99999, s_keyZ = -99999; // the grid cell and heights the walls and ceiling were made for
+f32 s_keyBottom, s_keyTop;
 f32 s_bottom, s_top; // this frame's floor and ceiling heights
 bool s_on;
 const TBGCheckData* s_seen[kMostWalls + kMostRoof]; // each collision triangle once
@@ -58,8 +61,8 @@ void texel(int x, int y, u8 out[4])
 {
 	const f32 u = (x + 0.5f) / kTex, v = (y + 0.5f) / kTex; // v 0 at the top
 	f32 r = 24, g = 36, b = 112;
-	const f32 grain = (f32)(((x * 73856093) ^ (y * 19349663)) & 15) - 7.5f;
-	r += grain * 0.4f, g += grain * 0.5f, b += grain * 0.9f;
+	const f32 grain = (f32)(((x * 73856093) ^ (y * 19349663)) & 7) - 3.5f;
+	r += grain * 0.3f, g += grain * 0.4f, b += grain * 0.6f;
 	b += (0.5f - fabsf(v - 0.5f)) * 22.0f; // lighter towards the middle
 	if (v < 0.07f) // the top rail
 		r = 48, g = 70, b = 176;
@@ -140,14 +143,53 @@ void addWall(const TBGCheckData* d)
 	q.shade = 0.62f + 0.38f * fabsf(n.x * 0.55f + n.z * 0.83f);
 }
 
+// Is the ceiling open at (x, z): a shaft up to the surface (a manhole's pipe) above, the ground
+// above there far higher than the tunnel's top (or none at all)?
+bool openAbove(f32 x, f32 z)
+{
+	const TBGCheckData* above = 0;
+	const f32 up = gpMap->checkGround(x, s_bottom + 3000.0f, z, &above);
+	return !above || up < s_bottom + 100.0f || up > s_top + 150.0f;
+}
+
+// A piece of the ceiling over the floor's triangle (x, z of a, b, c), split until small, each piece
+// left out where a shaft goes up.
+void addPiece(const f32* a, const f32* b, const f32* c, int depth)
+{
+	if (s_roofCount >= kMostPieces)
+		return;
+	f32 most = 0.0f;
+	const f32* q[3] = {a, b, c};
+	for (int i = 0; i < 3; i++) {
+		const f32 dx = q[i][0] - q[(i + 1) % 3][0], dz = q[i][1] - q[(i + 1) % 3][1];
+		most = dx * dx + dz * dz > most ? dx * dx + dz * dz : most;
+	}
+	if (most > 110.0f * 110.0f && depth < 7) {
+		const f32 ab[2] = {(a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f};
+		const f32 bc[2] = {(b[0] + c[0]) * 0.5f, (b[1] + c[1]) * 0.5f};
+		const f32 ca[2] = {(c[0] + a[0]) * 0.5f, (c[1] + a[1]) * 0.5f};
+		addPiece(a, ab, ca, depth + 1);
+		addPiece(ab, b, bc, depth + 1);
+		addPiece(ca, bc, c, depth + 1);
+		addPiece(ab, bc, ca, depth + 1);
+		return;
+	}
+	if (openAbove((a[0] + b[0] + c[0]) / 3.0f, (a[1] + b[1] + c[1]) / 3.0f)) {
+		s_openCount++;
+		return;
+	}
+	Tri& t = s_roof[s_roofCount++];
+	for (int i = 0; i < 3; i++)
+		t.p[i][0] = q[i][0], t.p[i][1] = s_top, t.p[i][2] = q[i][1];
+}
+
 void addRoof(const TBGCheckData* d)
 {
-	if (s_roofCount >= kMostRoof || !d->isUnderground() || fabsf(d->mMaxY - s_bottom) > 150.0f || seen(d))
+	if (s_floorCount >= kMostRoof || !d->isUnderground() || fabsf(d->mMaxY - s_bottom) > 150.0f || seen(d))
 		return;
-	Tri& t = s_roof[s_roofCount++];
-	const JGeometry::TVec3<f32>* p[3] = {&d->mPoint1, &d->mPoint2, &d->mPoint3};
-	for (int i = 0; i < 3; i++)
-		t.p[i][0] = p[i]->x, t.p[i][1] = s_top, t.p[i][2] = p[i]->z;
+	s_floorCount++;
+	const f32 a[2] = {d->mPoint1.x, d->mPoint1.z}, b[2] = {d->mPoint2.x, d->mPoint2.z}, c[2] = {d->mPoint3.x, d->mPoint3.z};
+	addPiece(a, b, c, 0);
 }
 
 void walk(const TBGCheckList* l, bool walls)
@@ -161,7 +203,6 @@ void walk(const TBGCheckList* l, bool walls)
 void gather()
 {
 	s_on = false;
-	s_wallCount = s_roofCount = s_seenCount = 0;
 	TMario* m = gpMarioOriginal;
 	const TMapCollisionData* c = gpMapCollisionData;
 	if (!m || !c || !gpMap || !PortFirstPersonView())
@@ -179,12 +220,21 @@ void gather()
 	const f32 r = gpMap->checkRoof(at.x, s_bottom + 40.0f, at.z, &roof);
 	if (roof && r > s_bottom + 160.0f && r < s_top)
 		s_top = r;
-	const TBGCheckData* above = 0; // the stage's ground above the tunnel
-	const f32 up = gpMap->checkGround(at.x, s_bottom + 3000.0f, at.z, &above);
-	if (above && up > s_bottom + 180.0f && up - 6.0f < s_top)
+	const TBGCheckData* above = 0; // something above him: down in a tunnel (the manholes' tops are marked
+	const f32 up = gpMap->checkGround(at.x, s_bottom + 3000.0f, at.z, &above); // underground too, up top)
+	if (!above || up < s_bottom + 180.0f)
+		return;
+	if (up - 6.0f < s_top)
 		s_top = up - 6.0f;
 	const int cells = (int)(kReach / 1024.0f);
 	const int gx = (int)((at.x + c->mGridExtentX) / 1024.0f), gz = (int)((at.z + c->mGridExtentY) / 1024.0f);
+	if (gx == s_keyX && gz == s_keyZ && fabsf(s_bottom - s_keyBottom) < 20.0f && fabsf(s_top - s_keyTop) < 20.0f) {
+		s_bottom = s_keyBottom, s_top = s_keyTop; // as made (they change only with the cell he is in)
+		s_on     = s_wallCount > 0 || s_roofCount > 0;
+		return;
+	}
+	s_keyX = gx, s_keyZ = gz, s_keyBottom = s_bottom, s_keyTop = s_top;
+	s_wallCount = s_roofCount = s_seenCount = s_floorCount = s_openCount = 0;
 	for (int z = gz - cells; z <= gz + cells; z++)
 		for (int x = gx - cells; x <= gx + cells; x++) {
 			if (x < 0 || z < 0 || x >= c->unk8 || z >= c->unkC)
@@ -197,8 +247,8 @@ void gather()
 	static int s_logged = -1;
 	if (s_on && s_logged != s_wallCount) {
 		s_logged = s_wallCount;
-		fprintf(stderr, "[tunnel] first person underground: %d walls, %d ceiling pieces, floor %.0f, ceiling %.0f\n",
-		        s_wallCount, s_roofCount, s_bottom, s_top);
+		fprintf(stderr, "[tunnel] first person underground: %d walls, %d ceiling pieces (%d open to a shaft), floor %.0f, ceiling %.0f\n",
+		        s_wallCount, s_roofCount, s_openCount, s_bottom, s_top);
 	}
 }
 
@@ -276,6 +326,10 @@ void TunnelPacket::draw()
 }
 
 } // namespace
+
+// Mario down in a tunnel in first person, its walls drawn (MarDirectorDirect.cpp: the see-through
+// pass the game draws there for its camera above, the stage over him faintly, is left out then).
+bool PortTunnelWallsOn() { return s_on; }
 
 // As the stage's map is entered for drawing (TMap::perform's opaque CUE_ENTRY): the tunnel's walls
 // with it, when Mario is down there in first person.
