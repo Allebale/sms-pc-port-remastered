@@ -164,6 +164,35 @@ Source discPicture(const u8* file, unsigned size)
 	return s;
 }
 
+// A BTI file's header (big-endian, as on the disc) as the game has it once loaded.
+ResTIMG nativeHeader(const u8* f)
+{
+	ResTIMG t;
+	memset(&t, 0, sizeof t);
+	t.format          = f[0];
+	t.alphaEnabled    = f[1];
+	t.width           = (u16)(f[2] << 8 | f[3]);
+	t.height          = (u16)(f[4] << 8 | f[5]);
+	t.wrapS           = f[6];
+	t.wrapT           = f[7];
+	t.isIndexTexture  = f[8];
+	t.colorFormat     = f[9];
+	t.numColors       = (u16)(f[0xA] << 8 | f[0xB]);
+	t.paletteOffset   = (u32)f[0xC] << 24 | f[0xD] << 16 | f[0xE] << 8 | f[0xF];
+	t.mipmapEnabled   = f[0x10];
+	t.doEdgeLod       = f[0x11];
+	t.biasClamp       = f[0x12];
+	t.maxAnisotropy   = f[0x13];
+	t.minFilter       = f[0x14];
+	t.magFilter       = f[0x15];
+	t.minLod          = (s8)f[0x16];
+	t.maxLod          = (s8)f[0x17];
+	t.mipmapCount     = f[0x18];
+	t.lodBias         = (s16)(f[0x1A] << 8 | f[0x1B]);
+	t.imageDataOffset = (u32)f[0x1C] << 24 | f[0x1D] << 16 | f[0x1E] << 8 | f[0x1F];
+	return t;
+}
+
 bool isUS(const Source& s, int w, u32 hash)
 {
 	return s.img && s.w == w && s.h == kH && fnv1a(s.img, ia4Bytes(s.w, s.h)) == hash;
@@ -478,13 +507,35 @@ Art sArt[2]; // at the disc's size, and at a pack's
 const ResTIMG* make(bool pack, int* layoutW)
 {
 	const ResTIMG* like = nullptr;
-	const Source tx1 = gamePicture("pause_tx_1", nullptr), tx3 = gamePicture("pause_tx_3", &like);
+	Source tx1 = gamePicture("pause_tx_1", nullptr), tx3 = gamePicture("pause_tx_3", &like);
 	unsigned quitSize = 0, monoSize = 0;
 	u8* quitFile = (u8*)port_disc_archive_file("/data/option.szs", "select_quit.bti", &quitSize);
 	u8* monoFile = (u8*)port_disc_archive_file("/data/option.szs", "select_mono.bti", &monoSize);
-	const Source quit = discPicture(quitFile, quitSize), mono = discPicture(monoFile, monoSize);
-	const bool us = isUS(tx1, 96, 0x64F46869u) && isUS(tx3, 100, 0x7BAC9E8Bu) && isUS(quit, 68, 0x932BE423u)
-	                && isUS(mono, 72, 0xC51053BEu);
+	Source quit = discPicture(quitFile, quitSize), mono = discPicture(monoFile, monoSize);
+	bool us = isUS(tx1, 96, 0x64F46869u) && isUS(tx3, 100, 0x7BAC9E8Bu) && isUS(quit, 68, 0x932BE423u)
+	          && isUS(mono, 72, 0xC51053BEu);
+	// Super Mario Eclipse has no plain EXIT AREA picture: Sunshine's own four, from the Sunshine
+	// disc beside it (the one its Sunshine movies come from), so QUIT GAME is made as in Sunshine
+	u8* sun[4] = { nullptr, nullptr, nullptr, nullptr };
+	static ResTIMG s_sunLike;
+	if (!us) {
+		unsigned n[4] = { 0, 0, 0, 0 };
+		sun[0] = (u8*)port_sunshine_archive_file("/data/game_6.arc", "pause_tx_1.bti", &n[0]);
+		sun[1] = (u8*)port_sunshine_archive_file("/data/game_6.arc", "pause_tx_3.bti", &n[1]);
+		sun[2] = (u8*)port_sunshine_archive_file("/data/option.szs", "select_quit.bti", &n[2]);
+		sun[3] = (u8*)port_sunshine_archive_file("/data/option.szs", "select_mono.bti", &n[3]);
+		const Source s1 = discPicture(sun[0], n[0]), s3 = discPicture(sun[1], n[1]), sq = discPicture(sun[2], n[2]),
+		             sm = discPicture(sun[3], n[3]);
+		if (isUS(s1, 96, 0x64F46869u) && isUS(s3, 100, 0x7BAC9E8Bu) && isUS(sq, 68, 0x932BE423u)
+		    && isUS(sm, 72, 0xC51053BEu)) {
+			tx1 = s1, tx3 = s3, quit = sq, mono = sm;
+			s_sunLike = nativeHeader(sun[1]);
+			like      = &s_sunLike;
+			us        = true;
+			OSReport("[pause] QUIT GAME: Sunshine's own letters, from the Sunshine disc\n");
+		} else if (sun[0] || sun[1])
+			OSReport("[pause] QUIT GAME: the Sunshine disc's pictures are not the North American ones\n");
+	}
 
 	Letters in;
 	memset(&in, 0, sizeof in);
@@ -532,6 +583,8 @@ const ResTIMG* make(bool pack, int* layoutW)
 	inkFree(in.mono);
 	free(quitFile);
 	free(monoFile);
+	for (int i = 0; i < 4; i++)
+		free(sun[i]);
 	*layoutW = art ? w / in.scale : 0;
 	OSReport("[pause] QUIT GAME item: %s, %d x %d, outline %.2f%s\n",
 	         !art             ? "no picture"

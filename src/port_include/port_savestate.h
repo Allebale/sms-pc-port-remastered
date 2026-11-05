@@ -97,6 +97,8 @@ const void* port_savestate_world_art(int world, int banner, int* w, int* h, int*
 // language pack's archive counts): a malloc'ed copy for the caller to free, or
 // null.
 void* port_disc_archive_file(const char* archive, const char* name, unsigned* size);
+// The same from the plain Sunshine disc while Super Mario Eclipse's runs (nullptr otherwise).
+void* port_sunshine_archive_file(const char* archive, const char* name, unsigned* size);
 
 // The game's side, once a frame, between frames.
 enum {

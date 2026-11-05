@@ -756,6 +756,39 @@ static GCDisc* sunshine_disc(std::string* name)
 	return nullptr;
 }
 
+// A file from the plain Sunshine disc (the one sunshine_disc() finds) while Eclipse's disc runs:
+// Eclipse leaves out some of Sunshine's pictures that the port builds things from (the pause
+// menu's EXIT AREA, for its QUIT GAME). malloc'd, nullptr when not Eclipse, no Sunshine disc or
+// no such file.
+extern "C" void* port_sunshine_disc_file(const char* path, unsigned* size)
+{
+	if (!is_eclipse_disc())
+		return nullptr;
+	static GCDisc* s_disc = nullptr;
+	static bool s_tried   = false;
+	if (!s_tried) {
+		s_tried = true;
+		std::string name;
+		s_disc = sunshine_disc(&name);
+		port_log("[dvd] Eclipse: %s\n", s_disc ? ("Sunshine's own pictures can come from " + name).c_str()
+		                                        : "no Sunshine disc found for Sunshine's own pictures");
+	}
+	if (!s_disc)
+		return nullptr;
+	const s32 i = gcdisc_lookup(s_disc, path);
+	GCDiscEntry e;
+	if (i < 0 || !gcdisc_entry(s_disc, (u32)i, &e) || e.is_dir || !e.size)
+		return nullptr;
+	void* out = malloc(e.size);
+	if (out && gcdisc_read_file(s_disc, (u32)i, 0, out, e.size) != e.size) {
+		free(out);
+		out = nullptr;
+	}
+	if (out)
+		*size = e.size;
+	return out;
+}
+
 static void apply_sunshine_movies(const char* pack)
 {
 	std::string disc_name;

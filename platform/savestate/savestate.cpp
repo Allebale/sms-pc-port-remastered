@@ -1042,6 +1042,26 @@ extern "C" const void* port_savestate_world_art(int world, int banner, int* w, i
 	return a->tex;
 }
 
+// The same from the plain Sunshine disc while Eclipse's runs (platform/dvd/dvd.cpp).
+extern "C" void* port_sunshine_disc_file(const char* path, unsigned* size);
+extern "C" void* port_sunshine_archive_file(const char* archive, const char* name, unsigned* size)
+{
+	unsigned n = 0;
+	u8* raw    = (u8*)port_sunshine_disc_file(archive, &n);
+	if (!raw)
+		return nullptr;
+	const std::vector<u8> file = rarc_file(yaz0(std::vector<u8>(raw, raw + n)), name);
+	free(raw);
+	if (file.empty())
+		return nullptr;
+	void* out = malloc(file.size());
+	if (!out)
+		return nullptr;
+	memcpy(out, file.data(), file.size());
+	*size = (unsigned)file.size();
+	return out;
+}
+
 extern "C" void* port_disc_archive_file(const char* archive, const char* name, unsigned* size)
 {
 	const std::vector<u8> file = rarc_file(yaz0(read_disc(archive)), name);
