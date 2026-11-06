@@ -718,6 +718,30 @@ int shakeObjects(const JGeometry::TVec3<f32>& at, f32 r)
 	return n;
 }
 
+// The goop round a burst washed away as the stream's puddles wash it, spot by spot: its middle and
+// two rings of spots round it (each on the ground there, so slopes and steps are cleaned too).
+void cleanGoop(const JGeometry::TVec3<f32>& at, f32 r)
+{
+	if (!gpPollution || !gpMap)
+		return;
+	const f32 spot = r * 0.35f;
+	int n = 0;
+	for (int ring = 0; ring < 3; ring++) {
+		const int count = ring == 0 ? 1 : ring == 1 ? 7 : 13;
+		const f32 rad   = ring == 0 ? 0.0f : ring == 1 ? r * 0.42f : r * 0.8f;
+		for (int i = 0; i < count; i++) {
+			const f32 a = 6.2831853f * (f32)i / (f32)count + ring * 0.4f;
+			const f32 x = at.x + cosf(a) * rad, z = at.z + sinf(a) * rad;
+			const TBGCheckData* g = 0;
+			f32 y = gpMap->checkGround(x, at.y + 300.0f, z, &g);
+			if (!g || y < at.y - 800.0f)
+				y = at.y;
+			gpPollution->clean(x, y, z, spot);
+			n++;
+		}
+	}
+}
+
 void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 {
 	const f32 r = kWeapons[weapon].burst;
@@ -732,8 +756,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	const int shaken = shakeObjects(at, r);
-	if (gpPollution) // goop all round it washed away (a drop's splash cleans only its own small spot)
-		gpPollution->clean(at.x, at.y, at.z, r * 1.2f);
+	cleanGoop(at, r * 1.2f);
 	explode(at, r);
 	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies and %d things in it\n", at.x, at.y, at.z, n, shaken);
