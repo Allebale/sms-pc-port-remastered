@@ -1,0 +1,78 @@
+Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon_stats' far_scale): enemies and characters are drawn, move and are animated further away than the game's own distance, so a weapon can hit them there (enemies: TLiveManager::clipActorsAux; characters: TNPCManager::clipEnemies, TBaseNPC::perform, which stops them moving out of sight beyond it, and calcAnmOff_, which stops some animations, an angry Pianta's, beyond its own distance). Map objects keep theirs. Without such a mod, nothing changes.
+
+--- a/src/Strategic/livemanager.cpp
++++ b/src/Strategic/livemanager.cpp
+@@ -8,6 +8,9 @@
+ #include <MarioUtil/LightUtil.hpp>
+ #include <Camera/CubeManagerBase.hpp>
+ #include <sms_modhook.h>
++#ifdef TARGET_PC
++f32 PortSprayWeaponFarScale(TLiveManager* manager); // FLUDD weapons' long range (ext/modapi/game/modapi_spray_weapons.cpp)
++#endif
+ 
+ TLiveManager::TLiveManager(const char* name)
+     : TObjManager(name)
+@@ -42,6 +45,11 @@
+ void TLiveManager::clipActorsAux(JDrama::TGraphics* param_1, float param_2,
+                                  float param_3)
+ {
++#ifdef TARGET_PC
++	// a weapons mod's long range: enemies and characters drawn and moving further away, so they
++	// can be hit there (1 without one)
++	param_2 *= PortSprayWeaponFarScale(this);
++#endif
+ 	SetViewFrustumClipCheckPerspective(gpCamera->getFovy(),
+ 	                                   gpCamera->getAspect(),
+ 	                                   param_1->getNearPlane(), param_2);
+--- a/src/NPC/NpcBase.cpp
++++ b/src/NPC/NpcBase.cpp
+@@ -1,4 +1,8 @@
+ #include <NPC/NpcBase.hpp>
++#ifdef TARGET_PC
++class TLiveManager;
++f32 PortSprayWeaponFarScale(TLiveManager* manager); // FLUDD weapons' long range (ext/modapi/game/modapi_spray_weapons.cpp)
++#endif
+ #include <System/MarDirector.hpp>
+ #include <M3DUtil/SDLModel.hpp>
+ #include <M3DUtil/LodAnm.hpp>
+@@ -710,6 +714,9 @@
+ 			// Named first: retail calls getAnmOffDist_ before the squared
+ 			// camera distance and CLBSquared after it.
+ 			f32 dist = getAnmOffDist_();
++#ifdef TARGET_PC
++			dist *= PortSprayWeaponFarScale(mManager); // a weapons mod's long range: animated further away
++#endif
+ 			if (MsSquaredDist(mPosition, gpCamera->unk124) > CLBSquared(dist) && !bVar6
+ 			    && mSpine->getTime() > 2) {
+ 				r31 = true;
+@@ -804,6 +811,9 @@
+ 		f32 farClip          = gpConductor->unk84.mEnemyFarClip.get();
+ 		if (manager != nullptr)
+ 			farClip = *manager->unk58;
++#ifdef TARGET_PC
++		farClip *= PortSprayWeaponFarScale(manager); // a weapons mod's long range: they keep moving further away
++#endif
+ 
+ 		const JGeometry::TVec3<f32>& at  = gpCamera->unk148;
+ 		const JGeometry::TVec3<f32>& pos = gpCamera->unk124;
+--- a/src/NPC/NpcManager.cpp
++++ b/src/NPC/NpcManager.cpp
+@@ -1,4 +1,8 @@
+ #include <NPC/NpcManager.hpp>
++#ifdef TARGET_PC
++class TLiveManager;
++f32 PortSprayWeaponFarScale(TLiveManager* manager); // FLUDD weapons' long range (ext/modapi/game/modapi_spray_weapons.cpp)
++#endif
+ #include <stdio.h>
+ #include <JSystem/JKernel/JKRFileLoader.hpp>
+ #include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAttach.hpp>
+@@ -291,6 +295,9 @@
+ {
+ 	f32 nearClip = getUnk54();
+ 	f32 farClip  = *getUnk58();
++#ifdef TARGET_PC
++	farClip *= PortSprayWeaponFarScale(this); // a weapons mod's long range (1 without one)
++#endif
+ 
+ 	if (gpMarDirector->getCurrentMap() == 1) {
+ 		// Spelled out rather than routed through TCamera::fabricatedInline3():
