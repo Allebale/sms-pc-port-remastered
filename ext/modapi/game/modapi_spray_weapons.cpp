@@ -46,6 +46,7 @@
 #include <Enemy/Emario.hpp>
 #include <Enemy/EnemyMario.hpp>
 #include <Enemy/GateKeeper.hpp>
+#include <Enemy/BossPakkun.hpp>
 #include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
@@ -118,6 +119,7 @@ bool s_rocketAir;     // he is in the air from one (his fall then hurts him no m
 f32 s_rocketVX, s_rocketVZ, s_rocketTop; // his speed across the ground in the air from one, and its most
 void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
+bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -427,7 +429,7 @@ f32 mouthAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f,
 	return px * px + py * py + pz * pz <= rad * rad ? t : -1.0f;
 }
 
-TBiancoGateKeeper* asGatekeeper(TLiveActor* a) { return dynamic_cast<TBiancoGateKeeper*>(a); }
+TBiancoGateKeeper* asGatekeeper(TLiveActor* a) { return s_bosses ? dynamic_cast<TBiancoGateKeeper*>(a) : 0; }
 
 bool gatekeeperMouth(TBiancoGateKeeper* g)
 {
@@ -467,6 +469,34 @@ void gatekeeperHit(TBiancoGateKeeper* g, int weapon)
 	fprintf(stderr, "[weapons] Proto Piranha's goop pile hit by the %s%s\n", kNames[weapon], wake ? ": it comes out" : "");
 }
 
+// Petey Piranha (TBossPakkun): water in his open mouth (BOSSPAKU_STATE_UNK2, inside his damage
+// cone) counts as the game counts a drop (gotWaterDamage, mWaterMark up to mSLWaterMarkLimit);
+// full, he tumbles over. A weapon's drop the game counted there fills him more: the bazooka's all
+// of him, the rifle's a quarter, the submachine gun's a 24th (the stream's drops fill him faster
+// than its few drops do). A bazooka burst at his open mouth fills him too.
+TBossPakkun* s_peteyHit; // the head a weapon's drop is hitting (objectHit), and his water before it
+int s_peteyMark;
+
+TBossPakkun* peteyOf(void* object)
+{
+	TBPHeadHit* head = s_bosses ? dynamic_cast<TBPHeadHit*>(static_cast<THitActor*>(object)) : 0;
+	return head ? head->mOwner : 0;
+}
+
+void peteyFill(TBossPakkun* p, int weapon, bool counted)
+{
+	const int limit = p->getSaveParam2()->mSLWaterMarkLimit.get();
+	if (!counted && p->mState != BOSSPAKU_STATE_UNK2)
+		return;
+	const int add = weapon == BAZOOKA ? limit : weapon == RIFLE ? limit / 4 : weapon == SMG ? limit / 24 : 0;
+	if (!add)
+		return;
+	if (!counted)
+		p->gotWaterDamage(); // as a drop in his mouth (a burst at it)
+	p->mWaterMark = p->mWaterMark + add < limit ? p->mWaterMark + add : limit;
+	fprintf(stderr, "[weapons] Petey Piranha filled by the %s: %d of %d\n", kNames[weapon], p->mWaterMark, limit);
+}
+
 // A shot that got to what it was aimed at (far away, or Shadow Mario, who runs too fast to meet
 // a drop): an enemy hit, or Shadow Mario wetted (the game's own count, then the weapon's share).
 void hitTarget(TLiveActor* a, int weapon, int shot, f32 dx, f32 dz)
@@ -504,6 +534,20 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 	for (int i = 0; i < mgr->getObjNum(); i++) {
 		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) {
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
+			continue;
+		}
+		if (TBossPakkun* p = s_bosses && weapon == BAZOOKA ? dynamic_cast<TBossPakkun*>(mgr->getObj(i)) : 0) {
+			if (p->mHeadHit && p->mState == BOSSPAKU_STATE_UNK2 && !p->checkLiveFlag(LIVE_FLAG_DEAD)) {
+				const JGeometry::TVec3<f32>& h = p->mHeadHit->mPosition; // a burst at his open mouth
+				const f32 x = h.x - at.x, y = h.y - at.y, z = h.z - at.z;
+				const f32 rad = (p->mHeadHit->getDamageRadius() > p->mHeadHit->getAttackRadius() ? p->mHeadHit->getDamageRadius()
+				                                                                                 : p->mHeadHit->getAttackRadius())
+				              + 150.0f;
+				if (x * x + y * y + z * z <= rad * rad) {
+					peteyFill(p, weapon, false);
+					n++;
+				}
+			}
 			continue;
 		}
 		if (TBiancoGateKeeper* g = asGatekeeper(mgr->getObj(i))) { // Proto Piranha: near its open mouth or pile
@@ -714,9 +758,15 @@ int dropWeapon(void* sender)
 int objectHit(void* object, void* sender, unsigned message)
 {
 	s_softened = 0;
+	s_peteyHit = 0;
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return 0;
 	const int weapon = dropWeapon(sender);
+	if (weapon > NORMAL && weapon < WEAPONS)
+		if (TBossPakkun* p = peteyOf(object)) { // his water before the game counts the drop
+			s_peteyHit  = p;
+			s_peteyMark = p->mWaterMark;
+		}
 	if (weapon <= NORMAL || weapon >= WEAPONS || s_gamePush[weapon] >= 1.0f)
 		return 0;
 	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object))) {
@@ -775,6 +825,13 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	}
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return; // the normal spray, or any other water: the game's own
+	if (TBossPakkun* p = peteyOf(object)) { // Petey Piranha: the drop counted in his mouth fills him more
+		if (p == s_peteyHit && p->mWaterMark > s_peteyMark)
+			peteyFill(p, weapon, true);
+		s_peteyHit = 0;
+		if (kWeapons[weapon].burst <= 0.0f)
+			return;
+	}
 	if (TEMario* em = dynamic_cast<TEMario*>(static_cast<THitActor*>(object))) { // Shadow Mario: the weapon's share
 		if (kWeapons[weapon].burst > 0.0f) {
 			if (s_burst != shot) {
@@ -1217,6 +1274,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] in third person %s\n", (flags & 8) ? "on" : "off");
 	s_third      = (flags & 8) != 0;
 	s_thirdModel = (flags & 16) != 0;
+	if (((flags & 32) != 0) != s_bosses)
+		fprintf(stderr, "[weapons] made for bosses %s\n", (flags & 32) ? "on" : "off");
+	s_bosses = (flags & 32) != 0;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
 	s_defeatNormal = (flags & 4) != 0;
