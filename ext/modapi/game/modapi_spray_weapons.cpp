@@ -45,6 +45,7 @@
 #include <Enemy/Conductor.hpp>
 #include <Enemy/Emario.hpp>
 #include <Enemy/EnemyMario.hpp>
+#include <Enemy/GateKeeper.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <MoveBG/MapObjTree.hpp>
@@ -398,12 +399,35 @@ void shadowHit(TEMario* em, int weapon, int shot, bool gameCounted)
 		m->hitWater(em); // empty: down now
 }
 
+// Proto Piranha (TBiancoGateKeeper, the goop piranha plant): water in its open mouth (its head,
+// mHead, while mVulnerable) hurts it, as the game counts a drop there (unk154). The weapons' shots
+// reach it there with a bigger hitbox (a rifle shot or a burst near its head).
+const f32 kGatekeeperHitbox = 2.5f;
+
+TBiancoGateKeeper* asGatekeeper(TLiveActor* a) { return dynamic_cast<TBiancoGateKeeper*>(a); }
+
+bool gatekeeperOpen(TBiancoGateKeeper* g)
+{
+	return g && g->mHead && g->mVulnerable && !g->checkLiveFlag(LIVE_FLAG_DEAD);
+}
+
+void gatekeeperHit(TBiancoGateKeeper* g, int weapon)
+{
+	if (!gatekeeperOpen(g))
+		return;
+	g->unk154++;
+	SMSGetParticleManagerBound()->emit(PARTICLE_MS_ENM_WATHIT, &g->mHead->mPosition, 0, nullptr);
+	fprintf(stderr, "[weapons] Proto Piranha hit in the mouth by the %s\n", kNames[weapon]);
+}
+
 // A shot that got to what it was aimed at (far away, or Shadow Mario, who runs too fast to meet
 // a drop): an enemy hit, or Shadow Mario wetted (the game's own count, then the weapon's share).
 void hitTarget(TLiveActor* a, int weapon, int shot, f32 dx, f32 dz)
 {
 	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(a)) {
 		hitEnemy(e, weapon, shot, dx, dz);
+	} else if (TBiancoGateKeeper* g = asGatekeeper(a)) {
+		gatekeeperHit(g, weapon);
 	} else if (TEMario* em = dynamic_cast<TEMario*>(a)) {
 		if (sameShadowShot(shot))
 			return;
@@ -433,6 +457,17 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 	for (int i = 0; i < mgr->getObjNum(); i++) {
 		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) {
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
+			continue;
+		}
+		if (TBiancoGateKeeper* g = asGatekeeper(mgr->getObj(i))) { // Proto Piranha: near its open mouth
+			if (gatekeeperOpen(g)) {
+				const JGeometry::TVec3<f32>& h = g->mHead->mPosition;
+				const f32 x = h.x - at.x, y = h.y - at.y, z = h.z - at.z, big = r * kGatekeeperHitbox;
+				if (x * x + y * y + z * z <= big * big) {
+					gatekeeperHit(g, weapon);
+					n++;
+				}
+			}
 			continue;
 		}
 		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
@@ -742,6 +777,8 @@ f32 shotAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, 
 {
 	if (TEMario* em = dynamic_cast<TEMario*>(e))
 		return em->mEnemyMario && !em->checkLiveFlag(LIVE_FLAG_DEAD) ? alongRay(eye, f, em->mEnemyMario, most, kShadowHitbox) : -1.0f;
+	if (TBiancoGateKeeper* g = asGatekeeper(e)) // Proto Piranha: its open mouth
+		return gatekeeperOpen(g) ? alongRay(eye, f, g->mHead, most, kGatekeeperHitbox) : -1.0f;
 	if (!dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return -1.0f;
 	return alongRay(eye, f, e, most);
@@ -936,12 +973,12 @@ void fire()
 		st->aim       = l;
 		if (s_weapon == BAZOOKA)
 			s_bazookaAim = at, s_bazookaAimDist = l;
-		st->target    = (l > 3000.0f || dynamic_cast<TEMario*>(e)) && s_weapon != BAZOOKA ? e : 0;
+		st->target    = (l > 3000.0f || dynamic_cast<TEMario*>(e) || asGatekeeper(e)) && s_weapon != BAZOOKA ? e : 0;
 		st->weapon    = s_weapon;
 		st->speed     = 0.0f;
 		st->laneCount = 0;
 		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon],
-		        dynamic_cast<TEMario*>(e) ? "Shadow Mario" : e ? "an enemy" : "nothing", l);
+		        dynamic_cast<TEMario*>(e) ? "Shadow Mario" : asGatekeeper(e) ? "Proto Piranha" : e ? "an enemy" : "nothing", l);
 	}
 	const f32 reach = k.straight ? 1.0f : s_reachScale[s_weapon]; // further: faster and longer lived
 	const f32 pow   = n->mEmitParams.mEmitPow.get() * k.pow * (reach > 0.0f ? sqrtf(reach) : 1.0f);
@@ -1048,7 +1085,7 @@ void followStraight()
 		// far away (long range): faster, to get there in about half a second, not seconds (an enemy
 		// walked out of the way meanwhile)
 		const f32 quick = st->weapon == BAZOOKA ? st->aim / 6.0f // the bazooka's there in a fifth of a second
-		                  : st->aim > 3000.0f || (st->target && dynamic_cast<TEMario*>(st->target)) ? st->aim / 15.0f : 0.0f;
+		                  : st->aim > 3000.0f || (st->target && (dynamic_cast<TEMario*>(st->target) || asGatekeeper(st->target))) ? st->aim / 15.0f : 0.0f;
 		const f32 extra = quick > st->speed ? (quick - st->speed) * port_frame_scale() : 0.0f;
 		if (along > 0.0f)
 			at.set(st->from.x + way.x * (along + extra), st->from.y + way.y * (along + extra), st->from.z + way.z * (along + extra));
