@@ -46,6 +46,7 @@
 #include <Enemy/Emario.hpp>
 #include <Enemy/EnemyMario.hpp>
 #include <Enemy/GateKeeper.hpp>
+#include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <MoveBG/MapObjTree.hpp>
@@ -399,25 +400,51 @@ void shadowHit(TEMario* em, int weapon, int shot, bool gameCounted)
 		m->hitWater(em); // empty: down now
 }
 
-// Proto Piranha (TBiancoGateKeeper, the goop piranha plant): water in its open mouth (its head,
-// mHead, while mVulnerable) hurts it, as the game counts a drop there (unk154). The weapons' shots
-// reach it there with a bigger hitbox (a rifle shot or a burst near its head).
+// Proto Piranha (TBiancoGateKeeper, the goop piranha plant). Asleep in its goop pile its body takes
+// water (mVulnerable): the game wakes it after about two seconds of spraying (unk17C counting up to
+// 255 while drops keep coming, unk17E); a bazooka burst wakes it at once, two rifle shots do. Awake,
+// water in its open mouth (its head, mHead, while that is mVulnerable) hurts it, one drop being
+// enough (unk154). The weapons reach both with bigger hitboxes.
 const f32 kGatekeeperHitbox = 2.5f;
 
 TBiancoGateKeeper* asGatekeeper(TLiveActor* a) { return dynamic_cast<TBiancoGateKeeper*>(a); }
 
-bool gatekeeperOpen(TBiancoGateKeeper* g)
+bool gatekeeperMouth(TBiancoGateKeeper* g)
 {
-	return g && g->mHead && g->mVulnerable && !g->checkLiveFlag(LIVE_FLAG_DEAD);
+	return g && g->mHead && g->mHead->mVulnerable && !g->checkLiveFlag(LIVE_FLAG_DEAD);
 }
+
+bool gatekeeperPile(TBiancoGateKeeper* g) { return g && g->mVulnerable && !g->checkLiveFlag(LIVE_FLAG_DEAD); }
+
+TBiancoGateKeeper* s_pileOf; // the last pile a rifle shot hit, when and how many times
+f32 s_pileAt;
+int s_pileHits;
 
 void gatekeeperHit(TBiancoGateKeeper* g, int weapon)
 {
-	if (!gatekeeperOpen(g))
+	if (gatekeeperMouth(g)) {
+		g->unk154++;
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &g->mHead->mPosition, 0, nullptr);
+		fprintf(stderr, "[weapons] Proto Piranha hit in the mouth by the %s\n", kNames[weapon]);
+		return;
+	}
+	if (!gatekeeperPile(g))
 		return;
 	g->unk154++;
-	SMSGetParticleManagerBound()->emit(PARTICLE_MS_ENM_WATHIT, &g->mHead->mPosition, 0, nullptr);
-	fprintf(stderr, "[weapons] Proto Piranha hit in the mouth by the %s\n", kNames[weapon]);
+	g->unk17E = 0x10;
+	gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &g->mPosition, 0, nullptr);
+	bool wake = weapon == BAZOOKA;
+	if (weapon == RIFLE) {
+		if (s_pileOf != g || s_time - s_pileAt > 5.0f)
+			s_pileHits = 0;
+		s_pileOf = g, s_pileAt = s_time;
+		wake     = ++s_pileHits >= 2;
+	}
+	if (wake) {
+		g->unk17C  = 0xFF;
+		s_pileHits = 0;
+	}
+	fprintf(stderr, "[weapons] Proto Piranha's goop pile hit by the %s%s\n", kNames[weapon], wake ? ": it comes out" : "");
 }
 
 // A shot that got to what it was aimed at (far away, or Shadow Mario, who runs too fast to meet
@@ -459,9 +486,10 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 			continue;
 		}
-		if (TBiancoGateKeeper* g = asGatekeeper(mgr->getObj(i))) { // Proto Piranha: near its open mouth
-			if (gatekeeperOpen(g)) {
-				const JGeometry::TVec3<f32>& h = g->mHead->mPosition;
+		if (TBiancoGateKeeper* g = asGatekeeper(mgr->getObj(i))) { // Proto Piranha: near its open mouth or pile
+			const bool mouth = gatekeeperMouth(g);
+			if (mouth || gatekeeperPile(g)) {
+				const JGeometry::TVec3<f32>& h = mouth ? g->mHead->mPosition : g->mPosition;
 				const f32 x = h.x - at.x, y = h.y - at.y, z = h.z - at.z, big = r * kGatekeeperHitbox;
 				if (x * x + y * y + z * z <= big * big) {
 					gatekeeperHit(g, weapon);
@@ -639,6 +667,8 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	const int shaken = shakeObjects(at, r);
+	if (gpPollution) // goop all round it washed away (a drop's splash cleans only its own small spot)
+		gpPollution->clean(at.x, at.y, at.z, r * 1.2f);
 	explode(at, r);
 	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies and %d things in it\n", at.x, at.y, at.z, n, shaken);
@@ -777,8 +807,10 @@ f32 shotAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, 
 {
 	if (TEMario* em = dynamic_cast<TEMario*>(e))
 		return em->mEnemyMario && !em->checkLiveFlag(LIVE_FLAG_DEAD) ? alongRay(eye, f, em->mEnemyMario, most, kShadowHitbox) : -1.0f;
-	if (TBiancoGateKeeper* g = asGatekeeper(e)) // Proto Piranha: its open mouth
-		return gatekeeperOpen(g) ? alongRay(eye, f, g->mHead, most, kGatekeeperHitbox) : -1.0f;
+	if (TBiancoGateKeeper* g = asGatekeeper(e)) // Proto Piranha: its open mouth, or its goop pile
+		return gatekeeperMouth(g) ? alongRay(eye, f, g->mHead, most, kGatekeeperHitbox)
+		       : gatekeeperPile(g) ? alongRay(eye, f, g, most + 300.0f, kGatekeeperHitbox)
+		                           : -1.0f;
 	if (!dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return -1.0f;
 	return alongRay(eye, f, e, most);
