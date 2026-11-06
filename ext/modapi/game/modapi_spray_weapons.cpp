@@ -405,7 +405,27 @@ void shadowHit(TEMario* em, int weapon, int shot, bool gameCounted)
 // 255 while drops keep coming, unk17E); a bazooka burst wakes it at once, two rifle shots do. Awake,
 // water in its open mouth (its head, mHead, while that is mVulnerable) hurts it, one drop being
 // enough (unk154). The weapons reach both with bigger hitboxes.
-const f32 kGatekeeperHitbox = 2.5f;
+const f32 kGatekeeperHitbox = 2.5f; // its goop pile's
+
+// Its mouth's own size (its head's hit radius), only that: a shot must go into it.
+f32 mouthRadius(TBiancoGateKeeper* g)
+{
+	const f32 a = g->mHead->getAttackRadius(), d = g->mHead->getDamageRadius();
+	const f32 m = a > d ? a : d;
+	return m > 40.0f ? m : 40.0f;
+}
+
+// Where along the line the mouth is, -1 if the line misses it.
+f32 mouthAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, TBiancoGateKeeper* g, f32 most)
+{
+	const JGeometry::TVec3<f32>& h = g->mHead->mPosition;
+	const f32 cx = h.x - eye.x, cy = h.y - eye.y, cz = h.z - eye.z;
+	const f32 t = cx * f.x + cy * f.y + cz * f.z;
+	if (t < 0.0f || t > most + 200.0f)
+		return -1.0f;
+	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t, rad = mouthRadius(g);
+	return px * px + py * py + pz * pz <= rad * rad ? t : -1.0f;
+}
 
 TBiancoGateKeeper* asGatekeeper(TLiveActor* a) { return dynamic_cast<TBiancoGateKeeper*>(a); }
 
@@ -490,7 +510,8 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 			const bool mouth = gatekeeperMouth(g);
 			if (mouth || gatekeeperPile(g)) {
 				const JGeometry::TVec3<f32>& h = mouth ? g->mHead->mPosition : g->mPosition;
-				const f32 x = h.x - at.x, y = h.y - at.y, z = h.z - at.z, big = r * kGatekeeperHitbox;
+				const f32 x = h.x - at.x, y = h.y - at.y, z = h.z - at.z;
+				const f32 big = mouth ? mouthRadius(g) + 40.0f : r * kGatekeeperHitbox; // the mouth: only a burst in it
 				if (x * x + y * y + z * z <= big * big) {
 					gatekeeperHit(g, weapon);
 					n++;
@@ -808,7 +829,7 @@ f32 shotAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, 
 	if (TEMario* em = dynamic_cast<TEMario*>(e))
 		return em->mEnemyMario && !em->checkLiveFlag(LIVE_FLAG_DEAD) ? alongRay(eye, f, em->mEnemyMario, most, kShadowHitbox) : -1.0f;
 	if (TBiancoGateKeeper* g = asGatekeeper(e)) // Proto Piranha: its open mouth, or its goop pile
-		return gatekeeperMouth(g) ? alongRay(eye, f, g->mHead, most, kGatekeeperHitbox)
+		return gatekeeperMouth(g) ? mouthAlong(eye, f, g, most)
 		       : gatekeeperPile(g) ? alongRay(eye, f, g, most + 300.0f, kGatekeeperHitbox)
 		                           : -1.0f;
 	if (!dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
