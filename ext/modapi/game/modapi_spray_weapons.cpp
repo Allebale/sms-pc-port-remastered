@@ -50,6 +50,8 @@
 #include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
+#include <NPC/NpcBase.hpp>
+#include <System/MarDirector.hpp>
 #include <MoveBG/MapObjTree.hpp>
 #include "port_framerate.h"
 
@@ -114,6 +116,16 @@ struct Heart {
 };
 const int kHearts = 8;
 Heart s_heartList[kHearts];
+// friendly characters washed by a shot (washNpc): each once a shot
+struct NpcShot {
+	TBaseNPC* npc;
+	int shot;
+	f32 at;
+};
+NpcShot s_npcShots[8];
+int s_nextNpcShot;
+TBaseNPC* s_npcHit;   // the character a weapon's drop is reaching now (objectHit), and its goop before
+f32 s_npcBefore;
 const f32 kHeartLife = 450.0f; // 15 seconds of frames
 const f32 kVisualSize = 10.0f; // its blob, times the bazooka's own drop
 const int kVisualTail = 5;      // blobs in its streak, the head first
@@ -255,6 +267,8 @@ void stageSetup()
 	memset(&s_balloon, 0, sizeof s_balloon);
 	memset(s_pieces, 0, sizeof s_pieces);
 	memset(s_heartList, 0, sizeof s_heartList);
+	memset(s_npcShots, 0, sizeof s_npcShots);
+	s_npcHit = 0;
 	s_muteMario = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
@@ -661,6 +675,44 @@ bool burstShadow(TEMario* em, int weapon, int shot, const JGeometry::TVec3<f32>&
 	return true;
 }
 
+// Friendly characters covered in goop (TBaseNPC, isPollutionNpc): each weapon's shot washes a share of
+// it off at once, as many shots as FLUDD's own bursts would take: the bazooka's one, the rifle's two,
+// the submachine gun's 42 (the game's own washing for its drop taken back out: these counts exact).
+// Not while talking or in a scene, as the game's own.
+const f32 kNpcWash[WEAPONS] = {0.0f, 0.0f, 0.5f, 1.0f, 1.0f / 42.0f};
+void washNpc(TBaseNPC* n, int weapon, int shot)
+{
+	if (!n || weapon <= NORMAL || weapon >= WEAPONS || kNpcWash[weapon] <= 0.0f || !n->isPollutionNpc()
+	    || n->mPollutionAmount <= 0.0f || !gpMarDirector || gpMarDirector->isTalkOrDemoModeNow())
+		return;
+	for (int i = 0; i < 8; i++) // a shot washes it once (its drops, or its burst and its drop)
+		if (s_npcShots[i].npc == n && s_npcShots[i].shot == shot && s_time - s_npcShots[i].at < 3.0f)
+			return;
+	NpcShot& k = s_npcShots[s_nextNpcShot++ % 8];
+	k.npc = n, k.shot = shot, k.at = s_time;
+	n->mPollutionAmount -= kNpcWash[weapon] + 0.001f;
+	if (n->mPollutionAmount <= 0.0f) { // clean: as the game's own (it thanks Mario)
+		n->mPollutionAmount = 0.0f;
+		n->mTalkForbidCount = 60;
+		n->onUnk1DA(TBaseNPC::UNK1DA_FLAG_UNK2);
+		fprintf(stderr, "[weapons] a character washed clean by the %s\n", kNames[weapon]);
+	}
+}
+
+// the characters within a bazooka burst: washed
+void burstNpcs(int shot, const JGeometry::TVec3<f32>& at, f32 r)
+{
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+			TBaseNPC* n = dynamic_cast<TBaseNPC*>((*it)->getObj(i));
+			if (!n)
+				continue;
+			const f32 x = n->mPosition.x - at.x, y = n->mPosition.y + 80.0f - at.y, z = n->mPosition.z - at.z;
+			if (x * x + y * y + z * z <= r * r)
+				washNpc(n, BAZOOKA, shot);
+		}
+}
+
 int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>& at, f32 r)
 {
 	if (!mgr)
@@ -904,6 +956,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
+	burstNpcs(shot, at, r);
 	const int shaken = shakeObjects(at, r);
 	cleanGoop(at, s_goopArea > 0.0f ? 860.0f * s_goopArea : r * 1.2f, s_goop); // goop only: its own area, or the burst's
 	explode(at, r);
@@ -936,6 +989,12 @@ int objectHit(void* object, void* sender, unsigned message)
 	const int weapon = dropWeapon(sender);
 	if (weapon == kVisual)
 		return 1; // the bazooka's shot seen flying: only to look at
+	s_npcHit = 0;
+	if (weapon > NORMAL && weapon < WEAPONS)
+		if (TBaseNPC* n = dynamic_cast<TBaseNPC*>(static_cast<THitActor*>(object))) { // its goop before the game washes it
+			s_npcHit    = n;
+			s_npcBefore = n->mPollutionAmount;
+		}
 	if (weapon > NORMAL && weapon < WEAPONS)
 		if (TBossPakkun* p = peteyOf(object)) { // his water before the game counts the drop
 			s_peteyHit  = p;
@@ -999,6 +1058,13 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	}
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return; // the normal spray, or any other water: the game's own
+	if (s_npcHit && static_cast<THitActor*>(s_npcHit) == static_cast<THitActor*>(object)) { // a friendly character
+		TBaseNPC* n = s_npcHit;
+		s_npcHit    = 0;
+		if (n->mPollutionAmount > 0.0f && n->mPollutionAmount < s_npcBefore)
+			n->mPollutionAmount = s_npcBefore; // the game's own washing for the drop taken back out
+		washNpc(n, weapon, shot);
+	}
 	if (TBossPakkun* p = peteyOf(object)) { // Petey Piranha: the drop counted in his mouth fills him more
 		if (p == s_peteyHit && p->mWaterMark > s_peteyMark)
 			peteyFill(p, weapon, true);
