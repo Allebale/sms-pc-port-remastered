@@ -169,7 +169,7 @@ bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart
 bool s_rocketOuch;
 f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in percent)
 bool s_muteMario;          // SMS_SPRAY_MUTE_MARIO: Mario's own voice left out (a mod's: its rocket jump key held)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
-f32 s_goopArea;     // the bazooka's goop area (SmsSprayStats.goop_area), times 660 across; 0 its burst's size's
+f32 s_goopArea;     // the bazooka's goop area (SmsSprayStats.goop_area), times 860 out from its middle (its burst at 130 percent); 0 its burst's size's
 f32 s_goop = 1.0f;  // how much goop the weapons clean, times the game's own (set_weapon's flags, SMS_SPRAY_GOOP_SHIFT)
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
@@ -905,7 +905,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	const int shaken = shakeObjects(at, r);
-	cleanGoop(at, s_goopArea > 0.0f ? 660.0f * s_goopArea : r * 1.2f, s_goop); // goop only: its own area, or the burst's
+	cleanGoop(at, s_goopArea > 0.0f ? 860.0f * s_goopArea : r * 1.2f, s_goop); // goop only: its own area, or the burst's
 	explode(at, r);
 	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies and %d things in it\n", at.x, at.y, at.z, n, shaken);
@@ -1855,7 +1855,7 @@ extern "C" int modg_spray_far_scale(float scale)
 }
 
 // The bazooka's goop area (SmsSprayStats.goop_area): the round it washes goop off where it bursts, times
-// its own (660 across, 0 its burst's size's instead)
+// its own (860 out from its middle, its burst at 130 percent; 0 its burst's size's instead)
 extern "C" int modg_spray_goop_area(float scale)
 {
 	const f32 k = scale > 0.0f ? (scale < 10.0f ? scale : 10.0f) : 0.0f;
