@@ -166,7 +166,9 @@ bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's pla
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
 bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
 bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
-bool s_rocketOuch;  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
+bool s_rocketOuch;
+f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in 5 percent steps)
+f32 s_muteVoiceUntil;     // Mario's own voice left out until then (one of these plays)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
@@ -251,6 +253,7 @@ void stageSetup()
 	memset(&s_balloon, 0, sizeof s_balloon);
 	memset(s_pieces, 0, sizeof s_pieces);
 	memset(s_heartList, 0, sizeof s_heartList);
+	s_muteVoiceUntil = 0.0f;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -336,7 +339,7 @@ bool moves(TSmallEnemy* e)
 	       && !dynamic_cast<TKageMarioModoki*>(e);
 }
 
-// A heart dropped where an enemy was defeated (SMS_SPRAY_HEARTS): beside its coin
+// A heart dropped where the bazooka defeated an enemy (SMS_SPRAY_HEARTS): beside its coin
 void dropHeart(TLiveActor* e)
 {
 	if (!s_hearts || !e)
@@ -442,7 +445,8 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		h->hits = 0;
 		fprintf(stderr, "[weapons] an enemy defeated by the %s\n", kNames[weapon]);
 		e->kill(); // as a stomp: its own defeat, coins and all
-		dropHeart(e);
+		if (weapon == BAZOOKA) // the bazooka's only
+			dropHeart(e);
 	}
 }
 
@@ -776,6 +780,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	// forward, one in front back (aim a little behind to fly forward)
 	const f32 along = (dx * fx + dz * fz) * speed;                        // its push the way he looks
 	const f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz; // and to the side
+	if (s_rocketHurt && s_rocketOuch)
+		s_muteVoiceUntil = s_time + 0.8f; // his own jump's voice left out: his cry plays (below)
 	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
 	if (!inAir)
 		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
@@ -806,7 +812,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 			int pick             = (int)(random01() * n);
 			if (pick >= n)
 				pick = n - 1;
-			port_clip_play(set[pick].pcm, set[pick].frames, set[pick].rate, 1.0f);
+			port_clip_play(set[pick].pcm, set[pick].frames, set[pick].rate, s_voiceVolume);
+			s_muteVoiceUntil = s_time + 0.8f; // the game's own voice for him (his jump's) left out meanwhile
 		}
 	}
 	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
@@ -987,7 +994,6 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 				h->normalStart = s_time;
 				fprintf(stderr, "[weapons] an enemy defeated by the normal spray\n");
 				ne->kill(); // as a stomp: its own defeat, coins and all
-				dropHeart(ne);
 			}
 		}
 		return;
@@ -1647,6 +1653,15 @@ void followBazooka()
 		s_bazookaShot = 0;
 }
 
+// Every sound the game plays: Mario's own voice (MSD_SE_MA_VO_* to MSD_SE_MV_*) left out while one
+// of the rocket jump's cries plays, so the two do not play at once
+int soundHook(unsigned* id, const float*, int)
+{
+	if (!id || s_time >= s_muteVoiceUntil)
+		return 0;
+	return *id >= 0x7800u && *id <= 0x792Fu ? 1 : 0;
+}
+
 PortExtension s_extension;
 
 struct Register {
@@ -1659,6 +1674,7 @@ struct Register {
 		s_extension.afterMovement = afterMovement;
 		s_extension.objectHit     = objectHit;
 		s_extension.objectHitDone = objectHitDone;
+		s_extension.sound         = soundHook;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -1700,6 +1716,8 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] defeated enemies drop hearts %s\n", (flags & 2048) ? "on" : "off");
 	s_hearts     = (flags & 2048) != 0;
 	s_rocketOuch = (flags & 4096) != 0;
+	const int vol = (flags >> 13) & 63; // 0: as recorded (an older mod)
+	s_voiceVolume = vol ? (f32)vol * 0.05f : 1.0f;
 	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
 	if (look != s_shotLook)
 		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 3 ? "a big green water balloon" : look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
