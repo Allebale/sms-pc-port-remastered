@@ -920,6 +920,106 @@ f32 shotAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, 
 	return alongRay(eye, f, e, most);
 }
 
+// The rifle's auto aim: an enemy's middle (a small enemy's body, or the Shadow Mario seen), false if
+// it cannot be aimed at now
+bool rifleAimPoint(TLiveActor* e, JGeometry::TVec3<f32>* c)
+{
+	if (TEMario* em = dynamic_cast<TEMario*>(e)) {
+		if (!em->mEnemyMario || em->checkLiveFlag(LIVE_FLAG_DEAD))
+			return false;
+		const JGeometry::TVec3<f32>& p = em->mEnemyMario->mPosition;
+		c->set(p.x, p.y + 80.0f, p.z);
+		return true;
+	}
+	if (asGatekeeper(e)) // Proto Piranha: its own aim (its mouth or pile), not this
+		return false;
+	TSmallEnemy* s = dynamic_cast<TSmallEnemy*>(e);
+	if (!s || s->checkLiveFlag(LIVE_FLAG_DEAD) || s->checkLiveFlag(LIVE_FLAG_HIDDEN))
+		return false;
+	const f32 hh = s->getDamageHeight() > s->getAttackHeight() ? s->getDamageHeight() : s->getAttackHeight();
+	c->set(s->mPosition.x, s->mPosition.y + 0.5f * (hh > 20.0f ? hh : 20.0f), s->mPosition.z);
+	return true;
+}
+
+// Nothing of the map between the eye and a point (a piece at a time, inside the stage)
+bool clearTo(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& c)
+{
+	const f32 x = c.x - eye.x, y = c.y - eye.y, z = c.z - eye.z;
+	const f32 l = sqrtf(x * x + y * y + z * z);
+	if (!gpMap || l < 1.0f)
+		return true;
+	const f32 most = l - 40.0f; // up to just short of it (its own floor or a wall behind it)
+	const f32 kPiece = 2000.0f;
+	for (f32 at = 0.0f; at < most; at += kPiece) {
+		const f32 to = at + kPiece < most ? at + kPiece : most;
+		JGeometry::TVec3<f32> a(eye.x + x / l * at, eye.y + y / l * at, eye.z + z / l * at);
+		JGeometry::TVec3<f32> b(eye.x + x / l * to, eye.y + y / l * to, eye.z + z / l * to), wall;
+		if (!gpMap->isInArea(a.x, a.z) || !gpMap->isInArea(b.x, b.z))
+			return true;
+		if (gpMap->intersectLine(a, b, true, &wall))
+			return false;
+	}
+	return true;
+}
+
+// The rifle: the enemy nearest the middle of the view (by its angle off it), within a cone that
+// grows with the rifle's hit size (about 2.5 degrees at 100, 7.5 at 450), seen (no wall in the way)
+// and within reach; 0 none. Its middle in *c.
+TLiveActor* rifleAutoAim(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* c)
+{
+	if (!gpConductor)
+		return 0;
+	const f32 hs     = s_hitScale[RIFLE] > 0.2f ? s_hitScale[RIFLE] : 0.2f;
+	f32 sinMax       = 0.02f + 0.025f * hs;
+	if (sinMax > 0.2f)
+		sinMax = 0.2f;
+	const f32 cosMin = sqrtf(1.0f - sinMax * sinMax);
+	TLiveActor* seen[96];
+	int n = 0;
+	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end() && n < 96; ++it)
+		if (dynamic_cast<TEMario*>(*it))
+			seen[n++] = *it; // a Shadow Mario on his own (the plaza's): no manager
+	for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum() && n < 96; i++)
+			seen[n++] = (*it)->getObj(i);
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum() && n < 96; i++)
+			seen[n++] = (*it)->getObj(i);
+	// the best few by angle first, then the first of them that is seen (the map's lines cost)
+	TLiveActor* best = 0;
+	f32 bestCos      = cosMin;
+	JGeometry::TVec3<f32> bestAt;
+	for (int tries = 0; tries < 4; tries++) {
+		TLiveActor* pick = 0;
+		f32 pickCos      = bestCos;
+		JGeometry::TVec3<f32> pickAt;
+		for (int i = 0; i < n; i++) {
+			JGeometry::TVec3<f32> p;
+			if (!seen[i] || !rifleAimPoint(seen[i], &p))
+				continue;
+			const f32 x = p.x - eye.x, y = p.y - eye.y, z = p.z - eye.z;
+			const f32 l = sqrtf(x * x + y * y + z * z);
+			if (l < 50.0f || l > reach)
+				continue;
+			const f32 cs = (x * f.x + y * f.y + z * f.z) / l;
+			if (cs > pickCos)
+				pickCos = cs, pick = seen[i], pickAt = p;
+		}
+		if (!pick)
+			break;
+		if (clearTo(eye, pickAt)) {
+			best = pick, bestAt = pickAt;
+			break;
+		}
+		for (int i = 0; i < n; i++) // hidden behind a wall: the next best
+			if (seen[i] == pick)
+				seen[i] = 0;
+	}
+	if (best)
+		*c = bestAt;
+	return best;
+}
+
 TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* at)
 {
 	// the map's walls and ground along it, a piece at a time and only inside the stage (a line
@@ -974,6 +1074,15 @@ TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3
 		}
 	}
 	at->set(eye.x + f.x * bestT, eye.y + f.y * bestT, eye.z + f.z * bestT);
+	if (s_weapon == RIFLE && !asGatekeeper(best)) { // the rifle's auto aim: straight at the enemy nearest the view's middle
+		JGeometry::TVec3<f32> c;
+		if (TLiveActor* e = rifleAutoAim(eye, f, reach, &c)) {
+			*at = c;
+			return e;
+		}
+		if (best) // on the line but not seen (behind a wall's edge): at its middle all the same
+			rifleAimPoint(best, at);
+	}
 	return best;
 }
 
@@ -1110,7 +1219,9 @@ void fire()
 		st->aim       = l;
 		if (s_weapon == BAZOOKA)
 			s_bazookaAim = at, s_bazookaAimDist = l;
-		st->target    = (l > 3000.0f || dynamic_cast<TEMario*>(e) || asGatekeeper(e)) && s_weapon != BAZOOKA ? e : 0;
+		// what it was aimed at, hit as the shot gets there: far away, Shadow Mario, Proto Piranha, and
+		// the rifle's always (its auto aim: a shot aimed at an enemy hits it)
+		st->target    = (l > 3000.0f || s_weapon == RIFLE || dynamic_cast<TEMario*>(e) || asGatekeeper(e)) && s_weapon != BAZOOKA ? e : 0;
 		st->weapon    = s_weapon;
 		st->speed     = 0.0f;
 		st->laneCount = 0;
