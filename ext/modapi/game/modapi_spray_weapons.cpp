@@ -897,7 +897,10 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 		return -1.0f;
 	const f32 rad = (rad0 + t * 0.03f * s_hitScale[s_weapon]) * grow; // kinder still far away (150 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
-	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) * grow - 40.0f; // a body's height (and some) counts as near
+	// a body's height (and some) counts as near; the rifle's some grows with its hit size (a shot a
+	// little above or below still hits), the others' as before
+	const f32 tall = s_weapon == RIFLE && s_hitScale[RIFLE] > 1.0f ? s_hitScale[RIFLE] : 1.0f;
+	const f32 vy   = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) * grow - 40.0f * tall;
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
 	return d2 <= rad * rad ? t : -1.0f;
 }
@@ -1025,7 +1028,8 @@ bool thirdView(TMario* m, JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* f)
 	f->set(fx, 0.0f, fz);
 	if (!gpConductor)
 		return true;
-	const f32 kNear = 3000.0f, kCone = 0.87f; // within about 30 degrees of the way he faces
+	// within about 30 degrees of the way he faces; the rifle's about 40, a little further
+	const f32 kNear = s_weapon == RIFLE ? 4000.0f : 3000.0f, kCone = s_weapon == RIFLE ? 0.77f : 0.87f;
 	f32 best = kNear;
 	JGeometry::TVec3<f32> to;
 	bool found = false;
