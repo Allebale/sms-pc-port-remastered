@@ -477,6 +477,10 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		PortWeaponModelView(graphics->getViewMtx()); // the frame's view (the bazooka's balloon)
 	PortWeaponModelHide(); // shown again below, held with the bazooka chosen
 	PortWeaponModelNoFludd(g && PortFluddHeld(g->mMario) && PortSprayWeaponId() >= 2 && PortSprayWeaponId() <= 4);
+	if (g && g->mMario && PortFluddHeld(g->mMario) && g->mMario->checkFlag(MARIO_FLAG_GAME_OVER)) {
+		PortWeaponModelNoFludd(true); // he is dead (or dying): FLUDD held in view and the weapon's model hidden
+		return;
+	}
 	if (g && graphics && !PortFluddHeld(g->mMario))
 		onBack(g, graphics);
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
