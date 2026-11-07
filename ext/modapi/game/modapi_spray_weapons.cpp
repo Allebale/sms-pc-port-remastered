@@ -80,7 +80,8 @@ struct Visual {
 	f32 aim; // how far it flies
 };
 Visual s_visual;
-const f32 kVisualSize = 6.0f; // its blob, times the bazooka's own drop
+const f32 kVisualSize = 10.0f; // its blob, times the bazooka's own drop
+const int kVisualTail = 5;      // blobs in its streak, the head first
 
 struct Weapon {
 	int drops;     // at once
@@ -1292,7 +1293,27 @@ void fire()
 		info.mHitHeight.set(0.0f);
 		info.mDir.value = way;
 		info.mPow.set(pow);
-		if (gpModelWaterManager->emitRequest(info)) {
+		// a head and a tail of smaller blobs behind it (a streak), each a step back along its way;
+		// all a little ahead of the muzzle (none over the camera, or behind it)
+		const f32 head = info.mSize.get();
+		const JGeometry::TVec3<f32> muzzle = info.mPos.value;
+		const f32 gap  = st->aim / 6.0f * 0.3f; // a third of a frame's flight between them
+		s_visual.tag   = 0; // (the last shot's is long gone: 6 frames, and a shot every few tenths)
+		f32 lead       = 120.0f + gap * (f32)(kVisualTail - 1);
+		if (lead > st->aim - 60.0f)
+			lead = st->aim - 60.0f;
+		for (int t = kVisualTail - 1; t >= 0; t--) {
+			const f32 d = lead - gap * (f32)t;
+			if (d < 0.0f)
+				continue;
+			info.mSize.set(head * (1.0f - 0.18f * (f32)t));
+			info.mPos.value.set(muzzle.x + way.x * d, muzzle.y + way.y * d, muzzle.z + way.z * d);
+			if (gpModelWaterManager->emitRequest(info) && t == 0)
+				s_visual.tag = -1; // made (its tag below)
+		}
+		info.mSize.set(head);
+		info.mPos.value = muzzle;
+		if (s_visual.tag == -1) {
 			s_visual.tag  = kVisual | (s_shot << (kShotShift - kTagShift));
 			s_visual.from = info.mPos.value;
 			s_visual.way  = way;
@@ -1413,10 +1434,10 @@ void followVisual()
 		JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
 		const JGeometry::TVec3<f32>& way = s_visual.way;
 		// as the bazooka's own drop far away (there in 6 frames, a fifth of a second), 4 near
-		const f32 frames = s_visual.aim < kBazookaNow ? 4.0f : 6.0f;
+		const f32 frames = s_visual.aim < kBazookaNow ? 5.0f : 6.0f;
 		const f32 step  = s_visual.aim / frames;
 		const f32 along = (at.x - s_visual.from.x) * way.x + (at.y - s_visual.from.y) * way.y + (at.z - s_visual.from.z) * way.z;
-		const f32 next  = (along > 0.0f ? along : 0.0f) + step * port_frame_scale();
+		const f32 next  = along + step * port_frame_scale();
 		if (next >= s_visual.aim - 30.0f) { // there: gone
 			w->mParticleLifetimeSOA[i] = 0.0f;
 			continue;
