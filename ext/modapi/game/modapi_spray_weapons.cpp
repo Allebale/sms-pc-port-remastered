@@ -130,6 +130,12 @@ int s_nextNpcShot;
 TBaseNPC* s_npcHit;   // the character a weapon's drop is reaching now (objectHit), and its goop before
 f32 s_npcBefore;
 // Eely-Mouth's teeth a shot has counted on (toothHit)
+struct ToothOwed {
+	TBossEelTooth* tooth;
+	f32 owed;
+};
+ToothOwed s_toothOwed[8];
+int s_nextToothOwed;
 struct ToothShot {
 	TBossEelTooth* tooth;
 	int shot;
@@ -290,6 +296,7 @@ void stageSetup()
 	s_chomp  = 0;
 	s_smgManta = 0;
 	memset(s_toothShots, 0, sizeof s_toothShots);
+	memset(s_toothOwed, 0, sizeof s_toothOwed);
 	s_muteMario = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
@@ -767,6 +774,17 @@ void mantaFinish(TBossManta* m, bool now)
 // the weapons made for bosses each shot takes a share at once: clean in the rifle's 1 shot, the
 // bazooka's 1 (every tooth in its burst), the submachine gun's 28.
 const int kToothShots[WEAPONS] = {0, 0, 1, 1, 28};
+// a tooth's part of a point owed (toothHit)
+f32& toothOwed(TBossEelTooth* t)
+{
+	for (int i = 0; i < 8; i++)
+		if (s_toothOwed[i].tooth == t)
+			return s_toothOwed[i].owed;
+	ToothOwed& k = s_toothOwed[s_nextToothOwed++ % 8];
+	k.tooth = t, k.owed = 0.0f;
+	return k.owed;
+}
+
 // a shot on a tooth (once a shot): its share of cleaning. `now`: the game's own hit does not follow (a
 // burst), so it is made here
 void toothHit(TBossEelTooth* t, int weapon, int shot, bool now)
@@ -781,8 +799,15 @@ void toothHit(TBossEelTooth* t, int weapon, int shot, bool now)
 	ToothShot& k = s_toothShots[s_nextToothShot++ % 16];
 	k.tooth = t, k.shot = shot;
 	const int most = t->mOwner->getBossEelParams().mSLToothMaxHitPoint.get();
-	const int take = (most - 1 + kToothShots[weapon] - 1) / kToothShots[weapon]; // rounded up
-	int left       = t->mHitPoints - take;
+	// its share of the 49 points to clean, the parts of a point carried to the next shot (the
+	// submachine gun's 28 shots on 49 points: 1.75 each)
+	f32& owed = toothOwed(t);
+	const f32 share = (f32)(most - 1) / (f32)kToothShots[weapon] + owed;
+	int take        = (int)(share + 0.001f);
+	owed            = share - (f32)take;
+	if (take < 1)
+		take = 1;
+	int left = t->mHitPoints - take;
 	if (left < 1)
 		left = 1;
 	t->mHitPoints = left + 1; // the game's own hit (its sound, its shine, a bad one off) takes the last
