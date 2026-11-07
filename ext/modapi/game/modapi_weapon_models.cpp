@@ -18,6 +18,10 @@
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
 
+#include <math.h>
+
+bool PortBazookaBalloon(float* at, float* way, float* scale); // modapi_spray_weapons.cpp
+
 namespace {
 
 #include "rifle_model.inc"
@@ -97,7 +101,121 @@ void drawModel(const Model& m, MtxPtr viewModel)
 	GXEnd();
 }
 
+// The bazooka's green water balloon (modapi_spray_weapons.cpp flies it: PortBazookaBalloon), drawn
+// as a packet of the scene's opaque draw buffer too: a round balloon a little longer along the way
+// it flies, wobbling, with a knot at its back, its light baked into its corners' colours (a light
+// from above), a shine on top. Built each frame from rings of corners, in the world, with the
+// view's matrix of the frame (PortWeaponModelView).
+Mtx s_view;
+bool s_haveView;
+class BalloonPacket : public J3DPacket {
+public:
+	virtual void draw();
+};
+BalloonPacket s_balloonPacket;
+int s_balloonFrame; // its wobble
+
+void balloonCorner(const float* c, const float* fwd, const float* rt, const float* up, float r, float len,
+                   float lat, float lon, float wob)
+{
+	// lat from -1 (its back, the knot) to 1 (its front); round, a little longer along the way
+	const float a  = lat * 1.5707963f;
+	const float ring = cosf(a), along = sinf(a);
+	const float sx = ring * cosf(lon), sy = ring * sinf(lon);
+	const float rr = r * (1.0f + 0.06f * sinf(wob + 3.0f * lon)); // its skin wobbling
+	float p[3], n[3];
+	for (int k = 0; k < 3; k++) {
+		n[k] = fwd[k] * along + rt[k] * sx + up[k] * sy;
+		p[k] = c[k] + fwd[k] * along * len + (rt[k] * sx + up[k] * sy) * rr;
+	}
+	// light from above and a little in front of the view (baked), a shine on its top
+	const float l = n[1] * 0.8f + 0.35f;
+	const float d = l > 0.0f ? (l < 1.0f ? l : 1.0f) : 0.0f;
+	const float shine = n[1] > 0.88f ? (n[1] - 0.88f) * 6.0f : 0.0f;
+	int g = (int)(70.0f + 170.0f * d + 120.0f * shine), rd = (int)(20.0f + 50.0f * d + 200.0f * shine),
+	    b = (int)(25.0f + 45.0f * d + 200.0f * shine);
+	GXPosition3f32(p[0], p[1], p[2]);
+	GXColor4u8((u8)(rd > 255 ? 255 : rd), (u8)(g > 255 ? 255 : g), (u8)(b > 255 ? 255 : b), 255);
+}
+
+void BalloonPacket::draw()
+{
+	float c[3], way[3], scale;
+	if (!s_haveView || !PortBazookaBalloon(c, way, &scale))
+		return;
+	// its own frame: forward the way it flies, right and up across it
+	float fwd[3] = {way[0], way[1], way[2]};
+	float upw[3] = {0.0f, 1.0f, 0.0f};
+	if (fabsf(fwd[1]) > 0.95f)
+		upw[0] = 1.0f, upw[1] = 0.0f;
+	float rt[3] = {fwd[1] * upw[2] - fwd[2] * upw[1], fwd[2] * upw[0] - fwd[0] * upw[2], fwd[0] * upw[1] - fwd[1] * upw[0]};
+	float rl = sqrtf(rt[0] * rt[0] + rt[1] * rt[1] + rt[2] * rt[2]);
+	if (rl < 1e-4f)
+		return;
+	rt[0] /= rl, rt[1] /= rl, rt[2] /= rl;
+	float up[3] = {rt[1] * fwd[2] - rt[2] * fwd[1], rt[2] * fwd[0] - rt[0] * fwd[2], rt[0] * fwd[1] - rt[1] * fwd[0]};
+	const float r = 42.0f * scale, len = 52.0f * scale;
+	const float wob = (float)(s_balloonFrame++) * 0.9f;
+
+	Mtx identity;
+	MTXIdentity(identity);
+	GXSetCurrentMtx(GX_PNMTX0);
+	GXLoadPosMtxImm(s_view, GX_PNMTX0);
+	GXLoadNrmMtxImm(identity, GX_PNMTX0);
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_VTX, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, GX_FALSE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
+	GXSetNumTexGens(0);
+	GXSetNumIndStages(0);
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	GXSetCullMode(GX_CULL_NONE);
+	GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetFog(GX_FOG_NONE, 0.0f, 0.0f, 0.0f, 0.0f, (GXColor){0, 0, 0, 0});
+	const int kRings = 10, kAround = 16;
+	for (int i = 0; i < kRings; i++) { // a strip round it for each band, back to front
+		const float a0 = -1.0f + 2.0f * (float)i / kRings, a1 = -1.0f + 2.0f * (float)(i + 1) / kRings;
+		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, (u16)((kAround + 1) * 2));
+		for (int j = 0; j <= kAround; j++) {
+			const float lon = 6.2831853f * (float)j / kAround;
+			balloonCorner(c, fwd, rt, up, r, len, a1, lon, wob);
+			balloonCorner(c, fwd, rt, up, r, len, a0, lon, wob);
+		}
+		GXEnd();
+	}
+	// its knot: a small dark green cone at its back
+	if (scale <= 1.0f) {
+		const float back[3] = {c[0] - fwd[0] * len, c[1] - fwd[1] * len, c[2] - fwd[2] * len};
+		const float tip[3]  = {back[0] - fwd[0] * 14.0f, back[1] - fwd[1] * 14.0f, back[2] - fwd[2] * 14.0f};
+		GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, 10);
+		GXPosition3f32(tip[0], tip[1], tip[2]);
+		GXColor4u8(20, 90, 30, 255);
+		for (int j = 0; j <= 8; j++) {
+			const float lon = 6.2831853f * (float)j / 8.0f;
+			const float sx = cosf(lon) * 9.0f, sy = sinf(lon) * 9.0f;
+			GXPosition3f32(back[0] + rt[0] * sx + up[0] * sy, back[1] + rt[1] * sx + up[1] * sy, back[2] + rt[2] * sx + up[2] * sy);
+			GXColor4u8(30, 120, 40, 255);
+		}
+		GXEnd();
+	}
+}
+
 } // namespace
+
+// The view's matrix of this frame (the balloon is built in the world)
+void PortWeaponModelView(MtxPtr view)
+{
+	MTXCopy(view, s_view);
+	s_haveView = true;
+}
 
 // The muzzle's place in a model's own units, forward (0 the rifle, 1 the bazooka, 2 the submachine gun).
 float PortWeaponModelMuzzle(int which) { return which == 0 ? kRifleMuzzle : which == 1 ? kBazookaMuzzle : kSmgMuzzle; }
@@ -146,6 +264,9 @@ void PortWeaponModelKeep()
 // entered in its place (FLUDD then left out).
 bool PortWeaponModelEntry()
 {
+	float at[3], way[3], scale; // the bazooka's balloon flying: entered too
+	if (s_haveView && j3dSys.getDrawBuffer(0) && PortBazookaBalloon(at, way, &scale))
+		j3dSys.getDrawBuffer(0)->entryImm(&s_balloonPacket, 0);
 	if (s_shown < 0 || !j3dSys.getDrawBuffer(0))
 		return s_noFludd;
 	j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);

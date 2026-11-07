@@ -469,9 +469,12 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 }
 
 // As FLUDD is calculated for the view (TWaterGun::perform): moved in front of it.
+void PortWeaponModelView(MtxPtr view); // modapi_weapon_models.cpp
 void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
 	s_placed = false;
+	if (graphics)
+		PortWeaponModelView(graphics->getViewMtx()); // the frame's view (the bazooka's balloon)
 	PortWeaponModelHide(); // shown again below, held with the bazooka chosen
 	PortWeaponModelNoFludd(g && PortFluddHeld(g->mMario) && PortSprayWeaponId() >= 2 && PortSprayWeaponId() <= 4);
 	if (g && graphics && !PortFluddHeld(g->mMario))

@@ -80,6 +80,16 @@ struct Visual {
 	f32 aim; // how far it flies
 };
 Visual s_visual;
+// the bazooka's green water balloon (s_shotLook 2): flown straight to where it bursts in as many
+// frames as its own drop, then it pops there (a moment bigger, a splash) and is gone. Drawn by
+// modapi_weapon_models.cpp (PortBazookaBalloon).
+struct Balloon {
+	bool on;
+	JGeometry::TVec3<f32> from, way;
+	f32 aim, along, frames;
+	f32 pop; // popping: frames since it got there, 0 not yet
+};
+Balloon s_balloon;
 const f32 kVisualSize = 10.0f; // its blob, times the bazooka's own drop
 const int kVisualTail = 5;      // blobs in its streak, the head first
 
@@ -130,12 +140,14 @@ void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
 bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
+int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
 void followBazooka();
 void followStraight();
 void followVisual();
+void followBalloon();
 const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -207,6 +219,7 @@ void stageSetup()
 	s_rocketAir = false;
 	clearStraights(); // (their enemies were the last stage's)
 	memset(&s_visual, 0, sizeof s_visual);
+	memset(&s_balloon, 0, sizeof s_balloon);
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -229,6 +242,7 @@ void afterMovement()
 	}
 	followStraight();
 	followVisual();
+	followBalloon();
 	followBazooka();
 	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
 		TMario* m = gpMarioOriginal;
@@ -1286,7 +1300,16 @@ void fire()
 		info.mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
 		made += gpModelWaterManager->emitRequest(info) ? 1 : 0;
 	}
-	if (made && s_weapon == BAZOOKA && st) { // the water shot seen flying to where it bursts: one big blob, only to look at
+	if (made && s_weapon == BAZOOKA && st && s_shotLook == 2) { // a green water balloon flying to where it bursts (only to look at)
+		s_balloon.from   = info.mPos.value;
+		s_balloon.way    = way;
+		s_balloon.aim    = st->aim;
+		s_balloon.along  = st->aim * 0.3f < 140.0f ? st->aim * 0.3f : 140.0f; // a little ahead of the muzzle (not over the camera)
+		s_balloon.frames = st->aim < kBazookaNow ? 5.0f : 6.0f;
+		s_balloon.pop    = 0.0f;
+		s_balloon.on     = true;
+	}
+	if (made && s_weapon == BAZOOKA && st && s_shotLook == 1) { // the water shot seen flying to where it bursts: one big blob, only to look at
 		info.mAttack.set((s16)(1 | ((kVisual | (s_shot << (kShotShift - kTagShift))) << kTagShift)));
 		info.mSize.set(n->mEmitParams.mSize.get() * k.size * kVisualSize);
 		info.mHitRadius.set(0.0f);
@@ -1414,6 +1437,28 @@ void followStraight()
 	}
 }
 
+void followBalloon()
+{
+	Balloon& b = s_balloon;
+	if (!b.on)
+		return;
+	const f32 dt = port_frame_scale();
+	if (b.pop > 0.0f) { // popping: two frames, then gone
+		b.pop += dt;
+		if (b.pop > 3.0f)
+			b.on = false;
+		return;
+	}
+	b.along += b.aim / b.frames * dt;
+	if (b.along >= b.aim - 20.0f) { // there: it pops
+		b.along = b.aim - 20.0f;
+		b.pop   = 1.0f;
+		JGeometry::TVec3<f32> at(b.from.x + b.way.x * b.along, b.from.y + b.way.y * b.along, b.from.z + b.way.z * b.along);
+		if (gpMarioParticleManager)
+			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &at, 0, nullptr);
+	}
+}
+
 // The bazooka's water shot seen flying (kVisual): flown dead straight to where it was aimed, there
 // in as many frames as the bazooka's own drop (6, a fifth of a second; 4 near), and gone just as it
 // gets there (the burst's own splash takes over) or if it touches the map first. It hits nothing.
@@ -1521,6 +1566,10 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	if (((flags & 64) != 0) != s_airForward)
 		fprintf(stderr, "[weapons] the bazooka pushes enemies in the air forward %s\n", (flags & 64) ? "on" : "off");
 	s_airForward = (flags & 64) != 0;
+	const int look = (flags & 256) ? 2 : (flags & 128) ? 1 : 0;
+	if (look != s_shotLook)
+		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
+	s_shotLook = look;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
 	s_defeatNormal = (flags & 4) != 0;
@@ -1561,6 +1610,19 @@ bool PortSprayWeaponOnBack(TMario* m, bool* model)
 bool PortSprayWeaponTrigger() { return s_trigger; }
 
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
+// The bazooka's green water balloon now, for drawing (modapi_weapon_models.cpp): where it is, the
+// way it flies and how big (1 flying, bigger as it pops); false none.
+bool PortBazookaBalloon(float* at, float* way, float* scale)
+{
+	const Balloon& b = s_balloon;
+	if (!b.on)
+		return false;
+	at[0] = b.from.x + b.way.x * b.along, at[1] = b.from.y + b.way.y * b.along, at[2] = b.from.z + b.way.z * b.along;
+	way[0] = b.way.x, way[1] = b.way.y, way[2] = b.way.z;
+	*scale = b.pop > 0.0f ? 1.0f + 0.35f * b.pop : 1.0f;
+	return true;
+}
+
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
 
 // How far through its pump the gun is after the last shot (0 to 1), or -1 past it: the held gun's
