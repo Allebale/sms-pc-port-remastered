@@ -85,6 +85,7 @@ Visual s_visual;
 // modapi_weapon_models.cpp (PortBazookaBalloon).
 struct Balloon {
 	bool on;
+	bool big; // the big one (SMS_SPRAY_SHOT_BIG)
 	JGeometry::TVec3<f32> from, way;
 	f32 aim, along, frames;
 };
@@ -148,7 +149,7 @@ void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
 bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
-int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON)
+int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -1309,11 +1310,13 @@ void fire()
 		info.mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
 		made += gpModelWaterManager->emitRequest(info) ? 1 : 0;
 	}
-	if (made && s_weapon == BAZOOKA && st && s_shotLook == 2) { // a green water balloon flying to where it bursts (only to look at)
+	if (made && s_weapon == BAZOOKA && st && s_shotLook >= 2) { // a green water balloon flying to where it bursts (only to look at)
 		s_balloon.from   = info.mPos.value;
 		s_balloon.way    = way;
 		s_balloon.aim    = st->aim;
-		s_balloon.along  = 0.0f; // from the muzzle (small enough to come out of it)
+		s_balloon.big    = s_shotLook == 3;
+		// from the muzzle (the small one comes out of it), the big one a little ahead (not over the camera)
+		s_balloon.along  = !s_balloon.big ? 0.0f : st->aim * 0.3f < 140.0f ? st->aim * 0.3f : 140.0f;
 		s_balloon.frames = st->aim < kBazookaNow ? 5.0f : 6.0f;
 		s_balloon.on     = true;
 	}
@@ -1462,8 +1465,8 @@ void followBalloon()
 	if (!b.on)
 		return;
 	b.along += b.aim / b.frames * dt;
-	if (b.along >= b.aim - 6.0f) { // there: it bursts, its rubber in pieces, with a splash
-		b.along = b.aim - 6.0f;
+	if (b.along >= b.aim - (b.big ? 40.0f : 6.0f)) { // there: it bursts, its rubber in pieces, with a splash
+		b.along = b.aim - (b.big ? 40.0f : 6.0f);
 		b.on    = false;
 		JGeometry::TVec3<f32> at(b.from.x + b.way.x * b.along, b.from.y + b.way.y * b.along, b.from.z + b.way.z * b.along);
 		if (gpMarioParticleManager)
@@ -1474,7 +1477,7 @@ void followBalloon()
 			JGeometry::TVec3<f32> d(random01() * 2.0f - 1.0f, random01() * 1.4f - 0.2f, random01() * 2.0f - 1.0f);
 			d.x -= b.way.x * 0.8f, d.y -= b.way.y * 0.8f, d.z -= b.way.z * 0.8f;
 			const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z) + 1e-4f;
-			const f32 sp = 7.0f + 9.0f * random01();
+			const f32 sp = (7.0f + 9.0f * random01()) * (b.big ? 1.6f : 1.0f);
 			q.at   = at;
 			q.v.set(d.x / l * sp, d.y / l * sp + 4.0f, d.z / l * sp);
 			q.axis.set(random01() - 0.5f, random01() - 0.5f, random01() - 0.5f);
@@ -1482,7 +1485,7 @@ void followBalloon()
 			q.axis.x /= al, q.axis.y /= al, q.axis.z /= al;
 			q.spin = random01() * 6.28f;
 			q.turn = 0.3f + 0.5f * random01();
-			q.size = 2.5f + 2.5f * random01();
+			q.size = (2.5f + 2.5f * random01()) * (b.big ? 5.0f : 1.0f);
 			q.life = 12.0f + 6.0f * random01();
 		}
 	}
@@ -1595,9 +1598,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	if (((flags & 64) != 0) != s_airForward)
 		fprintf(stderr, "[weapons] the bazooka pushes enemies in the air forward %s\n", (flags & 64) ? "on" : "off");
 	s_airForward = (flags & 64) != 0;
-	const int look = (flags & 256) ? 2 : (flags & 128) ? 1 : 0;
+	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
 	if (look != s_shotLook)
-		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
+		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 3 ? "a big green water balloon" : look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
 	s_shotLook = look;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
@@ -1648,7 +1651,7 @@ bool PortBazookaBalloon(float* at, float* way, float* scale)
 		return false;
 	at[0] = b.from.x + b.way.x * b.along, at[1] = b.from.y + b.way.y * b.along, at[2] = b.from.z + b.way.z * b.along;
 	way[0] = b.way.x, way[1] = b.way.y, way[2] = b.way.z;
-	*scale = 1.0f;
+	*scale = b.big ? 6.5f : 1.0f; // the big one: about 42 round
 	return true;
 }
 
