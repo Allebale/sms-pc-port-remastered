@@ -772,8 +772,8 @@ void mantaFinish(TBossManta* m, bool now)
 // Eely-Mouth's teeth (TBossEelTooth, Noki Bay): each drop of water takes one of a tooth's points
 // (mSLToothMaxHitPoint, 50) a couple of frames apart; at 1 it is clean (a bad one comes off). With
 // the weapons made for bosses each shot takes a share at once: clean in the rifle's 1 shot, the
-// bazooka's 1 (every tooth in its burst), the submachine gun's 28.
-const int kToothShots[WEAPONS] = {0, 0, 1, 1, 28};
+// bazooka's 1 (every tooth in its burst), the submachine gun's 10.
+const int kToothShots[WEAPONS] = {0, 0, 1, 1, 10};
 // a tooth's part of a point owed (toothHit)
 f32& toothOwed(TBossEelTooth* t)
 {
@@ -800,7 +800,7 @@ void toothHit(TBossEelTooth* t, int weapon, int shot, bool now)
 	k.tooth = t, k.shot = shot;
 	const int most = t->mOwner->getBossEelParams().mSLToothMaxHitPoint.get();
 	// its share of the 49 points to clean, the parts of a point carried to the next shot (the
-	// submachine gun's 28 shots on 49 points: 1.75 each)
+	// submachine gun's 10 shots on 49 points: 4.9 each)
 	f32& owed = toothOwed(t);
 	const f32 share = (f32)(most - 1) / (f32)kToothShots[weapon] + owed;
 	int take        = (int)(share + 0.001f);
