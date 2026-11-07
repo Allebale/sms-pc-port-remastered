@@ -73,6 +73,14 @@ enum { NORMAL = 0, SHOTGUN = 1, RIFLE = 2, BAZOOKA = 3, SMG = 4, WEAPONS = 5 };
 const int kTagShift = 8; // the weapon in a drop's attack, above the game's own (1 to 255)
 
 const int kShotShift = 12; // and the shot (1 to 7, round again), above the weapon
+const int kVisual    = 15; // a drop's weapon tag: the bazooka's water shot seen flying, only to look at (hits nothing)
+struct Visual {
+	int tag; // its drop's tag (kVisual and the shot), 0 none
+	JGeometry::TVec3<f32> from, way;
+	f32 aim; // how far it flies
+};
+Visual s_visual;
+const f32 kVisualSize = 5.0f; // its blob, times the bazooka's own drop
 
 struct Weapon {
 	int drops;     // at once
@@ -126,6 +134,7 @@ f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
 void followBazooka();
 void followStraight();
+void followVisual();
 const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -196,6 +205,7 @@ void stageSetup()
 {
 	s_rocketAir = false;
 	clearStraights(); // (their enemies were the last stage's)
+	memset(&s_visual, 0, sizeof s_visual);
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -217,6 +227,7 @@ void afterMovement()
 		s_waterScaled                = s_farScale > 1.0f;
 	}
 	followStraight();
+	followVisual();
 	followBazooka();
 	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
 		TMario* m = gpMarioOriginal;
@@ -798,6 +809,8 @@ int objectHit(void* object, void* sender, unsigned message)
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return 0;
 	const int weapon = dropWeapon(sender);
+	if (weapon == kVisual)
+		return 1; // the bazooka's shot seen flying: only to look at
 	if (weapon > NORMAL && weapon < WEAPONS)
 		if (TBossPakkun* p = peteyOf(object)) { // his water before the game counts the drop
 			s_peteyHit  = p;
@@ -1272,6 +1285,20 @@ void fire()
 		info.mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
 		made += gpModelWaterManager->emitRequest(info) ? 1 : 0;
 	}
+	if (made && s_weapon == BAZOOKA && st) { // the water shot seen flying to where it bursts: one big blob, only to look at
+		info.mAttack.set((s16)(1 | ((kVisual | (s_shot << (kShotShift - kTagShift))) << kTagShift)));
+		info.mSize.set(n->mEmitParams.mSize.get() * k.size * kVisualSize);
+		info.mHitRadius.set(0.0f);
+		info.mHitHeight.set(0.0f);
+		info.mDir.value = way;
+		info.mPow.set(pow);
+		if (gpModelWaterManager->emitRequest(info)) {
+			s_visual.tag  = kVisual | (s_shot << (kShotShift - kTagShift));
+			s_visual.from = info.mPos.value;
+			s_visual.way  = way;
+			s_visual.aim  = st->aim;
+		}
+	}
 	s_firing = false;
 	if (!made)
 		return;
@@ -1359,6 +1386,43 @@ void followStraight()
 		if (w->mParticleLifetimeSOA[i] < 30.0f)
 			w->mParticleLifetimeSOA[i] = 30.0f; // no end to its reach
 	}
+}
+
+// The bazooka's water shot seen flying (kVisual): flown dead straight to where it was aimed, there
+// in a few frames however far (2 near, at most 8: a quarter of a second), and gone just as it
+// gets there (the burst's own splash takes over) or if it touches the map first. It hits nothing.
+void followVisual()
+{
+	if (!s_visual.tag || !gpModelWaterManager)
+		return;
+	TModelWaterManager* w = gpModelWaterManager;
+	bool seen = false;
+	for (int i = 0; i < (int)w->mParticleCount; i++) {
+		if (((w->mParticleAttackSOA[i] >> kTagShift) & 0x7f) != s_visual.tag)
+			continue;
+		seen = true;
+		if ((w->mParticleFlagSOA[i] & 0xf) != 1) { // landed (the map): gone
+			w->mParticleLifetimeSOA[i] = 0.0f;
+			continue;
+		}
+		JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
+		const JGeometry::TVec3<f32>& way = s_visual.way;
+		f32 frames = s_visual.aim / 700.0f;
+		frames     = frames < 2.0f ? 2.0f : frames > 8.0f ? 8.0f : frames;
+		const f32 step  = s_visual.aim / frames;
+		const f32 along = (at.x - s_visual.from.x) * way.x + (at.y - s_visual.from.y) * way.y + (at.z - s_visual.from.z) * way.z;
+		const f32 next  = (along > 0.0f ? along : 0.0f) + step * port_frame_scale();
+		if (next >= s_visual.aim - 30.0f) { // there: gone
+			w->mParticleLifetimeSOA[i] = 0.0f;
+			continue;
+		}
+		at.set(s_visual.from.x + way.x * next, s_visual.from.y + way.y * next, s_visual.from.z + way.z * next);
+		w->mParticleVelocitySOA[i].set(way.x * step, way.y * step, way.z * step); // its streak
+		if (w->mParticleLifetimeSOA[i] < 30.0f)
+			w->mParticleLifetimeSOA[i] = 30.0f;
+	}
+	if (!seen)
+		s_visual.tag = 0;
 }
 
 // The bazooka's drop: followed until it lands or is gone, then it bursts there (if it hit no
