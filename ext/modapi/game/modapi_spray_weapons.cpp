@@ -167,7 +167,7 @@ bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranh
 bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
 bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
 bool s_rocketOuch;
-f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in 5 percent steps)
+f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in percent)
 f32 s_muteVoiceUntil;     // Mario's own voice left out until then (one of these plays)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
@@ -1716,8 +1716,8 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] defeated enemies drop hearts %s\n", (flags & 2048) ? "on" : "off");
 	s_hearts     = (flags & 2048) != 0;
 	s_rocketOuch = (flags & 4096) != 0;
-	const int vol = (flags >> 13) & 63; // 0: as recorded (an older mod)
-	s_voiceVolume = vol ? (f32)vol * 0.05f : 1.0f;
+	const int vol = (flags >> 13) & 127; // percent; 0: as recorded (an older mod)
+	s_voiceVolume = vol ? (f32)(vol < 100 ? vol : 100) * 0.01f : 1.0f;
 	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
 	if (look != s_shotLook)
 		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 3 ? "a big green water balloon" : look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
