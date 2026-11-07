@@ -53,6 +53,7 @@
 #include <NPC/NpcBase.hpp>
 #include <Enemy/BossWanwan.hpp>
 #include <Enemy/BossManta.hpp>
+#include <Enemy/BossEel.hpp>
 #include <System/MarDirector.hpp>
 #include <MoveBG/MapObjTree.hpp>
 #include "port_framerate.h"
@@ -128,6 +129,13 @@ NpcShot s_npcShots[8];
 int s_nextNpcShot;
 TBaseNPC* s_npcHit;   // the character a weapon's drop is reaching now (objectHit), and its goop before
 f32 s_npcBefore;
+// Eely-Mouth's teeth a shot has counted on (toothHit)
+struct ToothShot {
+	TBossEelTooth* tooth;
+	int shot;
+};
+ToothShot s_toothShots[16];
+int s_nextToothShot;
 TBossManta* s_smgManta; // a Phantamanta the submachine gun's drop is reaching now (objectHit)
 // Big Chain Chomp being cooled (chompHit)
 TBossWanwan* s_chomp;   // the one being shot lately, its points after the last shot, and when
@@ -281,6 +289,7 @@ void stageSetup()
 	s_npcHit = 0;
 	s_chomp  = 0;
 	s_smgManta = 0;
+	memset(s_toothShots, 0, sizeof s_toothShots);
 	s_muteMario = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
@@ -753,6 +762,35 @@ void mantaFinish(TBossManta* m, bool now)
 	}
 }
 
+// Eely-Mouth's teeth (TBossEelTooth, Noki Bay): each drop of water takes one of a tooth's points
+// (mSLToothMaxHitPoint, 50) a couple of frames apart; at 1 it is clean (a bad one comes off). With
+// the weapons made for bosses each shot takes a share at once: clean in the rifle's 3 shots, the
+// bazooka's 5 (every tooth in its burst), the submachine gun's 49.
+const int kToothShots[WEAPONS] = {0, 0, 3, 5, 49};
+// a shot on a tooth (once a shot): its share of cleaning. `now`: the game's own hit does not follow (a
+// burst), so it is made here
+void toothHit(TBossEelTooth* t, int weapon, int shot, bool now)
+{
+	if (!t || !t->mOwner || weapon <= NORMAL || weapon >= WEAPONS || !kToothShots[weapon])
+		return;
+	if (t->mOwner->mToothBroken || t->mHitPoints <= 1 || t->mDamageCooldown != 0)
+		return;
+	for (int i = 0; i < 16; i++)
+		if (s_toothShots[i].tooth == t && s_toothShots[i].shot == shot)
+			return; // its other drops: the game's own
+	ToothShot& k = s_toothShots[s_nextToothShot++ % 16];
+	k.tooth = t, k.shot = shot;
+	const int most = t->mOwner->getBossEelParams().mSLToothMaxHitPoint.get();
+	const int take = (most - 1 + kToothShots[weapon] - 1) / kToothShots[weapon]; // rounded up
+	int left       = t->mHitPoints - take;
+	if (left < 1)
+		left = 1;
+	t->mHitPoints = left + 1; // the game's own hit (its sound, its shine, a bad one off) takes the last
+	if (now)
+		t->receiveMessage(0, HIT_MESSAGE_SPRAYED_BY_WATER);
+	fprintf(stderr, "[weapons] Eely-Mouth's tooth hit by the %s: %d of its %d left\n", kNames[weapon], left, most);
+}
+
 TBossPakkun* peteyOf(void* object)
 {
 	TBPHeadHit* head = s_bosses ? dynamic_cast<TBPHeadHit*>(static_cast<THitActor*>(object)) : 0;
@@ -1084,6 +1122,19 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	burstNpcs(shot, at, r);
+	if (s_bosses) // Eely-Mouth's teeth in it: each its share
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossEel* eel = dynamic_cast<TBossEel*>((*it)->getObj(i)))
+					for (int k = 0; k < 8; k++) {
+						TBossEelTooth* t = eel->mTeeth[k];
+						if (!t)
+							continue;
+						const f32 x = t->mPosition.x - at.x, y = t->mPosition.y - at.y, z = t->mPosition.z - at.z;
+						const f32 reach = r + 150.0f;
+						if (x * x + y * y + z * z <= reach * reach)
+							toothHit(t, BAZOOKA, shot, true);
+					}
 	if (s_bosses) // every Phantamanta in it (its middle, a wide one): finished
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
@@ -1134,6 +1185,14 @@ int objectHit(void* object, void* sender, unsigned message)
 	const int weapon = dropWeapon(sender);
 	if (weapon == kVisual)
 		return 1; // the bazooka's shot seen flying: only to look at
+	if (s_bosses && weapon > NORMAL && weapon < WEAPONS)
+		if (TBossEelTooth* t = dynamic_cast<TBossEelTooth*>(static_cast<THitActor*>(object))) { // Eely-Mouth's tooth
+			TModelWaterManager* w = gpModelWaterManager;
+			TWaterHitActor* drop  = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+			const int shot = w && drop && drop->mParticleIndex >= 0 && drop->mParticleIndex < (int)w->mParticleCount
+			                     ? (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0x7f : 0;
+			toothHit(t, weapon, shot, false);
+		}
 	if (weapon == RIFLE || weapon == BAZOOKA)
 		if (TBossManta* m = mantaOf(object))
 			mantaFinish(m, false); // Phantamanta: the game's own hit (now) its last
