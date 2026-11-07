@@ -67,7 +67,11 @@ bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forwar
 void PortFluddHeldKick(f32 amount);
 bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at);
 
+extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
+
 namespace {
+
+#include "rocket_voices.inc" // Mario's cries as a rocket jump hurts him
 
 enum { NORMAL = 0, SHOTGUN = 1, RIFLE = 2, BAZOOKA = 3, SMG = 4, WEAPONS = 5 };
 const int kTagShift = 8; // the weapon in a drop's attack, above the game's own (1 to 255)
@@ -794,8 +798,16 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	s_rocketTop = h > 30.0f ? h : 30.0f;
 	if (s_rocketHurt) { // SMS_SPRAY_ROCKET_HURT (a mod's setting): a point of his health for each, as the game takes it
 		m->decHP(1);
-		if (s_rocketOuch) // SMS_SPRAY_ROCKET_OUCH: his own cry of pain, a small hurt's
-			m->startVoice(MSD_SE_MV03_DAMAGE_LITLE_01);
+		if (s_rocketOuch) { // SMS_SPRAY_ROCKET_OUCH: a cry of his, one of Allebale's picks at random (rocket_voices.inc):
+			                // low on health (3 or less, as the game's own "danger") one of the weak ones
+			const bool low       = m->getHealth() <= 3;
+			const VoiceClip* set = low ? kLowClips : kHurtClips;
+			const int n          = low ? (int)(sizeof kLowClips / sizeof *kLowClips) : (int)(sizeof kHurtClips / sizeof *kHurtClips);
+			int pick             = (int)(random01() * n);
+			if (pick >= n)
+				pick = n - 1;
+			port_clip_play(set[pick].pcm, set[pick].frames, set[pick].rate, 1.0f);
+		}
 	}
 	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
 	        s_rocketHurt ? ", 1 health lost" : "");
