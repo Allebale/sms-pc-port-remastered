@@ -80,7 +80,7 @@ struct Visual {
 	f32 aim; // how far it flies
 };
 Visual s_visual;
-const f32 kVisualSize = 5.0f; // its blob, times the bazooka's own drop
+const f32 kVisualSize = 6.0f; // its blob, times the bazooka's own drop
 
 struct Weapon {
 	int drops;     // at once
@@ -1297,7 +1297,12 @@ void fire()
 			s_visual.from = info.mPos.value;
 			s_visual.way  = way;
 			s_visual.aim  = st->aim;
-		}
+			static bool told;
+			if (!told)
+				fprintf(stderr, "[weapons] the bazooka's water shot seen flying (%.0f across)\n", (double)info.mSize.get());
+			told = true;
+		} else
+			fprintf(stderr, "[weapons] the bazooka's water shot seen flying: no room for its drop\n");
 	}
 	s_firing = false;
 	if (!made)
@@ -1389,7 +1394,7 @@ void followStraight()
 }
 
 // The bazooka's water shot seen flying (kVisual): flown dead straight to where it was aimed, there
-// in a few frames however far (2 near, at most 8: a quarter of a second), and gone just as it
+// in as many frames as the bazooka's own drop (6, a fifth of a second; 4 near), and gone just as it
 // gets there (the burst's own splash takes over) or if it touches the map first. It hits nothing.
 void followVisual()
 {
@@ -1407,8 +1412,8 @@ void followVisual()
 		}
 		JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
 		const JGeometry::TVec3<f32>& way = s_visual.way;
-		f32 frames = s_visual.aim / 700.0f;
-		frames     = frames < 2.0f ? 2.0f : frames > 8.0f ? 8.0f : frames;
+		// as the bazooka's own drop far away (there in 6 frames, a fifth of a second), 4 near
+		const f32 frames = s_visual.aim < kBazookaNow ? 4.0f : 6.0f;
 		const f32 step  = s_visual.aim / frames;
 		const f32 along = (at.x - s_visual.from.x) * way.x + (at.y - s_visual.from.y) * way.y + (at.z - s_visual.from.z) * way.z;
 		const f32 next  = (along > 0.0f ? along : 0.0f) + step * port_frame_scale();
