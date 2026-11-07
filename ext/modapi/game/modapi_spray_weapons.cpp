@@ -52,6 +52,7 @@
 #include <MoveBG/MapObjBall.hpp>
 #include <NPC/NpcBase.hpp>
 #include <Enemy/BossWanwan.hpp>
+#include <Enemy/BossManta.hpp>
 #include <System/MarDirector.hpp>
 #include <MoveBG/MapObjTree.hpp>
 #include "port_framerate.h"
@@ -127,6 +128,7 @@ NpcShot s_npcShots[8];
 int s_nextNpcShot;
 TBaseNPC* s_npcHit;   // the character a weapon's drop is reaching now (objectHit), and its goop before
 f32 s_npcBefore;
+TBossManta* s_smgManta; // a Phantamanta the submachine gun's drop is reaching now (objectHit)
 // Big Chain Chomp being cooled (chompHit)
 TBossWanwan* s_chomp;   // the one being shot lately, its points after the last shot, and when
 int s_chompHp;
@@ -278,6 +280,7 @@ void stageSetup()
 	memset(s_npcShots, 0, sizeof s_npcShots);
 	s_npcHit = 0;
 	s_chomp  = 0;
+	s_smgManta = 0;
 	s_muteMario = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
@@ -706,6 +709,50 @@ void followChomp()
 		s_chompHp = s_chomp->getHitPoints(); // the normal spray too
 }
 
+// Phantamanta (TBossManta, Sirena Beach): each manta takes hits (16, 8, 4, 2, 1 by its generation,
+// unk19C counting them), a second apart (unk1A0, 30 frames), then splits into smaller ones (or, the
+// smallest, is gone). With the weapons made for bosses: a rifle shot finishes a manta at once, a
+// bazooka shot every manta in its burst; the submachine gun's hits come a third of a second sooner
+// (20 frames apart).
+const int kMantaHits[6] = {16, 8, 4, 2, 1, 1};
+TBossManta* mantaOf(void* object)
+{
+	if (!s_bosses || !object || !gpConductor)
+		return 0;
+	THitActor* a = static_cast<THitActor*>(object);
+	if (TBossMantaAdditionalCollision* c = dynamic_cast<TBossMantaAdditionalCollision*>(a)) {
+		// a wing's extra hit area (its manta kept to itself): the manta nearest it
+		TBossManta* best = 0;
+		f32 closest      = 1e12f;
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossManta* m = dynamic_cast<TBossManta*>((*it)->getObj(i))) {
+					const f32 x = m->mPosition.x - c->mPosition.x, z = m->mPosition.z - c->mPosition.z;
+					if (x * x + z * z < closest && !m->checkLiveFlag(LIVE_FLAG_DEAD))
+						closest = x * x + z * z, best = m;
+				}
+		return best;
+	}
+	return dynamic_cast<TBossManta*>(a);
+}
+
+// a rifle's or bazooka's shot on a manta, before the game's own hit (which then finishes it): its
+// last hit left. `now`: no drop of the game's follows (a burst): its hit made here
+void mantaFinish(TBossManta* m, bool now)
+{
+	if (!m || m->checkLiveFlag(LIVE_FLAG_DEAD) || !m->isDamageable())
+		return;
+	const int g    = m->mGeneration >= 0 && m->mGeneration < 6 ? m->mGeneration : 0;
+	const int most = kMantaHits[g];
+	if (m->unk19C < most - 1)
+		m->unk19C = most - 1;
+	fprintf(stderr, "[weapons] Phantamanta (generation %d) finished by a shot\n", g);
+	if (now) {
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &m->mPosition, 0, nullptr);
+		m->collidedWithWater();
+	}
+}
+
 TBossPakkun* peteyOf(void* object)
 {
 	TBPHeadHit* head = s_bosses ? dynamic_cast<TBPHeadHit*>(static_cast<THitActor*>(object)) : 0;
@@ -1037,6 +1084,15 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	burstNpcs(shot, at, r);
+	if (s_bosses) // every Phantamanta in it (its middle, a wide one): finished
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossManta* m = dynamic_cast<TBossManta*>((*it)->getObj(i))) {
+					const f32 x = m->mPosition.x - at.x, y = m->mPosition.y - at.y, z = m->mPosition.z - at.z;
+					const f32 reach = r + 300.0f * m->mScaling.x;
+					if (x * x + y * y + z * z <= reach * reach)
+						mantaFinish(m, true);
+				}
 	if (s_bosses) // Big Chain Chomp within it (its body's middle, a big one)
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
@@ -1078,6 +1134,12 @@ int objectHit(void* object, void* sender, unsigned message)
 	const int weapon = dropWeapon(sender);
 	if (weapon == kVisual)
 		return 1; // the bazooka's shot seen flying: only to look at
+	if (weapon == RIFLE || weapon == BAZOOKA)
+		if (TBossManta* m = mantaOf(object))
+			mantaFinish(m, false); // Phantamanta: the game's own hit (now) its last
+	if (weapon == SMG)
+		if (TBossManta* m = mantaOf(object))
+			s_smgManta = m->isDamageable() ? m : 0; // its wait after the game's hit shortened (objectHitDone)
 	if (weapon > NORMAL && weapon < WEAPONS)
 		if (TBossWanwan* c = chompOf(object)) { // Big Chain Chomp: its share of cooling for the shot
 			TModelWaterManager* w = gpModelWaterManager;
@@ -1155,6 +1217,11 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	}
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return; // the normal spray, or any other water: the game's own
+	if (s_smgManta && weapon == SMG) { // Phantamanta hit by the submachine gun: its next hit sooner
+		if (s_smgManta->unk1A0 == 0x1E)
+			s_smgManta->unk1A0 = 20;
+		s_smgManta = 0;
+	}
 	if (s_npcHit && static_cast<THitActor*>(s_npcHit) == static_cast<THitActor*>(object)) { // a friendly character
 		TBaseNPC* n = s_npcHit;
 		s_npcHit    = 0;
