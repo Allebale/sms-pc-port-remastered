@@ -51,6 +51,7 @@
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <NPC/NpcBase.hpp>
+#include <Enemy/BossWanwan.hpp>
 #include <System/MarDirector.hpp>
 #include <MoveBG/MapObjTree.hpp>
 #include "port_framerate.h"
@@ -126,6 +127,12 @@ NpcShot s_npcShots[8];
 int s_nextNpcShot;
 TBaseNPC* s_npcHit;   // the character a weapon's drop is reaching now (objectHit), and its goop before
 f32 s_npcBefore;
+// Big Chain Chomp being cooled (chompHit)
+TBossWanwan* s_chomp;   // the one being shot lately, its points after the last shot, and when
+int s_chompHp;
+f32 s_chompAt;
+f32 s_chompOwed;        // the share of a point owed (the submachine gun's 42 shots on fewer points)
+int s_chompShot;        // the shot that last counted on it
 const f32 kHeartLife = 450.0f; // 15 seconds of frames
 const f32 kVisualSize = 10.0f; // its blob, times the bazooka's own drop
 const int kVisualTail = 5;      // blobs in its streak, the head first
@@ -193,6 +200,7 @@ void followStraight();
 void followVisual();
 void followBalloon();
 void followHearts();
+void followChomp();
 const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -269,6 +277,7 @@ void stageSetup()
 	memset(s_heartList, 0, sizeof s_heartList);
 	memset(s_npcShots, 0, sizeof s_npcShots);
 	s_npcHit = 0;
+	s_chomp  = 0;
 	s_muteMario = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
@@ -294,6 +303,7 @@ void afterMovement()
 	followVisual();
 	followBalloon();
 	followHearts();
+	followChomp();
 	followBazooka();
 	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
 		TMario* m = gpMarioOriginal;
@@ -626,6 +636,76 @@ void gatekeeperHit(TBiancoGateKeeper* g, int weapon)
 TBossPakkun* s_peteyHit; // the head a weapon's drop is hitting (objectHit), and his water before it
 int s_peteyMark;
 
+// Big Chain Chomp (TBossWanwan, Pianta Village): hot, each water drop takes one of its hit points
+// (mSLBWHitPointMax of them), which come back one every 20 frames; at none it is cooled. With the
+// weapons made for bosses each shot cools a share of it at once, as many shots as asked: the
+// bazooka's one (its burst too), the rifle's three, the submachine gun's 42 (its points not coming
+// back while it is being shot, so the counts are exact).
+const f32 kChompShots[WEAPONS] = {0.0f, 0.0f, 3.0f, 1.0f, 42.0f};
+TBossWanwan* chompOf(void* object)
+{
+	if (!s_bosses || !object)
+		return 0;
+	THitActor* a = static_cast<THitActor*>(object);
+	if (TBWHit* h = dynamic_cast<TBWHit*>(a))
+		return h->mOwner;
+	return dynamic_cast<TBossWanwan*>(a);
+}
+
+// a weapon's shot on it: true if it counted (its points then set). `gameNext`: the game takes one off
+// itself right after (the drop's own hit), so one more is left for it
+void chompHit(TBossWanwan* c, int weapon, int shot, bool gameNext)
+{
+	if (!c || c->mIsInBath || weapon <= NORMAL || weapon >= WEAPONS || kChompShots[weapon] <= 0.0f)
+		return;
+	int hp = c->getHitPoints();
+	if (shot == s_chompShot && c == s_chomp && s_time - s_chompAt < 3.0f) { // its other drops: the game's own taken back
+		if (gameNext && hp > 0)
+			c->mHitPoints = (u8)(hp + 1);
+		return;
+	}
+	if (hp == 0)
+		return;
+	const int most = c->getSaveParam2()->mSLBWHitPointMax.get();
+	f32 take       = (f32)most / kChompShots[weapon] + s_chompOwed;
+	int whole      = (int)take;
+	s_chompOwed    = take - (f32)whole;
+	if (whole < 1 && weapon == BAZOOKA)
+		whole = most;
+	int left = hp - whole;
+	if (left < 0)
+		left = 0;
+	s_chomp     = c;
+	s_chompHp   = left;
+	s_chompAt   = s_time;
+	s_chompShot = shot;
+	if (left == 0)
+		s_chompOwed = 0.0f;
+	if (gameNext) {
+		c->mHitPoints = (u8)(left + 1); // the game's own hit takes the last one (its own sound and steam)
+	} else { // a burst: as the game's own last hit
+		c->mHitPoints = (u8)left;
+		c->mSparkRequest += 1;
+		if (left == 0) {
+			gpMarioParticleManager->emitAndBindToMtxPtr(BWANWAN_JPA_MS_BWAN_DOWNYUGE, c->getModel()->getAnmMtx(1), 0, nullptr);
+			SMSGetMSound()->startSoundActor(MSD_SE_BS_WANWAN_TO_COOL, &c->mPosition);
+		} else
+			SMSGetMSound()->startSoundActor(MSD_SE_BS_WANWAN_COOL, &c->mPosition);
+	}
+	fprintf(stderr, "[weapons] Big Chain Chomp hit by the %s: %d of its %d heat left\n", kNames[weapon], left, most);
+}
+
+// each frame: its points not coming back while it is being shot (2 seconds after a shot)
+void followChomp()
+{
+	if (!s_chomp || s_time - s_chompAt > 2.0f)
+		return;
+	if (s_chomp->getHitPoints() > s_chompHp && s_chompHp > 0)
+		s_chomp->mHitPoints = (u8)s_chompHp;
+	else if (s_chomp->getHitPoints() < s_chompHp)
+		s_chompHp = s_chomp->getHitPoints(); // the normal spray too
+}
+
 TBossPakkun* peteyOf(void* object)
 {
 	TBPHeadHit* head = s_bosses ? dynamic_cast<TBPHeadHit*>(static_cast<THitActor*>(object)) : 0;
@@ -957,6 +1037,15 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	burstNpcs(shot, at, r);
+	if (s_bosses) // Big Chain Chomp within it (its body's middle, a big one)
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossWanwan* c = dynamic_cast<TBossWanwan*>((*it)->getObj(i))) {
+					const f32 x = c->mPosition.x - at.x, y = c->mPosition.y + 150.0f - at.y, z = c->mPosition.z - at.z;
+					const f32 reach = r + 250.0f;
+					if (x * x + y * y + z * z <= reach * reach)
+						chompHit(c, weapon, shot, false);
+				}
 	const int shaken = shakeObjects(at, r);
 	cleanGoop(at, s_goopArea > 0.0f ? 860.0f * s_goopArea : r * 1.2f, s_goop); // goop only: its own area, or the burst's
 	explode(at, r);
@@ -989,6 +1078,14 @@ int objectHit(void* object, void* sender, unsigned message)
 	const int weapon = dropWeapon(sender);
 	if (weapon == kVisual)
 		return 1; // the bazooka's shot seen flying: only to look at
+	if (weapon > NORMAL && weapon < WEAPONS)
+		if (TBossWanwan* c = chompOf(object)) { // Big Chain Chomp: its share of cooling for the shot
+			TModelWaterManager* w = gpModelWaterManager;
+			TWaterHitActor* drop  = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+			const int shot = w && drop && drop->mParticleIndex >= 0 && drop->mParticleIndex < (int)w->mParticleCount
+			                     ? (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0x7f : 0;
+			chompHit(c, weapon, shot, true);
+		}
 	s_npcHit = 0;
 	if (weapon > NORMAL && weapon < WEAPONS)
 		if (TBaseNPC* n = dynamic_cast<TBaseNPC*>(static_cast<THitActor*>(object))) { // its goop before the game washes it
