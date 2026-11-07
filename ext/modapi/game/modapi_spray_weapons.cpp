@@ -162,12 +162,7 @@ bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's pla
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
 bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
 bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
-bool s_rocketOuch;
-// his cries of pain to choose from (set_weapon's flags, SMS_SPRAY_OUCH_SHIFT): a hurt's ("ow"), a small
-// hurt's (with "watch it"), a big hurt's, a hurt reaction's, a burn's, a shock's
-const u32 kOuch[6] = {MSD_SE_MV02_DAMAGE_MID_01, MSD_SE_MV03_DAMAGE_LITLE_01, MSD_SE_MV01_DAMAGE_BIG_01,
-                      MSD_SE_MV07_DAMAGE_REACT_01, MSD_SE_MV05_DAMAGE_FIRE_01, MSD_SE_MV04_DAMAGE_ELEC_01};
-int s_ouchVoice;  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
+bool s_rocketOuch;  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
@@ -799,8 +794,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	s_rocketTop = h > 30.0f ? h : 30.0f;
 	if (s_rocketHurt) { // SMS_SPRAY_ROCKET_HURT (a mod's setting): a point of his health for each, as the game takes it
 		m->decHP(1);
-		if (s_rocketOuch) // SMS_SPRAY_ROCKET_OUCH: his own cry of pain, the one chosen (the game picks one of its takes)
-			m->startVoice(kOuch[s_ouchVoice]);
+		if (s_rocketOuch) // SMS_SPRAY_ROCKET_OUCH: his own cry of pain, a small hurt's
+			m->startVoice(MSD_SE_MV03_DAMAGE_LITLE_01);
 	}
 	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
 	        s_rocketHurt ? ", 1 health lost" : "");
@@ -1693,9 +1688,6 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] defeated enemies drop hearts %s\n", (flags & 2048) ? "on" : "off");
 	s_hearts     = (flags & 2048) != 0;
 	s_rocketOuch = (flags & 4096) != 0;
-	s_ouchVoice  = (flags >> 13) & 7;
-	if (s_ouchVoice > 5)
-		s_ouchVoice = 0;
 	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
 	if (look != s_shotLook)
 		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 3 ? "a big green water balloon" : look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
