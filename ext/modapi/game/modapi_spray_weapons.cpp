@@ -168,7 +168,8 @@ bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already 
 bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
 bool s_rocketOuch;
 f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in percent)
-f32 s_muteVoiceUntil;     // Mario's own voice left out until then (one of these plays)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
+bool s_muteMario;          // SMS_SPRAY_MUTE_MARIO: Mario's own voice left out (a mod's: its rocket jump key held)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
+f32 s_goopArea;     // the bazooka's goop area (SmsSprayStats.goop_area), times 660 across; 0 its burst's size's
 f32 s_goop = 1.0f;  // how much goop the weapons clean, times the game's own (set_weapon's flags, SMS_SPRAY_GOOP_SHIFT)
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
@@ -254,7 +255,7 @@ void stageSetup()
 	memset(&s_balloon, 0, sizeof s_balloon);
 	memset(s_pieces, 0, sizeof s_pieces);
 	memset(s_heartList, 0, sizeof s_heartList);
-	s_muteVoiceUntil = 0.0f;
+	s_muteMario = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -781,8 +782,6 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	// forward, one in front back (aim a little behind to fly forward)
 	const f32 along = (dx * fx + dz * fz) * speed;                        // its push the way he looks
 	const f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz; // and to the side
-	if (s_rocketHurt && s_rocketOuch)
-		s_muteVoiceUntil = s_time + 0.8f; // his own jump's voice left out: his cry plays (below)
 	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
 	if (!inAir)
 		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
@@ -814,7 +813,6 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 			if (pick >= n)
 				pick = n - 1;
 			port_clip_play(set[pick].pcm, set[pick].frames, set[pick].rate, s_voiceVolume);
-			s_muteVoiceUntil = s_time + 0.8f; // the game's own voice for him (his jump's) left out meanwhile
 		}
 	}
 	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
@@ -871,11 +869,11 @@ int shakeObjects(const JGeometry::TVec3<f32>& at, f32 r)
 
 // The goop round a burst washed away as the stream's puddles wash it, spot by spot: its middle and
 // two rings of spots round it (each on the ground there, so slopes and steps are cleaned too).
-void cleanGoop(const JGeometry::TVec3<f32>& at, f32 r)
+void cleanGoop(const JGeometry::TVec3<f32>& at, f32 r, f32 strength)
 {
 	if (!gpPollution || !gpMap)
 		return;
-	const f32 spot = r * 0.35f;
+	const f32 spot = r * 0.35f * (strength > 1.0f ? strength : 1.0f); // each spot bigger the more it cleans
 	int n = 0;
 	for (int ring = 0; ring < 3; ring++) {
 		const int count = ring == 0 ? 1 : ring == 1 ? 7 : 13;
@@ -907,7 +905,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	const int shaken = shakeObjects(at, r);
-	cleanGoop(at, r * 1.2f * s_goop);
+	cleanGoop(at, s_goopArea > 0.0f ? 660.0f * s_goopArea : r * 1.2f, s_goop); // goop only: its own area, or the burst's
 	explode(at, r);
 	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies and %d things in it\n", at.x, at.y, at.z, n, shaken);
@@ -1665,11 +1663,11 @@ void followBazooka()
 		s_bazookaShot = 0;
 }
 
-// Every sound the game plays: Mario's own voice (MSD_SE_MA_VO_* to MSD_SE_MV_*) left out while one
-// of the rocket jump's cries plays, so the two do not play at once
+// Every sound the game plays: Mario's own voice (MSD_SE_MA_VO_* to MSD_SE_MV_*) left out while a mod
+// asks (SMS_SPRAY_MUTE_MARIO: its rocket jump key held), so his rocket jump's cries play alone
 int soundHook(unsigned* id, const float*, int)
 {
-	if (!id || s_time >= s_muteVoiceUntil)
+	if (!id || !s_muteMario)
 		return 0;
 	return *id >= 0x7800u && *id <= 0x792Fu ? 1 : 0;
 }
@@ -1728,6 +1726,7 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] defeated enemies drop hearts %s\n", (flags & 2048) ? "on" : "off");
 	s_hearts     = (flags & 2048) != 0;
 	s_rocketOuch = (flags & 4096) != 0;
+	s_muteMario  = (flags & (1 << 27)) != 0;
 	const int goop = (flags >> 20) & 127; // tenths; 0: the game's own (an older mod)
 	s_goop         = goop ? (f32)goop * 0.1f : 1.0f;
 	const int vol = (flags >> 13) & 127; // percent; 0: as recorded (an older mod)
@@ -1852,6 +1851,17 @@ extern "C" int modg_spray_far_scale(float scale)
 	if (k != s_farScale)
 		fprintf(stderr, "[weapons] long range: enemies and characters out to %.1f times as far\n", k);
 	s_farScale = k;
+	return 1;
+}
+
+// The bazooka's goop area (SmsSprayStats.goop_area): the round it washes goop off where it bursts, times
+// its own (660 across, 0 its burst's size's instead)
+extern "C" int modg_spray_goop_area(float scale)
+{
+	const f32 k = scale > 0.0f ? (scale < 10.0f ? scale : 10.0f) : 0.0f;
+	if (k != s_goopArea)
+		fprintf(stderr, "[weapons] the bazooka's goop area: %.2f times its own\n", k);
+	s_goopArea = k;
 	return 1;
 }
 
