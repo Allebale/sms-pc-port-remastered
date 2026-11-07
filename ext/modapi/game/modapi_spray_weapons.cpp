@@ -1304,7 +1304,7 @@ void fire()
 		s_balloon.from   = info.mPos.value;
 		s_balloon.way    = way;
 		s_balloon.aim    = st->aim;
-		s_balloon.along  = st->aim * 0.3f < 140.0f ? st->aim * 0.3f : 140.0f; // a little ahead of the muzzle (not over the camera)
+		s_balloon.along  = 0.0f; // from the muzzle (small enough to come out of it)
 		s_balloon.frames = st->aim < kBazookaNow ? 5.0f : 6.0f;
 		s_balloon.pop    = 0.0f;
 		s_balloon.on     = true;

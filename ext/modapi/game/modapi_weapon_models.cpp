@@ -102,7 +102,7 @@ void drawModel(const Model& m, MtxPtr viewModel)
 }
 
 // The bazooka's green water balloon (modapi_spray_weapons.cpp flies it: PortBazookaBalloon), drawn
-// as a packet of the scene's opaque draw buffer too: a round balloon a little longer along the way
+// as a packet of the scene's opaque draw buffer too: a small round balloon (the bazooka's muzzle's size) a little longer along the way
 // it flies, wobbling, with a knot at its back, its light baked into its corners' colours (a light
 // from above), a shine on top. Built each frame from rings of corners, in the world, with the
 // view's matrix of the frame (PortWeaponModelView).
@@ -154,7 +154,8 @@ void BalloonPacket::draw()
 		return;
 	rt[0] /= rl, rt[1] /= rl, rt[2] /= rl;
 	float up[3] = {rt[1] * fwd[2] - rt[2] * fwd[1], rt[2] * fwd[0] - rt[0] * fwd[2], rt[0] * fwd[1] - rt[1] * fwd[0]};
-	const float r = 42.0f * scale, len = 52.0f * scale;
+	// its size: one that fits in the bazooka's muzzle (about 7 across its middle in first person, 12 on his back)
+	const float r = 6.5f * scale, len = 8.0f * scale;
 	const float wob = (float)(s_balloonFrame++) * 0.9f;
 
 	Mtx identity;
@@ -194,13 +195,13 @@ void BalloonPacket::draw()
 	// its knot: a small dark green cone at its back
 	if (scale <= 1.0f) {
 		const float back[3] = {c[0] - fwd[0] * len, c[1] - fwd[1] * len, c[2] - fwd[2] * len};
-		const float tip[3]  = {back[0] - fwd[0] * 14.0f, back[1] - fwd[1] * 14.0f, back[2] - fwd[2] * 14.0f};
+		const float tip[3]  = {back[0] - fwd[0] * 2.2f, back[1] - fwd[1] * 2.2f, back[2] - fwd[2] * 2.2f};
 		GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, 10);
 		GXPosition3f32(tip[0], tip[1], tip[2]);
 		GXColor4u8(20, 90, 30, 255);
 		for (int j = 0; j <= 8; j++) {
 			const float lon = 6.2831853f * (float)j / 8.0f;
-			const float sx = cosf(lon) * 9.0f, sy = sinf(lon) * 9.0f;
+			const float sx = cosf(lon) * 1.4f, sy = sinf(lon) * 1.4f;
 			GXPosition3f32(back[0] + rt[0] * sx + up[0] * sy, back[1] + rt[1] * sx + up[1] * sy, back[2] + rt[2] * sx + up[2] * sy);
 			GXColor4u8(30, 120, 40, 255);
 		}
