@@ -99,6 +99,18 @@ struct Piece {
 };
 const int kPieces = 12;
 Piece s_pieces[kPieces];
+
+// The hearts defeated enemies drop (SMS_SPRAY_HEARTS): beside its coin, popped up and falling to
+// the ground there, floating, turning and bobbing; Mario touching one gets a point of health back.
+// Gone after 15 seconds (blinking the last 3).
+struct Heart {
+	JGeometry::TVec3<f32> at;
+	f32 vy, ground, spin, life; // life: frames left, 0 none
+	bool landed;
+};
+const int kHearts = 8;
+Heart s_heartList[kHearts];
+const f32 kHeartLife = 450.0f; // 15 seconds of frames
 const f32 kVisualSize = 10.0f; // its blob, times the bazooka's own drop
 const int kVisualTail = 5;      // blobs in its streak, the head first
 
@@ -149,6 +161,8 @@ void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
 bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
+bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
+bool s_rocketOuch;  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
@@ -158,6 +172,7 @@ void followBazooka();
 void followStraight();
 void followVisual();
 void followBalloon();
+void followHearts();
 const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -231,6 +246,7 @@ void stageSetup()
 	memset(&s_visual, 0, sizeof s_visual);
 	memset(&s_balloon, 0, sizeof s_balloon);
 	memset(s_pieces, 0, sizeof s_pieces);
+	memset(s_heartList, 0, sizeof s_heartList);
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -254,6 +270,7 @@ void afterMovement()
 	followStraight();
 	followVisual();
 	followBalloon();
+	followHearts();
 	followBazooka();
 	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
 		TMario* m = gpMarioOriginal;
@@ -315,6 +332,63 @@ bool moves(TSmallEnemy* e)
 	       && !dynamic_cast<TKageMarioModoki*>(e);
 }
 
+// A heart dropped where an enemy was defeated (SMS_SPRAY_HEARTS): beside its coin
+void dropHeart(TLiveActor* e)
+{
+	if (!s_hearts || !e)
+		return;
+	Heart* h = &s_heartList[0];
+	for (int i = 0; i < kHearts; i++) { // a free one, or the oldest
+		if (s_heartList[i].life <= 0.0f) {
+			h = &s_heartList[i];
+			break;
+		}
+		if (s_heartList[i].life < h->life)
+			h = &s_heartList[i];
+	}
+	const f32 a = random01() * 6.2831853f; // beside it, its coin in the middle
+	h->at.set(e->mPosition.x + sinf(a) * 45.0f, e->mPosition.y + 40.0f, e->mPosition.z + cosf(a) * 45.0f);
+	const TBGCheckData* floor = 0;
+	h->ground = gpMap ? gpMap->checkGround(h->at.x, h->at.y + 50.0f, h->at.z, &floor) : e->mPosition.y;
+	if (h->ground < -50000.0f || h->ground > h->at.y + 50.0f)
+		h->ground = e->mPosition.y;
+	h->vy     = 14.0f; // popped up
+	h->spin   = a;
+	h->life   = kHeartLife;
+	h->landed = false;
+	fprintf(stderr, "[weapons] a heart dropped\n");
+}
+
+// the hearts each frame: falling, floating, and picked up by Mario touching one
+void followHearts()
+{
+	const f32 dt = port_frame_scale();
+	TMario* m    = gpMarioOriginal;
+	for (int i = 0; i < kHearts; i++) {
+		Heart& h = s_heartList[i];
+		if (h.life <= 0.0f)
+			continue;
+		h.life -= dt;
+		h.spin += 0.08f * dt;
+		if (!h.landed) {
+			h.vy -= 1.5f * dt;
+			h.at.y += h.vy * dt;
+			if (h.at.y <= h.ground + 40.0f && h.vy < 0.0f)
+				h.at.y = h.ground + 40.0f, h.landed = true;
+		}
+		if (m && !m->onYoshi()) {
+			const f32 dx = m->mPosition.x - h.at.x, dz = m->mPosition.z - h.at.z, dy = h.at.y - m->mPosition.y;
+			if (dx * dx + dz * dz < 80.0f * 80.0f && dy > -60.0f && dy < 190.0f) {
+				h.life = 0.0f;
+				m->incHP(1);
+				m->emitGetCoinEffect(&h.at);
+				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_HP_RECOVER, 0, nullptr, 0);
+				fprintf(stderr, "[weapons] a heart picked up: a point of health\n");
+			}
+		}
+	}
+}
+
 // An enemy hit by a weapon's shot (`shot`: weapon and number), shoved along (dx, dz) and maybe
 // thrown up, and with defeat on, defeated after the weapon's shots.
 void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
@@ -364,6 +438,7 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		h->hits = 0;
 		fprintf(stderr, "[weapons] an enemy defeated by the %s\n", kNames[weapon]);
 		e->kill(); // as a stomp: its own defeat, coins and all
+		dropHeart(e);
 	}
 }
 
@@ -717,8 +792,11 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	s_rocketAir = true;
 	s_rocketVX  = hx, s_rocketVZ = hz; // steered from here (rocketSteer)
 	s_rocketTop = h > 30.0f ? h : 30.0f;
-	if (s_rocketHurt) // SMS_SPRAY_ROCKET_HURT (a mod's setting): a point of his health for each, as the game takes it
+	if (s_rocketHurt) { // SMS_SPRAY_ROCKET_HURT (a mod's setting): a point of his health for each, as the game takes it
 		m->decHP(1);
+		if (s_rocketOuch) // SMS_SPRAY_ROCKET_OUCH: his own cry of pain, a small hurt's
+			m->startVoice(MSD_SE_MV03_DAMAGE_LITLE_01);
+	}
 	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
 	        s_rocketHurt ? ", 1 health lost" : "");
 }
@@ -897,6 +975,7 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 				h->normalStart = s_time;
 				fprintf(stderr, "[weapons] an enemy defeated by the normal spray\n");
 				ne->kill(); // as a stomp: its own defeat, coins and all
+				dropHeart(ne);
 			}
 		}
 		return;
@@ -1605,6 +1684,10 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	if (((flags & 1024) != 0) != s_rocketHurt)
 		fprintf(stderr, "[weapons] rocket jumps hurt Mario %s\n", (flags & 1024) ? "on" : "off");
 	s_rocketHurt = (flags & 1024) != 0;
+	if (((flags & 2048) != 0) != s_hearts)
+		fprintf(stderr, "[weapons] defeated enemies drop hearts %s\n", (flags & 2048) ? "on" : "off");
+	s_hearts     = (flags & 2048) != 0;
+	s_rocketOuch = (flags & 4096) != 0;
 	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
 	if (look != s_shotLook)
 		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 3 ? "a big green water balloon" : look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
@@ -1660,6 +1743,24 @@ bool PortBazookaBalloon(float* at, float* way, float* scale)
 	way[0] = b.way.x, way[1] = b.way.y, way[2] = b.way.z;
 	*scale = b.big ? 6.5f : 1.0f; // the big one: about 42 round
 	return true;
+}
+
+// The hearts now, for drawing (modapi_weapon_models.cpp): each its place and turn (4 floats),
+// blinking out at the end; how many
+int PortWeaponHearts(float* out, int most)
+{
+	int n = 0;
+	for (int i = 0; i < kHearts && n < most; i++) {
+		const Heart& h = s_heartList[i];
+		if (h.life <= 0.0f)
+			continue;
+		if (h.life < 90.0f && ((int)(h.life / 3.0f) & 1)) // its last 3 seconds: blinking
+			continue;
+		const f32 bob = h.landed ? 6.0f * sinf(h.spin * 2.5f) : 0.0f;
+		out[n * 4 + 0] = h.at.x, out[n * 4 + 1] = h.at.y + bob, out[n * 4 + 2] = h.at.z, out[n * 4 + 3] = h.spin;
+		n++;
+	}
+	return n;
 }
 
 // Its rubber's pieces now, for drawing: each its place, its tumbling (an axis and an angle) and

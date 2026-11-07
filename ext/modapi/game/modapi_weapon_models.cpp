@@ -22,6 +22,7 @@
 
 bool PortBazookaBalloon(float* at, float* way, float* scale); // modapi_spray_weapons.cpp
 int PortBazookaBalloonPieces(float* out, int most);
+int PortWeaponHearts(float* out, int most); // modapi_spray_weapons.cpp
 
 namespace {
 
@@ -184,6 +185,64 @@ void drawPieces()
 	GXEnd();
 }
 
+// A heart (the health defeated enemies drop): a puffy red heart standing up, turning about its
+// upright, about 50 tall, lit from above (baked, by the turn), a shine on its upper left lobe. Built
+// from its outline (the classic heart curve) and two rings inside it pushed out to the front and back.
+void heartCorner(const float* c, float cs, float sn, float x, float y, float z, float nx, float ny, float nz)
+{
+	const float k = 1.7f; // the curve's units (about 32 across) to the game's
+	// turned about the upright
+	const float wx = x * cs + z * sn, wz = -x * sn + z * cs;
+	const float mx = nx * cs + nz * sn, mz = -nx * sn + nz * cs;
+	const float l = 0.25f + 0.55f * (ny * 0.7f + mz * 0.45f + mx * 0.2f > 0.0f ? ny * 0.7f + mz * 0.45f + mx * 0.2f : 0.0f);
+	const float shine = (ny > 0.55f && nz * nz < 0.6f) ? 0.35f : 0.0f;
+	int r = (int)(255.0f * (l + 0.35f) + 255.0f * shine), g = (int)(50.0f * l + 230.0f * shine), b = (int)(60.0f * l + 230.0f * shine);
+	GXPosition3f32(c[0] + wx * k, c[1] + y * k, c[2] + wz * k);
+	GXColor4u8((u8)(r > 255 ? 255 : r), (u8)(g > 255 ? 255 : g), (u8)(b > 255 ? 255 : b), 255);
+}
+
+void heartOutline(float t, float* x, float* y, float* nx, float* ny)
+{
+	const float st = sinf(t);
+	*x = 16.0f * st * st * st;
+	*y = 13.0f * cosf(t) - 5.0f * cosf(2.0f * t) - 2.0f * cosf(3.0f * t) - cosf(4.0f * t);
+	// its outward normal from the curve's way
+	const float dx = 48.0f * st * st * cosf(t), dy = -13.0f * st + 10.0f * sinf(2.0f * t) + 6.0f * sinf(3.0f * t) + 4.0f * sinf(4.0f * t);
+	const float l  = sqrtf(dx * dx + dy * dy) + 1e-4f;
+	*nx = dy / l, *ny = -dx / l;
+}
+
+void drawHearts()
+{
+	float hs[8 * 4];
+	const int n = PortWeaponHearts(hs, 8);
+	const int kAround = 28;
+	const float kDepth = 9.0f; // its puff, front and back
+	for (int h = 0; h < n; h++) {
+		const float c[3] = {hs[h * 4], hs[h * 4 + 1], hs[h * 4 + 2]};
+		const float cs = cosf(hs[h * 4 + 3]), sn = sinf(hs[h * 4 + 3]);
+		for (int side = -1; side <= 1; side += 2) {
+			// three bands from the rim in: the rim (flat), a ring at 70% pushed out, one at 35% further, the middle
+			const float ring[4] = {1.0f, 0.72f, 0.38f, 0.0f}, deep[4] = {0.0f, 0.62f, 0.9f, 1.0f};
+			for (int band = 0; band < 3; band++) {
+				GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, (u16)((kAround + 1) * 2));
+				for (int j = 0; j <= kAround; j++) {
+					const float t = 6.2831853f * (float)j / kAround;
+					float x, y, nx, ny;
+					heartOutline(t, &x, &y, &nx, &ny);
+					for (int k = 0; k < 2; k++) {
+						const int b2 = band + k;
+						const float f = ring[b2], z = deep[b2] * kDepth * side;
+						const float flat = 1.0f - deep[b2]; // the rim faces out, the middle front or back
+						heartCorner(c, cs, sn, x * f, y * f + 2.0f * (1.0f - f), z, nx * flat, ny * flat, deep[b2] * side);
+					}
+				}
+				GXEnd();
+			}
+		}
+	}
+}
+
 void BalloonPacket::draw()
 {
 	if (!s_haveView)
@@ -214,6 +273,7 @@ void BalloonPacket::draw()
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetFog(GX_FOG_NONE, 0.0f, 0.0f, 0.0f, 0.0f, (GXColor){0, 0, 0, 0});
 	drawPieces();
+	drawHearts();
 	if (!flying)
 		return;
 	// its own frame: forward the way it flies, right and up across it
@@ -317,8 +377,9 @@ void PortWeaponModelKeep()
 bool PortWeaponModelEntry()
 {
 	float at[3], way[3], scale; // the bazooka's balloon flying: entered too
-	float pieces[8];
-	if (s_haveView && j3dSys.getDrawBuffer(0) && (PortBazookaBalloon(at, way, &scale) || PortBazookaBalloonPieces(pieces, 1)))
+	float pieces[8], hearts[4];
+	if (s_haveView && j3dSys.getDrawBuffer(0)
+	    && (PortBazookaBalloon(at, way, &scale) || PortBazookaBalloonPieces(pieces, 1) || PortWeaponHearts(hearts, 1)))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_balloonPacket, 0);
 	if (s_shown < 0 || !j3dSys.getDrawBuffer(0))
 		return s_noFludd;
