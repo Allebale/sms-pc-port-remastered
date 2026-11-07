@@ -897,8 +897,7 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 		return -1.0f;
 	const f32 rad = (rad0 + t * 0.03f * s_hitScale[s_weapon]) * grow; // kinder still far away (150 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
-	// a body's height (and some, more with the hit size: a shot a little above or below still hits) counts as near
-	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) * grow - 40.0f * (s_hitScale[s_weapon] > 1.0f ? s_hitScale[s_weapon] : 1.0f);
+	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) * grow - 40.0f; // a body's height (and some) counts as near
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
 	return d2 <= rad * rad ? t : -1.0f;
 }
@@ -1015,11 +1014,7 @@ bool armed(TMario* m)
 }
 
 // In third person (nothing on screen changes): the aim from about his shoulders the way he faces,
-// or locked on to an enemy (a small one, or Shadow Mario) within about 45 degrees of that (no
-// crosshair to aim with): the one nearest the way he faces counts most, then the nearest; the one
-// locked on stays so while within about 60 degrees, so a lock does not jump between two.
-TLiveActor* s_thirdLock;
-f32 s_thirdLockAt; // when last locked on (a lock older than a second is let go)
+// or at the nearest small enemy a little to either side of that (no crosshair to aim with)
 bool thirdView(TMario* m, JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* f)
 {
 	if (!s_third || !m)
@@ -1030,69 +1025,38 @@ bool thirdView(TMario* m, JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* f)
 	f->set(fx, 0.0f, fz);
 	if (!gpConductor)
 		return true;
-	const f32 kNear = 4000.0f * (s_farScale > 1.0f ? (s_farScale < 2.0f ? s_farScale : 2.0f) : 1.0f);
-	const f32 kCone = 0.71f, kKeep = 0.5f; // about 45 degrees to lock on, 60 to keep a lock
-	if (s_time - s_thirdLockAt > 1.0f)
-		s_thirdLock = 0;
-	f32 best = 1e9f;
-	TLiveActor* pick = 0;
+	const f32 kNear = 3000.0f, kCone = 0.87f; // within about 30 degrees of the way he faces
+	f32 best = kNear;
 	JGeometry::TVec3<f32> to;
-	// one candidate: its place (a body's middle) and whether it is in reach
-	struct Try {
-		static bool at(TLiveActor* e, JGeometry::TVec3<f32>* c)
-		{
-			if (TEMario* em = dynamic_cast<TEMario*>(e)) {
-				if (!em->mEnemyMario || em->checkLiveFlag(LIVE_FLAG_DEAD))
-					return false;
-				const JGeometry::TVec3<f32>& p = em->mEnemyMario->mPosition;
-				c->set(p.x, p.y + 80.0f, p.z); // Shadow Mario: the Mario-like one seen, his middle
-				return true;
+	bool found = false;
+	for (int list = 0; list < 2; list++) {
+		JGadget::TList<TEnemyManager*>::iterator a0 = gpConductor->unk20.begin(), a1 = gpConductor->unk20.end();
+		JGadget::TList<TLiveManager*>::iterator b0 = gpConductor->unk10.begin(), b1 = gpConductor->unk10.end();
+		while (list == 0 ? a0 != a1 : b0 != b1) {
+			TLiveManager* mgr = list == 0 ? (TLiveManager*)*a0 : *b0;
+			if (list == 0)
+				++a0;
+			else
+				++b0;
+			for (int i = 0; mgr && i < mgr->getObjNum(); i++) {
+				TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
+				if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+					continue;
+				const f32 hh = e->getDamageHeight() > e->getAttackHeight() ? e->getDamageHeight() : e->getAttackHeight();
+				const f32 dx = e->mPosition.x - eye->x, dz = e->mPosition.z - eye->z;
+				const f32 dy = e->mPosition.y + 0.5f * hh - eye->y;
+				const f32 flat = sqrtf(dx * dx + dz * dz);
+				if (flat < 1.0f || flat > best || (dx * fx + dz * fz) / flat < kCone || fabsf(dy) > 600.0f)
+					continue;
+				best = flat;
+				to.set(dx, dy, dz);
+				found = true;
 			}
-			TSmallEnemy* s = dynamic_cast<TSmallEnemy*>(e);
-			if (!s || s->checkLiveFlag(LIVE_FLAG_DEAD) || s->checkLiveFlag(LIVE_FLAG_HIDDEN))
-				return false;
-			const f32 hh = s->getDamageHeight() > s->getAttackHeight() ? s->getDamageHeight() : s->getAttackHeight();
-			c->set(s->mPosition.x, s->mPosition.y + 0.5f * hh, s->mPosition.z);
-			return true;
-		}
-	};
-	TLiveActor* seen[64];
-	int n = 0;
-	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end() && n < 64; ++it)
-		if (dynamic_cast<TEMario*>(*it))
-			seen[n++] = *it; // a Shadow Mario on his own (the plaza's): no manager
-	for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
-		for (int i = 0; *it && i < (*it)->getObjNum() && n < 64; i++)
-			seen[n++] = (*it)->getObj(i);
-	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
-		for (int i = 0; *it && i < (*it)->getObjNum() && n < 64; i++)
-			seen[n++] = (*it)->getObj(i);
-	for (int i = 0; i < n; i++) {
-		JGeometry::TVec3<f32> c;
-		if (!seen[i] || !Try::at(seen[i], &c))
-			continue;
-		const f32 dx = c.x - eye->x, dz = c.z - eye->z, dy = c.y - eye->y;
-		const f32 flat = sqrtf(dx * dx + dz * dz);
-		if (flat < 1.0f || flat > kNear || fabsf(dy) > 900.0f)
-			continue;
-		const f32 cosine = (dx * fx + dz * fz) / flat;
-		const bool locked = seen[i] == s_thirdLock;
-		if (cosine < (locked ? kKeep : kCone))
-			continue;
-		// the way he faces counts most (a quarter of the reach for each 0.1 off it), then the nearest;
-		// the one locked on is kept unless another is clearly better
-		const f32 score = flat + (1.0f - cosine) * 2.5f * kNear - (locked ? 0.25f * kNear : 0.0f);
-		if (score < best) {
-			best = score;
-			pick = seen[i];
-			to.set(dx, dy, dz);
 		}
 	}
-	if (pick) {
+	if (found) {
 		const f32 l = sqrtf(to.x * to.x + to.y * to.y + to.z * to.z);
 		f->set(to.x / l, to.y / l, to.z / l);
-		s_thirdLock   = pick;
-		s_thirdLockAt = s_time;
 	}
 	return true;
 }
