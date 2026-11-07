@@ -307,9 +307,10 @@ bool PortFluddHeld(TMario* mario)
 	TWaterGun* g = mario->mWaterGun;
 	if (!g || !g->mFluddModel)
 		return false;
-	// the spray nozzle only: the underwater one is a jet pack, steered by the stick and pushing him
-	// the other way from its water, so it stays on his back
-	return g->mCurrentNozzle == TWaterGun::Spray;
+	// the spray nozzle; the underwater one only with a spray weapon chosen (it fires where the view
+	// looks): as a jet pack, steered by the stick and pushing him the other way from its water, it
+	// stays on his back
+	return g->mCurrentNozzle == TWaterGun::Spray || (g->mCurrentNozzle == TWaterGun::Underwater && PortSprayWeaponChosen());
 }
 
 // FLUDD on his back while a spray weapon fires from it (third person, SMS_SPRAY_THIRD_PERSON):

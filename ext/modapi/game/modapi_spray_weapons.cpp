@@ -1619,7 +1619,9 @@ void fire()
 {
 	TMario* m    = gpMarioOriginal;
 	TWaterGun* g = m ? m->mWaterGun : 0;
-	if (!g || !gpModelWaterManager || !armed(m) || g->mCurrentNozzle != TWaterGun::Spray || g->mCurrentWater <= 0)
+	// the spray nozzle, or under the sea the underwater one (a weapon chosen there fires, R no jet pack)
+	if (!g || !gpModelWaterManager || !armed(m) || g->mCurrentWater <= 0
+	    || (g->mCurrentNozzle != TWaterGun::Spray && g->mCurrentNozzle != TWaterGun::Underwater))
 		return;
 	TNozzleBase* n = g->getCurrentNozzle();
 	JGeometry::TVec3<f32> eye, f;
