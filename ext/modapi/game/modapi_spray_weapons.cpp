@@ -149,6 +149,7 @@ void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
 bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
+bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
@@ -716,7 +717,10 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	s_rocketAir = true;
 	s_rocketVX  = hx, s_rocketVZ = hz; // steered from here (rocketSteer)
 	s_rocketTop = h > 30.0f ? h : 30.0f;
-	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f\n", dist, inAir ? " (in the air)" : "", up, h);
+	if (s_rocketHurt) // SMS_SPRAY_ROCKET_HURT (a mod's setting): a point of his health for each, as the game takes it
+		m->decHP(1);
+	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
+	        s_rocketHurt ? ", 1 health lost" : "");
 }
 
 // The bazooka's burst where its drop first hits an enemy or lands: every small enemy near,
@@ -1598,6 +1602,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	if (((flags & 64) != 0) != s_airForward)
 		fprintf(stderr, "[weapons] the bazooka pushes enemies in the air forward %s\n", (flags & 64) ? "on" : "off");
 	s_airForward = (flags & 64) != 0;
+	if (((flags & 1024) != 0) != s_rocketHurt)
+		fprintf(stderr, "[weapons] rocket jumps hurt Mario %s\n", (flags & 1024) ? "on" : "off");
+	s_rocketHurt = (flags & 1024) != 0;
 	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
 	if (look != s_shotLook)
 		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 3 ? "a big green water balloon" : look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
