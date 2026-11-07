@@ -81,15 +81,23 @@ struct Visual {
 };
 Visual s_visual;
 // the bazooka's green water balloon (s_shotLook 2): flown straight to where it bursts in as many
-// frames as its own drop, then it pops there (a moment bigger, a splash) and is gone. Drawn by
+// frames as its own drop, then it bursts there (its rubber in pieces, a splash). Drawn by
 // modapi_weapon_models.cpp (PortBazookaBalloon).
 struct Balloon {
 	bool on;
 	JGeometry::TVec3<f32> from, way;
 	f32 aim, along, frames;
-	f32 pop; // popping: frames since it got there, 0 not yet
 };
 Balloon s_balloon;
+// its rubber, burst into pieces where it pops: thrown out from there, falling and tumbling, gone
+// after about half a second
+struct Piece {
+	JGeometry::TVec3<f32> at, v;
+	f32 spin, turn, size, life; // life: frames left, 0 none
+	JGeometry::TVec3<f32> axis;
+};
+const int kPieces = 12;
+Piece s_pieces[kPieces];
 const f32 kVisualSize = 10.0f; // its blob, times the bazooka's own drop
 const int kVisualTail = 5;      // blobs in its streak, the head first
 
@@ -220,6 +228,7 @@ void stageSetup()
 	clearStraights(); // (their enemies were the last stage's)
 	memset(&s_visual, 0, sizeof s_visual);
 	memset(&s_balloon, 0, sizeof s_balloon);
+	memset(s_pieces, 0, sizeof s_pieces);
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -1306,7 +1315,6 @@ void fire()
 		s_balloon.aim    = st->aim;
 		s_balloon.along  = 0.0f; // from the muzzle (small enough to come out of it)
 		s_balloon.frames = st->aim < kBazookaNow ? 5.0f : 6.0f;
-		s_balloon.pop    = 0.0f;
 		s_balloon.on     = true;
 	}
 	if (made && s_weapon == BAZOOKA && st && s_shotLook == 1) { // the water shot seen flying to where it bursts: one big blob, only to look at
@@ -1439,23 +1447,44 @@ void followStraight()
 
 void followBalloon()
 {
+	const f32 dt = port_frame_scale();
+	for (int i = 0; i < kPieces; i++) { // its rubber's pieces: flying out, falling, tumbling
+		Piece& q = s_pieces[i];
+		if (q.life <= 0.0f)
+			continue;
+		q.life -= dt;
+		q.v.y -= 1.6f * dt; // falling
+		q.v.x *= powf(0.92f, dt), q.v.z *= powf(0.92f, dt);
+		q.at.x += q.v.x * dt, q.at.y += q.v.y * dt, q.at.z += q.v.z * dt;
+		q.spin += q.turn * dt;
+	}
 	Balloon& b = s_balloon;
 	if (!b.on)
 		return;
-	const f32 dt = port_frame_scale();
-	if (b.pop > 0.0f) { // popping: two frames, then gone
-		b.pop += dt;
-		if (b.pop > 3.0f)
-			b.on = false;
-		return;
-	}
 	b.along += b.aim / b.frames * dt;
-	if (b.along >= b.aim - 20.0f) { // there: it pops
-		b.along = b.aim - 20.0f;
-		b.pop   = 1.0f;
+	if (b.along >= b.aim - 6.0f) { // there: it bursts, its rubber in pieces, with a splash
+		b.along = b.aim - 6.0f;
+		b.on    = false;
 		JGeometry::TVec3<f32> at(b.from.x + b.way.x * b.along, b.from.y + b.way.y * b.along, b.from.z + b.way.z * b.along);
 		if (gpMarioParticleManager)
 			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &at, 0, nullptr);
+		for (int i = 0; i < kPieces; i++) {
+			Piece& q = s_pieces[i];
+			// out every way, more back towards Mario and up than into what it hit
+			JGeometry::TVec3<f32> d(random01() * 2.0f - 1.0f, random01() * 1.4f - 0.2f, random01() * 2.0f - 1.0f);
+			d.x -= b.way.x * 0.8f, d.y -= b.way.y * 0.8f, d.z -= b.way.z * 0.8f;
+			const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z) + 1e-4f;
+			const f32 sp = 7.0f + 9.0f * random01();
+			q.at   = at;
+			q.v.set(d.x / l * sp, d.y / l * sp + 4.0f, d.z / l * sp);
+			q.axis.set(random01() - 0.5f, random01() - 0.5f, random01() - 0.5f);
+			const f32 al = sqrtf(q.axis.x * q.axis.x + q.axis.y * q.axis.y + q.axis.z * q.axis.z) + 1e-4f;
+			q.axis.x /= al, q.axis.y /= al, q.axis.z /= al;
+			q.spin = random01() * 6.28f;
+			q.turn = 0.3f + 0.5f * random01();
+			q.size = 2.5f + 2.5f * random01();
+			q.life = 12.0f + 6.0f * random01();
+		}
 	}
 }
 
@@ -1611,7 +1640,7 @@ bool PortSprayWeaponTrigger() { return s_trigger; }
 
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
 // The bazooka's green water balloon now, for drawing (modapi_weapon_models.cpp): where it is, the
-// way it flies and how big (1 flying, bigger as it pops); false none.
+// way it flies and how big; false none (burst, or not fired).
 bool PortBazookaBalloon(float* at, float* way, float* scale)
 {
 	const Balloon& b = s_balloon;
@@ -1619,8 +1648,27 @@ bool PortBazookaBalloon(float* at, float* way, float* scale)
 		return false;
 	at[0] = b.from.x + b.way.x * b.along, at[1] = b.from.y + b.way.y * b.along, at[2] = b.from.z + b.way.z * b.along;
 	way[0] = b.way.x, way[1] = b.way.y, way[2] = b.way.z;
-	*scale = b.pop > 0.0f ? 1.0f + 0.35f * b.pop : 1.0f;
+	*scale = 1.0f;
 	return true;
+}
+
+// Its rubber's pieces now, for drawing: each its place, its tumbling (an axis and an angle) and
+// its size (8 floats); how many
+int PortBazookaBalloonPieces(float* out, int most)
+{
+	int n = 0;
+	for (int i = 0; i < kPieces && n < most; i++) {
+		const Piece& q = s_pieces[i];
+		if (q.life <= 0.0f)
+			continue;
+		float* o = out + n * 8;
+		o[0] = q.at.x, o[1] = q.at.y, o[2] = q.at.z;
+		o[3] = q.axis.x, o[4] = q.axis.y, o[5] = q.axis.z;
+		o[6] = q.spin;
+		o[7] = q.size * (q.life < 4.0f ? q.life / 4.0f : 1.0f); // shrinking away at the end
+		n++;
+	}
+	return n;
 }
 
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }

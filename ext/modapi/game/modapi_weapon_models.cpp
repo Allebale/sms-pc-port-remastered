@@ -21,6 +21,7 @@
 #include <math.h>
 
 bool PortBazookaBalloon(float* at, float* way, float* scale); // modapi_spray_weapons.cpp
+int PortBazookaBalloonPieces(float* out, int most);
 
 namespace {
 
@@ -138,26 +139,57 @@ void balloonCorner(const float* c, const float* fwd, const float* rt, const floa
 	GXColor4u8((u8)(rd > 255 ? 255 : rd), (u8)(g > 255 ? 255 : g), (u8)(b > 255 ? 255 : b), 255);
 }
 
+// its rubber's pieces: each a small curled scrap (two triangles, folded), green, tumbling
+void drawPieces()
+{
+	float q[12 * 8];
+	const int n = PortBazookaBalloonPieces(q, 12);
+	if (!n)
+		return;
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * 6));
+	for (int i = 0; i < n; i++) {
+		const float* o = q + i * 8;
+		const float ax = o[3], ay = o[4], az = o[5], a = o[6], sz = o[7];
+		// two edges across it, turned about its axis by its spin (Rodrigues)
+		const float cs = cosf(a), sn = sinf(a);
+		float e[2][3];
+		const float base[2][3] = {{1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+		for (int k = 0; k < 2; k++) {
+			const float* v = base[k];
+			const float d  = ax * v[0] + ay * v[1] + az * v[2];
+			const float cx = ay * v[2] - az * v[1], cy = az * v[0] - ax * v[2], cz = ax * v[1] - ay * v[0];
+			e[k][0] = (v[0] * cs + cx * sn + ax * d * (1.0f - cs)) * sz;
+			e[k][1] = (v[1] * cs + cy * sn + ay * d * (1.0f - cs)) * sz;
+			e[k][2] = (v[2] * cs + cz * sn + az * d * (1.0f - cs)) * sz;
+		}
+		const float bend[3] = {ax * sz * 0.5f, ay * sz * 0.5f, az * sz * 0.5f}; // its fold
+		const float p0[3] = {o[0] - e[0][0], o[1] - e[0][1], o[2] - e[0][2]};
+		const float p1[3] = {o[0] + e[0][0], o[1] + e[0][1], o[2] + e[0][2]};
+		const float p2[3] = {o[0] + e[1][0] + bend[0], o[1] + e[1][1] + bend[1], o[2] + e[1][2] + bend[2]};
+		const float p3[3] = {o[0] - e[1][0] + bend[0], o[1] - e[1][1] + bend[1], o[2] - e[1][2] + bend[2]};
+		const u8 lit = (u8)(150 + (int)(60.0f * sn)); // catching the light as it turns
+		GXPosition3f32(p0[0], p0[1], p0[2]);
+		GXColor4u8(30, lit, 45, 255);
+		GXPosition3f32(p1[0], p1[1], p1[2]);
+		GXColor4u8(30, lit, 45, 255);
+		GXPosition3f32(p2[0], p2[1], p2[2]);
+		GXColor4u8(40, (u8)(lit - 40), 50, 255);
+		GXPosition3f32(p0[0], p0[1], p0[2]);
+		GXColor4u8(30, lit, 45, 255);
+		GXPosition3f32(p1[0], p1[1], p1[2]);
+		GXColor4u8(30, lit, 45, 255);
+		GXPosition3f32(p3[0], p3[1], p3[2]);
+		GXColor4u8(25, (u8)(lit - 60), 35, 255);
+	}
+	GXEnd();
+}
+
 void BalloonPacket::draw()
 {
+	if (!s_haveView)
+		return;
 	float c[3], way[3], scale;
-	if (!s_haveView || !PortBazookaBalloon(c, way, &scale))
-		return;
-	// its own frame: forward the way it flies, right and up across it
-	float fwd[3] = {way[0], way[1], way[2]};
-	float upw[3] = {0.0f, 1.0f, 0.0f};
-	if (fabsf(fwd[1]) > 0.95f)
-		upw[0] = 1.0f, upw[1] = 0.0f;
-	float rt[3] = {fwd[1] * upw[2] - fwd[2] * upw[1], fwd[2] * upw[0] - fwd[0] * upw[2], fwd[0] * upw[1] - fwd[1] * upw[0]};
-	float rl = sqrtf(rt[0] * rt[0] + rt[1] * rt[1] + rt[2] * rt[2]);
-	if (rl < 1e-4f)
-		return;
-	rt[0] /= rl, rt[1] /= rl, rt[2] /= rl;
-	float up[3] = {rt[1] * fwd[2] - rt[2] * fwd[1], rt[2] * fwd[0] - rt[0] * fwd[2], rt[0] * fwd[1] - rt[1] * fwd[0]};
-	// its size: one that fits in the bazooka's muzzle (about 7 across its middle in first person, 12 on his back)
-	const float r = 6.5f * scale, len = 8.0f * scale;
-	const float wob = (float)(s_balloonFrame++) * 0.9f;
-
+	const bool flying = PortBazookaBalloon(c, way, &scale);
 	Mtx identity;
 	MTXIdentity(identity);
 	GXSetCurrentMtx(GX_PNMTX0);
@@ -181,6 +213,24 @@ void BalloonPacket::draw()
 	GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetFog(GX_FOG_NONE, 0.0f, 0.0f, 0.0f, 0.0f, (GXColor){0, 0, 0, 0});
+	drawPieces();
+	if (!flying)
+		return;
+	// its own frame: forward the way it flies, right and up across it
+	float fwd[3] = {way[0], way[1], way[2]};
+	float upw[3] = {0.0f, 1.0f, 0.0f};
+	if (fabsf(fwd[1]) > 0.95f)
+		upw[0] = 1.0f, upw[1] = 0.0f;
+	float rt[3] = {fwd[1] * upw[2] - fwd[2] * upw[1], fwd[2] * upw[0] - fwd[0] * upw[2], fwd[0] * upw[1] - fwd[1] * upw[0]};
+	float rl = sqrtf(rt[0] * rt[0] + rt[1] * rt[1] + rt[2] * rt[2]);
+	if (rl < 1e-4f)
+		return;
+	rt[0] /= rl, rt[1] /= rl, rt[2] /= rl;
+	float up[3] = {rt[1] * fwd[2] - rt[2] * fwd[1], rt[2] * fwd[0] - rt[0] * fwd[2], rt[0] * fwd[1] - rt[1] * fwd[0]};
+	// its size: one that fits in the bazooka's muzzle (about 7 across its middle in first person, 12 on his back)
+	const float r = 6.5f * scale, len = 8.0f * scale;
+	const float wob = (float)(s_balloonFrame++) * 0.9f;
+
 	const int kRings = 10, kAround = 16;
 	for (int i = 0; i < kRings; i++) { // a strip round it for each band, back to front
 		const float a0 = -1.0f + 2.0f * (float)i / kRings, a1 = -1.0f + 2.0f * (float)(i + 1) / kRings;
@@ -266,7 +316,8 @@ void PortWeaponModelKeep()
 bool PortWeaponModelEntry()
 {
 	float at[3], way[3], scale; // the bazooka's balloon flying: entered too
-	if (s_haveView && j3dSys.getDrawBuffer(0) && PortBazookaBalloon(at, way, &scale))
+	float pieces[8];
+	if (s_haveView && j3dSys.getDrawBuffer(0) && (PortBazookaBalloon(at, way, &scale) || PortBazookaBalloonPieces(pieces, 1)))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_balloonPacket, 0);
 	if (s_shown < 0 || !j3dSys.getDrawBuffer(0))
 		return s_noFludd;
