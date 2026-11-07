@@ -169,6 +169,7 @@ bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart
 bool s_rocketOuch;
 f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in percent)
 f32 s_muteVoiceUntil;     // Mario's own voice left out until then (one of these plays)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
+f32 s_goop = 1.0f;  // how much goop the weapons clean, times the game's own (set_weapon's flags, SMS_SPRAY_GOOP_SHIFT)
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
@@ -906,7 +907,7 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
 	const int shaken = shakeObjects(at, r);
-	cleanGoop(at, r * 1.2f);
+	cleanGoop(at, r * 1.2f * s_goop);
 	explode(at, r);
 	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies and %d things in it\n", at.x, at.y, at.z, n, shaken);
@@ -1494,7 +1495,18 @@ void followStraight()
 		return;
 	TModelWaterManager* w = gpModelWaterManager;
 	for (int i = 0; i < (int)w->mParticleCount; i++) {
-		if ((w->mParticleFlagSOA[i] & 0xf) != 1)
+		const int landed = w->mParticleFlagSOA[i] & 0xf;
+		if (landed == 2 || landed == 3) { // on the ground or a wall: a rifle's or submachine gun's cleans more goop
+			const int wpn = (w->mParticleAttackSOA[i] >> kTagShift) & 0xf;
+			if ((wpn == RIFLE || wpn == SMG) && s_goop > 1.0f && gpPollution) {
+				const JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
+				const f32 own = w->mWaterParticleTypes[w->mParticleTypeSOA[i]]->mCleanSize.get() * 32.0f; // as the game's splash
+				gpPollution->clean(at.x, at.y, at.z, own * s_goop);
+				w->mParticleAttackSOA[i] &= 0xff; // once (no longer a weapon's: it has hit what it will)
+			}
+			continue;
+		}
+		if (landed != 1)
 			continue;
 		const int tag = (w->mParticleAttackSOA[i] >> kTagShift) & 0x7f;
 		if (!(tag & 0xf))
@@ -1716,6 +1728,8 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] defeated enemies drop hearts %s\n", (flags & 2048) ? "on" : "off");
 	s_hearts     = (flags & 2048) != 0;
 	s_rocketOuch = (flags & 4096) != 0;
+	const int goop = (flags >> 20) & 127; // tenths; 0: the game's own (an older mod)
+	s_goop         = goop ? (f32)goop * 0.1f : 1.0f;
 	const int vol = (flags >> 13) & 127; // percent; 0: as recorded (an older mod)
 	s_voiceVolume = vol ? (f32)(vol < 100 ? vol : 100) * 0.01f : 1.0f;
 	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
