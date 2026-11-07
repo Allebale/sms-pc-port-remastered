@@ -120,6 +120,7 @@ f32 s_rocketVX, s_rocketVZ, s_rocketTop; // his speed across the ground in the a
 void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
+bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
@@ -288,16 +289,28 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		return;
 	const Weapon& k = kWeapons[weapon];
 	const bool fresh = h->lastShot != shot; // this shot's first drop to reach it
-	if (moves(e) && h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
+	// already in the air, with SMS_SPRAY_AIR_FORWARD (a mod's setting): the bazooka's hit pushes it on
+	// forward, away from Mario, and does not throw it up again
+	TMario* mario = gpMarioOriginal;
+	if (s_airForward && weapon == BAZOOKA && fresh && mario && moves(e) && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+		const f32 fx = e->mPosition.x - mario->mPosition.x, fz = e->mPosition.z - mario->mPosition.z;
+		const f32 fl = sqrtf(fx * fx + fz * fz);
+		if (fl > 1.0f)
+			dx = fx / fl, dz = fz / fl;
 		h->vx = dx * k.shove;
 		h->vz = dz * k.shove;
-	}
-	if (fresh && k.lift > 0.0f && moves(e)) { // thrown into the air: the game's own fall brings it down
-		JGeometry::TVec3<f32> v = e->getVelocity();
-		v.y = k.lift;
-		e->setVelocity(v);
-		e->mPosition.y += 8.0f;
-		e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	} else {
+		if (moves(e) && h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
+			h->vx = dx * k.shove;
+			h->vz = dz * k.shove;
+		}
+		if (fresh && k.lift > 0.0f && moves(e)) { // thrown into the air: the game's own fall brings it down
+			JGeometry::TVec3<f32> v = e->getVelocity();
+			v.y = k.lift;
+			e->setVelocity(v);
+			e->mPosition.y += 8.0f;
+			e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+		}
 	}
 	if (!fresh)
 		return;
@@ -1415,6 +1428,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 	if (((flags & 32) != 0) != s_bosses)
 		fprintf(stderr, "[weapons] made for bosses %s\n", (flags & 32) ? "on" : "off");
 	s_bosses = (flags & 32) != 0;
+	if (((flags & 64) != 0) != s_airForward)
+		fprintf(stderr, "[weapons] the bazooka pushes enemies in the air forward %s\n", (flags & 64) ? "on" : "off");
+	s_airForward = (flags & 64) != 0;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
 	s_defeatNormal = (flags & 4) != 0;
