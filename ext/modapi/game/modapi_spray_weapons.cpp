@@ -772,8 +772,16 @@ void mantaFinish(TBossManta* m, bool now)
 // Eely-Mouth's teeth (TBossEelTooth, Noki Bay): each drop of water takes one of a tooth's points
 // (mSLToothMaxHitPoint, 50) a couple of frames apart; at 1 it is clean (a bad one comes off). With
 // the weapons made for bosses each shot takes a share at once: clean in the rifle's 1 shot, the
-// bazooka's 1 (every tooth in its burst), the submachine gun's 10.
-const int kToothShots[WEAPONS] = {0, 0, 1, 1, 10};
+// bazooka's 1 (every tooth in its burst), the submachine gun's a second of firing (at its fire rate).
+const int kToothShots[WEAPONS] = {0, 0, 1, 1, 0};
+int toothShots(int weapon)
+{
+	if (weapon != SMG)
+		return kToothShots[weapon];
+	const f32 every = kWeapons[SMG].every > 0.01f ? kWeapons[SMG].every : 0.14f;
+	const int n     = (int)(1.0f / every + 0.5f);
+	return n > 1 ? n : 1;
+}
 // a tooth's part of a point owed (toothHit)
 f32& toothOwed(TBossEelTooth* t)
 {
@@ -789,7 +797,7 @@ f32& toothOwed(TBossEelTooth* t)
 // burst), so it is made here
 void toothHit(TBossEelTooth* t, int weapon, int shot, bool now)
 {
-	if (!t || !t->mOwner || weapon <= NORMAL || weapon >= WEAPONS || !kToothShots[weapon])
+	if (!t || !t->mOwner || weapon <= NORMAL || weapon >= WEAPONS || !toothShots(weapon))
 		return;
 	if (t->mOwner->mToothBroken || t->mHitPoints <= 1 || t->mDamageCooldown != 0)
 		return;
@@ -800,9 +808,9 @@ void toothHit(TBossEelTooth* t, int weapon, int shot, bool now)
 	k.tooth = t, k.shot = shot;
 	const int most = t->mOwner->getBossEelParams().mSLToothMaxHitPoint.get();
 	// its share of the 49 points to clean, the parts of a point carried to the next shot (the
-	// submachine gun's 10 shots on 49 points: 4.9 each)
+	// submachine gun's 7 shots a second on 49 points: 7 each)
 	f32& owed = toothOwed(t);
-	const f32 share = (f32)(most - 1) / (f32)kToothShots[weapon] + owed;
+	const f32 share = (f32)(most - 1) / (f32)toothShots(weapon) + owed;
 	int take        = (int)(share + 0.001f);
 	owed            = share - (f32)take;
 	if (take < 1)
