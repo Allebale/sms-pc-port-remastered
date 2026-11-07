@@ -23,6 +23,9 @@
 #include "sms_gx/gx_pc.h"
 #include "port_menu_draw.h"
 
+#include <Enemy/Rocket.hpp>
+#include <Enemy/Conductor.hpp>
+#include <Enemy/EnemyManager.hpp>
 #include <math.h>
 #include <string.h>
 #include "port_framerate.h"
@@ -469,6 +472,26 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 }
 
 // As FLUDD is calculated for the view (TWaterGun::perform): moved in front of it.
+// A rocket Mario has picked up (TRocket, the roller coaster's: on FLUDD's nozzle, from its emit matrix)
+// placed again after FLUDD is held in view: the game placed it on FLUDD on his back (over his head,
+// seen from his eyes); now on the held FLUDD's nozzle, at its scale (k)
+void placeRockets(f32 k)
+{
+	if (!gpConductor)
+		return;
+	for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+			TRocket* r = dynamic_cast<TRocket*>((*it)->getObj(i));
+			if (!r || !r->mIsPossessed || !r->getModel())
+				continue;
+			r->calcRootMatrix(); // from the emit matrix now the held one's
+			const Vec& sc  = r->getScaling();
+			const Vec less = {sc.x * k, sc.y * k, sc.z * k};
+			r->getModel()->setBaseScale(less);
+			r->getModel()->calc();
+		}
+}
+
 void PortWeaponModelView(MtxPtr view); // modapi_weapon_models.cpp
 void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
@@ -704,6 +727,7 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	MTXCopy(nb, s_lastBase);
 	s_haveLast = true;
 	s_placed   = true;
+	placeRockets(k);
 }
 
 // The water's way from the held FLUDD (TWaterGun::getEmitPosDirSpeed): to the view's aim.
