@@ -827,7 +827,7 @@ void drawDrops(int kind)
 			if (held) {
 				const f32 ex = p.x - eye[0], ey = p.y - eye[1], ez = p.z - eye[2];
 				const f32 d  = sqrtf(ex * ex + ey * ey + ez * ez) / 500.0f;
-				r *= 0.45f * (d < 0.3f ? 0.3f : d > 1.0f ? 1.0f : d);
+				r *= 0.6f * (d < 0.5f ? 0.5f : d > 1.0f ? 1.0f : d);
 			}
 			f32 fx = v.x, fy = v.y, fz = v.z;
 			f32 fl = sqrtf(fx * fx + fy * fy + fz * fz);
@@ -844,6 +844,10 @@ void drawDrops(int kind)
 			f32 len = fl * 0.75f;
 			len     = len > r * 2.2f ? len : r * 2.2f;
 			len     = len < r * 6.0f ? len : r * 6.0f;
+			if (held) { // thin: drawn out further, so each reaches the next and the stream is unbroken
+				len = fl * 1.4f > len ? fl * 1.4f : len;
+				len = len < 160.0f ? len : 160.0f;
+			}
 			const f32 u0 = (f32)(i % 7) * 0.13f + fl0 / kTile, v0 = (f32)(i % 5) * 0.17f;
 			f32 pts[kBands + 1][kAround][3];
 			int shade[kBands + 1][kAround];
@@ -1349,7 +1353,6 @@ bool PortGoopEmit(const TWaterEmitInfo& asked, int* made)
 	TWaterEmitInfo info(asked);
 	const s16 base = asked.mAttack.get();
 	info.mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (s_kind << kTagShift)));
-	info.mPow.set(asked.mPow.get() * 1.4f); // further than water: not landing at Mario's feet as he walks
 	s_emitting = true;
 	*made      = gpModelWaterManager->emitRequest(info);
 	s_emitting = false;
