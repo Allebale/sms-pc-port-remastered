@@ -20,6 +20,10 @@
 #include <JSystem/J3D/J3DGraphBase/J3DPacket.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DDrawBuffer.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <Player/NozzleBase.hpp>
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
 
@@ -45,6 +49,9 @@
 #include <string.h>
 
 extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
+// a picture shown in place of a texture, by its data (platform/gx/src/gx_texture.cpp)
+extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const unsigned char* rgba, int w, int h)
+    __attribute__((weak));
 
 namespace {
 
@@ -322,8 +329,11 @@ bool anyPuddle()
 	return false;
 }
 
+void undress();
+void dressFludd();
 void stageSetup()
 {
+	undress(); // (its textures' memory goes with the stage)
 	memset(s_puddles, 0, sizeof s_puddles);
 	memset(s_zaps, 0, sizeof s_zaps);
 }
@@ -333,6 +343,7 @@ void afterMovement()
 	const f32 dt = port_frame_scale() / 30.0f;
 	s_time += dt;
 	zaps();
+	dressFludd();
 	bool any = false;
 	for (int i = 0; i < kPuddles; i++) {
 		Puddle& p = s_puddles[i];
@@ -428,8 +439,16 @@ f32 smooth(f32 a, f32 b, f32 x)
 }
 
 // a texture into the GameCube's RGBA8 layout (4x4 blocks: alpha and red, then green and blue)
+u8 s_rgbaElectric[kTex * kTex * 4], s_rgbaFire[kTex * kTex * 4]; // as rows, for FLUDD's own look
+
 void store(u8* out, const f32* rgb)
 {
+	u8* lin = out == s_texFire ? s_rgbaFire : s_rgbaElectric;
+	for (int i = 0; i < kTex * kTex; i++) {
+		for (int ch = 0; ch < 3; ch++)
+			lin[i * 4 + ch] = (u8)(rgb[i * 3 + ch] < 0.0f ? 0 : rgb[i * 3 + ch] > 255.0f ? 255 : (int)rgb[i * 3 + ch]);
+		lin[i * 4 + 3] = 255;
+	}
 	for (int by = 0; by < kTex / 4; by++)
 		for (int bx = 0; bx < kTex / 4; bx++) {
 			u8* block = out + ((by * (kTex / 4) + bx) * 64);
@@ -549,63 +568,93 @@ void textured(int kind)
 	GXSetTevOp(GX_TEVSTAGE0, GX_MODULATE);
 }
 
-// the stream's drops of one kind: each a small blob of goop, longer along its flight
+// the stream's drops of one kind: each a smooth round blob of goop, drawn out along its flight so
+// the blobs run into one another as a stream; lit from the view (its middle bright, its edges dim)
 void drawDrops(int kind)
 {
 	TModelWaterManager* w = gpModelWaterManager;
 	if (!w || !port_spray_tagged_drops)
 		return;
-	int n = 0;
-	for (int i = 0; i < (int)w->mParticleCount; i++)
-		if ((w->mParticleFlagSOA[i] & 0xf) == 1 && w->mParticleLifetimeSOA[i] > 0.0f && dropKind(i) == kind)
-			n++;
-	if (!n)
-		return;
-	n = n < 600 ? n : 600;
-	textured(kind);
-	const f32 fl0 = flow(kind);
-	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * 24));
-	int done = 0;
-	for (int i = 0; i < (int)w->mParticleCount && done < n; i++) {
-		if ((w->mParticleFlagSOA[i] & 0xf) != 1 || w->mParticleLifetimeSOA[i] <= 0.0f || dropKind(i) != kind)
-			continue;
-		done++;
-		const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
-		const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
-		const f32 r = w->mParticleSizeSOA[i] * 0.5f * statsOf(kind).drop;
-		f32 fx = v.x, fy = v.y, fz = v.z;
-		f32 fl = sqrtf(fx * fx + fy * fy + fz * fz);
-		if (fl < 1e-3f)
-			fx = 0.0f, fy = 1.0f, fz = 0.0f, fl = 1.0f;
-		fx /= fl, fy /= fl, fz /= fl;
-		f32 ax = -fz, ay = 0.0f, az = fx; // across it
-		f32 al = sqrtf(ax * ax + az * az);
-		if (al < 1e-3f)
-			ax = 1.0f, az = 0.0f, al = 1.0f;
-		ax /= al, az /= al;
-		const f32 bx = fy * az - fz * ay, by = fz * ax - fx * az, bz = fx * ay - fy * ax;
-		const f32 len = r * 1.8f;
-		const f32 tip[2][3] = {{p.x + fx * len, p.y + fy * len, p.z + fz * len}, {p.x - fx * len, p.y - fy * len, p.z - fz * len}};
-		f32 ring[4][3];
-		for (int k = 0; k < 4; k++) {
-			const f32 c = k == 0 ? 1.0f : k == 2 ? -1.0f : 0.0f, s = k == 1 ? 1.0f : k == 3 ? -1.0f : 0.0f;
-			ring[k][0] = p.x + (ax * c + bx * s) * r;
-			ring[k][1] = p.y + (ay * c + by * s) * r;
-			ring[k][2] = p.z + (az * c + bz * s) * r;
-		}
-		// the texture over it, a piece of it each drop (by its place and number)
-		const f32 u0 = (f32)(i % 7) * 0.13f + fl0 / kTile, v0 = (f32)(i % 5) * 0.17f;
-		const f32 tu[2] = {u0, u0 + 0.25f}, ru[4] = {u0 + 0.12f, u0 + 0.12f, u0 + 0.12f, u0 + 0.12f};
-		const f32 rv[4] = {v0, v0 + 0.06f, v0 + 0.12f, v0 + 0.18f};
-		for (int t = 0; t < 2; t++)
-			for (int k = 0; k < 4; k++) {
-				const int j = (k + 1) & 3;
-				tcorner(tip[t][0], tip[t][1], tip[t][2], 200, tu[t], v0 + 0.09f);
-				tcorner(ring[k][0], ring[k][1], ring[k][2], 255, ru[k], rv[k]);
-				tcorner(ring[j][0], ring[j][1], ring[j][2], 255, ru[j], rv[j]);
-			}
+	const int kAround = 8, kBands = 4, kVerts = kAround * 6 * (kBands - 1); // (fans at both ends, quads between)
+	const int kBatch = 60000 / kVerts;
+	f32 ring[kBands + 1][2]; // each latitude's (along, across)
+	for (int b = 0; b <= kBands; b++) {
+		const f32 th = 3.14159265f * (f32)b / kBands;
+		ring[b][0] = cosf(th), ring[b][1] = sinf(th);
 	}
-	GXEnd();
+	f32 ca[kAround], sa[kAround];
+	for (int k = 0; k < kAround; k++)
+		ca[k] = cosf(6.2831853f * k / kAround), sa[k] = sinf(6.2831853f * k / kAround);
+	const f32 vx = s_view[2][0], vy = s_view[2][1], vz = s_view[2][2]; // toward the viewer
+	const f32 fl0 = flow(kind);
+	int i = 0;
+	bool set = false;
+	while (i < (int)w->mParticleCount) {
+		int n = 0, j = i;
+		for (; j < (int)w->mParticleCount && n < kBatch; j++)
+			if ((w->mParticleFlagSOA[j] & 0xf) == 1 && w->mParticleLifetimeSOA[j] > 0.0f && dropKind(j) == kind)
+				n++;
+		if (!n)
+			break;
+		if (!set)
+			textured(kind), set = true;
+		GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * kVerts));
+		for (; i < j; i++) {
+			if ((w->mParticleFlagSOA[i] & 0xf) != 1 || w->mParticleLifetimeSOA[i] <= 0.0f || dropKind(i) != kind)
+				continue;
+			const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+			const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
+			const f32 r = w->mParticleSizeSOA[i] * 0.55f * statsOf(kind).drop;
+			f32 fx = v.x, fy = v.y, fz = v.z;
+			f32 fl = sqrtf(fx * fx + fy * fy + fz * fz);
+			if (fl < 1e-3f)
+				fx = 0.0f, fy = 1.0f, fz = 0.0f, fl = 1.0f;
+			fx /= fl, fy /= fl, fz /= fl;
+			f32 ax = -fz, ay = 0.0f, az = fx; // across it
+			f32 al = sqrtf(ax * ax + az * az);
+			if (al < 1e-3f)
+				ax = 1.0f, az = 0.0f, al = 1.0f;
+			ax /= al, az /= al;
+			const f32 bx = fy * az - fz * ay, by = fz * ax - fx * az, bz = fx * ay - fy * ax;
+			// drawn out to reach the next drop (its flight of a frame and a half), at least twice as long as wide
+			f32 len = fl * 0.75f;
+			len     = len > r * 2.2f ? len : r * 2.2f;
+			len     = len < r * 6.0f ? len : r * 6.0f;
+			const f32 u0 = (f32)(i % 7) * 0.13f + fl0 / kTile, v0 = (f32)(i % 5) * 0.17f;
+			f32 pts[kBands + 1][kAround][3];
+			int shade[kBands + 1][kAround];
+			f32 uv[kBands + 1][kAround][2];
+			for (int b = 0; b <= kBands; b++)
+				for (int k = 0; k < kAround; k++) {
+					const f32 along = ring[b][0] * len, across = ring[b][1] * r;
+					const f32 nx = ax * ca[k] + bx * sa[k], ny = ay * ca[k] + by * sa[k], nz = az * ca[k] + bz * sa[k];
+					pts[b][k][0] = p.x + fx * along + nx * across;
+					pts[b][k][1] = p.y + fy * along + ny * across;
+					pts[b][k][2] = p.z + fz * along + nz * across;
+					// its surface's way out (round, roughly), toward the viewer: brighter
+					const f32 ox = nx * ring[b][1] + fx * ring[b][0], oy = ny * ring[b][1] + fy * ring[b][0], oz = nz * ring[b][1] + fz * ring[b][0];
+					const f32 facing = ox * vx + oy * vy + oz * vz;
+					shade[b][k] = (int)(150.0f + 105.0f * (facing > 0.0f ? facing : 0.0f));
+					uv[b][k][0] = u0 + (f32)k / kAround * 0.35f;
+					uv[b][k][1] = v0 + (f32)b / kBands * 0.25f;
+				}
+			for (int b = 0; b < kBands; b++)
+				for (int k = 0; k < kAround; k++) {
+					const int m = (k + 1) % kAround;
+					if (b > 0) {
+						tcorner(pts[b][k][0], pts[b][k][1], pts[b][k][2], shade[b][k], uv[b][k][0], uv[b][k][1]);
+						tcorner(pts[b][m][0], pts[b][m][1], pts[b][m][2], shade[b][m], uv[b][m][0], uv[b][m][1]);
+						tcorner(pts[b + 1][k][0], pts[b + 1][k][1], pts[b + 1][k][2], shade[b + 1][k], uv[b + 1][k][0], uv[b + 1][k][1]);
+					}
+					if (b < kBands - 1) {
+						tcorner(pts[b][m][0], pts[b][m][1], pts[b][m][2], shade[b][m], uv[b][m][0], uv[b][m][1]);
+						tcorner(pts[b + 1][m][0], pts[b + 1][m][1], pts[b + 1][m][2], shade[b + 1][m], uv[b + 1][m][0], uv[b + 1][m][1]);
+						tcorner(pts[b + 1][k][0], pts[b + 1][k][1], pts[b + 1][k][2], shade[b + 1][k], uv[b + 1][k][0], uv[b + 1][k][1]);
+					}
+				}
+		}
+		GXEnd();
+	}
 }
 
 void basis(const Puddle& p, f32* t, f32* b)
@@ -752,6 +801,94 @@ void GoopPacket::draw()
 		GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 	}
+}
+
+// ---- FLUDD dressed in its goop: its textures (body and nozzles) shown as the goop's, throbbing
+// brighter and dimmer and flowing (a picture in place of each, renewed twelve times a second);
+// its own again when another weapon is chosen. Cut-out textures (alpha-tested) are left as they are.
+
+struct Dressed {
+	const void* data;
+	u32 bytes;
+};
+const int kDressMost = 48;
+Dressed s_dressed[kDressMost];
+int s_dressedCount;
+f32 s_dressNext;
+u8 s_pulse[kTex * kTex * 4];
+
+void undress()
+{
+	if (GXPC_SetTextureOverride)
+		for (int i = 0; i < s_dressedCount; i++)
+			GXPC_SetTextureOverride(s_dressed[i].data, s_dressed[i].bytes, 0, 0, 0);
+	s_dressedCount = 0;
+}
+
+void dressModel(J3DModel* model)
+{
+	J3DModelData* data   = model ? model->getModelData() : 0;
+	J3DTexture* textures = data ? data->getTexture() : 0;
+	if (!textures)
+		return;
+	for (u16 i = 0; i < textures->getNum(); i++) {
+		const ResTIMG* t = textures->getResTIMG(i);
+		if (!t || t->alphaEnabled == 1)
+			continue; // a cut-out
+		// where GX reads it: the header's offset added in 32 bits, as on the console
+		const void* at  = (const void*)(uintptr_t)(u32)((uintptr_t)t + t->imageDataOffset);
+		const u32 bytes = GXGetTexBufferSize(t->width, t->height, t->format, GX_FALSE, 0);
+		GXPC_SetTextureOverride(at, bytes, s_pulse, kTex, kTex);
+		bool known = false;
+		for (int k = 0; k < s_dressedCount && !known; k++)
+			known = s_dressed[k].data == at;
+		if (!known && s_dressedCount < kDressMost) {
+			s_dressed[s_dressedCount].data  = at;
+			s_dressed[s_dressedCount].bytes = bytes;
+			s_dressedCount++;
+		}
+	}
+}
+
+void dressFludd()
+{
+	if (!GXPC_SetTextureOverride)
+		return;
+	TMario* m    = gpMarioOriginal;
+	TWaterGun* g = m ? m->mWaterGun : 0;
+	if (!s_kind || !g) {
+		if (s_dressedCount)
+			undress();
+		return;
+	}
+	if (s_time < s_dressNext && s_dressedCount)
+		return;
+	s_dressNext = s_time + 1.0f / 12.0f;
+	makeTextures();
+	const bool fire = s_kind == kFire;
+	const u8* base  = fire ? s_rgbaFire : s_rgbaElectric;
+	const f32 beat  = 0.5f + 0.5f * sinf(s_time * (fire ? 5.0f : 8.0f));
+	const f32 light = 0.7f + 0.5f * beat; // throbbing
+	const int sx = (int)(s_time * 10.0f) & (kTex - 1), sy = (int)(s_time * 4.0f) & (kTex - 1); // flowing
+	for (int y = 0; y < kTex; y++)
+		for (int x = 0; x < kTex; x++) {
+			const u8* c = base + ((((y + sy) & (kTex - 1)) * kTex) + ((x + sx) & (kTex - 1))) * 4;
+			u8* o       = s_pulse + (y * kTex + x) * 4;
+			for (int ch = 0; ch < 3; ch++) {
+				const int v = (int)((f32)c[ch] * light);
+				o[ch]       = (u8)(v > 255 ? 255 : v);
+			}
+			o[3] = 255;
+		}
+	const int before = s_dressedCount;
+	dressModel(g->mFluddModel ? g->mFluddModel->getModel() : 0);
+	for (int n = 0; n < 6; n++) {
+		TNozzleBase* nozzle = g->mNozzleList[n];
+		if (nozzle && nozzle->getMActor())
+			dressModel(nozzle->getMActor()->getModel());
+	}
+	if (s_dressedCount != before)
+		fprintf(stderr, "[goop] FLUDD dressed in %s goop (%d textures)\n", fire ? "fire" : "electric", s_dressedCount);
 }
 
 PortExtension s_extension;
