@@ -52,6 +52,7 @@
 extern "C" int port_audio_dsp_frame_pending(void) __attribute__((weak));
 extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
 extern "C" void port_dtk_mix(s16* lr, size_t frames, u32 outRate);
+extern "C" void port_clip_mix(int16_t* lr, size_t frames, uint32_t outRate); // port_clips.cpp: the port's own clips
 
 namespace {
 
@@ -544,6 +545,7 @@ void dma_block()
 			g.mix[i * 2 + 1] = g.swap ? src[i * 2] : src[i * 2 + 1];
 		}
 		port_dtk_mix(g.mix.data(), frames, kRate);
+		port_clip_mix(g.mix.data(), frames, kRate);
 		if (g.wav) {
 			fwrite(g.mix.data(), 4, frames, g.wav);
 			g.wavBytes += (u32)frames * 4;

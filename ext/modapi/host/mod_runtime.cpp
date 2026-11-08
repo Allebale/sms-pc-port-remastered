@@ -786,6 +786,7 @@ void dropRegistrations(SmsMod* m)
 		modg_spray_rocket_jump(0.0f);
 		modg_spray_far_scale(1.0f);
 		modg_spray_shadow_damage(1.0f);
+		modg_spray_goop_area(0.0f);
 		modg_held_fludd_zoom(0.0f, 0);
 	}
 	if (m->setsView) {
@@ -1185,6 +1186,8 @@ int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
 		modg_spray_far_scale(st->far_scale);
 	if (st && st->size >= offsetof(SmsSprayStats, shadow_damage) + sizeof(float))
 		modg_spray_shadow_damage(st->shadow_damage);
+	if (weapon == SMS_SPRAY_BAZOOKA) // its goop area: only from a mod that sets it
+		modg_spray_goop_area(st && st->size >= offsetof(SmsSprayStats, goop_area) + sizeof(float) ? st->goop_area : 0.0f);
 	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump: only from a mod that sets it
 		modg_spray_rocket_jump(st && st->size >= offsetof(SmsSprayStats, self_jump) + sizeof(float) ? st->self_jump : 0.0f);
 	if (!st || st->size < offsetof(SmsSprayStats, lift))

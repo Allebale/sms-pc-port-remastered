@@ -1,0 +1,31 @@
+Reason: a rocket Mario picked up (the roller coaster's, TRocket) sits on FLUDD's nozzle through its emit matrix; with FLUDD held in view (first person, api->held_fludd) that matrix is the one on his back for most of the frame, so it showed over his head. It now takes the held FLUDD's (the last placed) and its scale. Without FLUDD held in view, nothing changes.
+
+--- a/src/Enemy/rocket.cpp
++++ b/src/Enemy/rocket.cpp
+@@ -34,6 +34,9 @@
+ #ifdef TARGET_PC
+ #include <sms_modhook.h>
+ #include <sms_modhook.h>
++// FLUDD held in view (first person, ext/modapi/game/modapi_held_fludd.cpp): its emit matrix there and
++// its scale, or null (not held)
++MtxPtr PortFluddHeldEmitMtx(f32* scale);
+ #endif
+ 
+ // The rocket's orientation while Mario carries it: the model is authored
+@@ -183,6 +186,16 @@
+ 		if (mSpine->getCurrentNerve() == &TNerveRocketFly::theNerve()) {
+ 			mtx.translation(getPosition().x, getPosition().y, getPosition().z);
+ 		} else {
++#ifdef TARGET_PC
++			// on FLUDD held in view (first person): there, at its scale, not on his back
++			f32 heldScale = 1.0f;
++			if (MtxPtr held = PortFluddHeldEmitMtx(&heldScale)) {
++				MTXCopy(held, (MtxPtr)mtx);
++				JGeometry::TVec3<f32> less = getScaling();
++				less.scale(heldScale);
++				getModel()->setBaseScale(less);
++			} else
++#endif
+ 			MTXCopy(SMS_GetMarioWaterGun()->getEmitMtx(0), (MtxPtr)mtx);
+ 
+ 			JGeometry::TVec3<f32> dir[3];

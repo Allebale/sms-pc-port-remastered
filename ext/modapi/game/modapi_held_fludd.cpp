@@ -307,8 +307,9 @@ bool PortFluddHeld(TMario* mario)
 	TWaterGun* g = mario->mWaterGun;
 	if (!g || !g->mFluddModel)
 		return false;
-	const int n = g->mCurrentNozzle;
-	return n == TWaterGun::Spray || n == TWaterGun::Underwater;
+	// the spray nozzle only: the underwater one is a jet pack, steered by the stick and pushing him
+	// the other way from its water, so it stays on his back
+	return g->mCurrentNozzle == TWaterGun::Spray;
 }
 
 // FLUDD on his back while a spray weapon fires from it (third person, SMS_SPRAY_THIRD_PERSON):
@@ -469,11 +470,27 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 }
 
 // As FLUDD is calculated for the view (TWaterGun::perform): moved in front of it.
+// FLUDD held in view's emit matrix (after it is placed) and its scale: a rocket Mario picked up (the
+// roller coaster's, TRocket::calcRootMatrix) sits on its nozzle there, not on his back's
+Mtx s_heldEmit;
+f32 s_heldEmitScale = 1.0f;
+bool s_haveHeldEmit;
+TWaterGun* s_heldEmitGun;
+
+void PortWeaponModelView(MtxPtr view); // modapi_weapon_models.cpp
 void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
 	s_placed = false;
+	if (g && g != s_heldEmitGun)
+		s_haveHeldEmit = false; // another FLUDD (another stage): placed afresh
+	if (graphics)
+		PortWeaponModelView(graphics->getViewMtx()); // the frame's view (the bazooka's balloon)
 	PortWeaponModelHide(); // shown again below, held with the bazooka chosen
 	PortWeaponModelNoFludd(g && PortFluddHeld(g->mMario) && PortSprayWeaponId() >= 2 && PortSprayWeaponId() <= 4);
+	if (g && g->mMario && PortFluddHeld(g->mMario) && g->mMario->checkFlag(MARIO_FLAG_GAME_OVER)) {
+		PortWeaponModelNoFludd(true); // he is dead (or dying): FLUDD held in view and the weapon's model hidden
+		return;
+	}
 	if (g && graphics && !PortFluddHeld(g->mMario))
 		onBack(g, graphics);
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
@@ -697,6 +714,22 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	MTXCopy(nb, s_lastBase);
 	s_haveLast = true;
 	s_placed   = true;
+	if (MtxPtr em2 = g->getEmitMtx(0)) {
+		MTXCopy(em2, s_heldEmit);
+		s_heldEmitScale = k;
+		s_haveHeldEmit  = true;
+		s_heldEmitGun   = g;
+	}
+}
+
+// FLUDD held in view's emit matrix and scale, or null while it is not held (TRocket, a patch)
+MtxPtr PortFluddHeldEmitMtx(f32* scale)
+{
+	if (!s_haveHeldEmit || !s_heldEmitGun || !s_heldEmitGun->mMario || !PortFluddHeld(s_heldEmitGun->mMario))
+		return nullptr;
+	if (scale)
+		*scale = s_heldEmitScale;
+	return s_heldEmit;
 }
 
 // The water's way from the held FLUDD (TWaterGun::getEmitPosDirSpeed): to the view's aim.
