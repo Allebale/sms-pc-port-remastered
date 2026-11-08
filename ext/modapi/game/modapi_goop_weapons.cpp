@@ -59,6 +59,8 @@ namespace {
 const int kTagShift = 8;  // the kind in a drop's attack, above the game's own (as the spray weapons')
 const int kFire     = 5;  // SMS_SPRAY_FIRE_GOOP
 const int kElectric = 6;  // SMS_SPRAY_ELECTRIC_GOOP
+const int kBlack    = 7;  // SMS_SPRAY_BLACK_GOOP: slippery, Mario walks and slides fast through it
+bool isKind(int k) { return k == kFire || k == kElectric || k == kBlack; }
 
 int s_kind;           // the goop weapon chosen: kFire, kElectric, or 0 none
 bool s_defeat;        // it may defeat enemies
@@ -77,8 +79,9 @@ struct Stats {
 	f32 water; // the water it uses, times FLUDD's own
 };
 const Stats kDefaults = {1.0f, 1.0f, 1.0f, 1.0f, 1, 1.0f};
-Stats s_stats[2]      = {kDefaults, kDefaults};
-Stats& statsOf(int kind) { return s_stats[kind == kElectric ? 1 : 0]; }
+Stats s_stats[3]      = {kDefaults, kDefaults, kDefaults};
+f32 s_blackSpeed      = 1.0f; // black goop's speed, times its own
+Stats& statsOf(int kind) { return s_stats[kind == kElectric ? 1 : kind == kBlack ? 2 : 0]; }
 
 // a puddle of goop on the ground
 struct Puddle {
@@ -141,7 +144,7 @@ int dropKind(int i)
 	if (!port_spray_tagged_drops || !w || i < 0 || i >= (int)w->mParticleCount)
 		return 0;
 	const int k = ((unsigned short)w->mParticleAttackSOA[i] >> kTagShift) & 0xf;
-	return k == kFire || k == kElectric ? k : 0;
+	return isKind(k) ? k : 0;
 }
 
 f32 lifeOf(const Puddle& p) { return kLife * statsOf(p.kind).life; }
@@ -275,6 +278,8 @@ void washWallAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
 // an enemy in the stream or the goop: shocked or set burning (once), defeated when that is over
 void burn(TSmallEnemy* e, int kind)
 {
+	if (kind == kBlack)
+		return; // (only slippery)
 	if (!s_defeat || !e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return;
 	Zap* free = 0;
@@ -357,6 +362,33 @@ void zaps()
 	}
 }
 
+// black goop under Mario: he runs faster and faster through it (up to twice his own speed, times
+// the mod's setting), and a slide or a dive's belly slide keeps its speed instead of slowing down
+f32 s_slideSpeed;
+f32 s_slipAt = -1.0f;
+void slippery(TMario* m)
+{
+	if (s_slipAt == s_time)
+		return; // once a tick
+	if (s_time - s_slipAt > 0.1f)
+		s_slideSpeed = m->mForwardVel; // just come onto it
+	s_slipAt          = s_time;
+	const u32 st      = m->mStatus;
+	const bool slide  = st == 0x800456 || st == 0x84045D; // a dive's belly slide
+	const f32 fastest = 58.0f * s_blackSpeed;
+	if (slide) {
+		if (m->mForwardVel < s_slideSpeed * 0.996f && m->mForwardVel > 2.0f)
+			m->mForwardVel = s_slideSpeed * 0.996f; // hardly slowing
+		s_slideSpeed = m->mForwardVel;
+		return;
+	}
+	s_slideSpeed = m->mForwardVel;
+	if ((m->mStatus & MARIO_STATUS_TYPE_MASK) == MARIO_STATUS_TYPE_RUNNING && (m->mInput & 1) && m->mForwardVel > 1.0f) {
+		const f32 v    = m->mForwardVel * 1.04f + 0.6f;
+		m->mForwardVel = v < fastest ? v : (m->mForwardVel > fastest ? m->mForwardVel : fastest);
+	}
+}
+
 // Mario standing in a puddle: hurt as by the game's own goop of its kind
 void hurtMario(f32 dt)
 {
@@ -370,6 +402,8 @@ void hurtMario(f32 dt)
 		const f32 dx = m->mPosition.x - g.x, dz = m->mPosition.z - g.z, dy = m->mPosition.y + 80.0f - g.y;
 		const f32 out = dx * g.nx + dz * g.nz, r = wallSizeNow(g);
 		if (out < -10.0f || out > 50.0f || dx * dx + dz * dz - out * out > r * r || fabsf(dy) > r + 80.0f)
+			continue;
+		if (g.kind == kBlack)
 			continue;
 		if (g.kind == kFire)
 			m->checkGraffitoFire();
@@ -395,6 +429,10 @@ void hurtMario(f32 dt)
 			continue;
 		}
 		p.inside += dt;
+		if (p.kind == kBlack) {
+			slippery(m);
+			continue;
+		}
 		if (m->isInvincible())
 			continue;
 		if (p.kind == kFire) {
@@ -427,7 +465,7 @@ void hurtEnemiesIn(TLiveManager* mgr)
 		}
 		for (int k = 0; k < kPuddles; k++) {
 			const Puddle& p = s_puddles[k];
-			if (!p.on)
+			if (!p.on || p.kind == kBlack)
 				continue;
 			const f32 r = sizeNow(p) + 20.0f, dx = e->mPosition.x - p.x, dz = e->mPosition.z - p.z;
 			if (dx * dx + dz * dz <= r * r && fabsf(e->mPosition.y - p.y) < 60.0f) {
@@ -524,7 +562,7 @@ void afterMovement()
 		for (int i = 0; i < kPuddles; i++) {
 			const Puddle& p = s_puddles[i];
 			if (p.on && (p.kind == kFire ? s_grassBurn : s_grassPress))
-				port_grass_goop(p.x, p.y, p.z, sizeNow(p) * 0.95f, p.kind == kFire ? 1 : 0, (int)(dt * 1000.0f));
+				port_grass_goop(p.x, p.y, p.z, sizeNow(p) * 0.95f, p.kind == kFire ? 1 : 0, (int)(dt * 1000.0f)); // (black: pressed, as electric)
 		}
 	if (s_time - s_enemyCheck >= 0.1f && s_defeat && gpConductor) {
 		s_enemyCheck = s_time;
@@ -567,10 +605,11 @@ GoopPacket s_packet;
 
 const int kTex = 128;
 u8 s_texElectric[kTex * kTex * 4] __attribute__((aligned(32)));
+u8 s_texBlack[kTex * kTex * 4] __attribute__((aligned(32)));
 u8 s_texFire[kTex * kTex * 4] __attribute__((aligned(32)));
 u8 s_texWater[kTex * kTex * 4] __attribute__((aligned(32))); // the glints of the water over electric goop
 u8 s_waterAlpha[kTex * kTex];                                   // (as rows, for FLUDD's look)
-GXTexObj s_objElectric, s_objFire, s_objWater;
+GXTexObj s_objElectric, s_objFire, s_objWater, s_objBlack;
 bool s_madeTextures;
 const f32 kTile = 300.0f; // world units a texture covers
 
@@ -613,11 +652,11 @@ f32 smooth(f32 a, f32 b, f32 x)
 }
 
 // a texture into the GameCube's RGBA8 layout (4x4 blocks: alpha and red, then green and blue)
-u8 s_rgbaElectric[kTex * kTex * 4], s_rgbaFire[kTex * kTex * 4]; // as rows, for FLUDD's own look
+u8 s_rgbaElectric[kTex * kTex * 4], s_rgbaFire[kTex * kTex * 4], s_rgbaBlack[kTex * kTex * 4]; // as rows, for FLUDD's own look
 
 void store(u8* out, const f32* rgb)
 {
-	u8* lin = out == s_texFire ? s_rgbaFire : s_rgbaElectric;
+	u8* lin = out == s_texFire ? s_rgbaFire : out == s_texBlack ? s_rgbaBlack : s_rgbaElectric;
 	for (int i = 0; i < kTex * kTex; i++) {
 		for (int ch = 0; ch < 3; ch++)
 			lin[i * 4 + ch] = (u8)(rgb[i * 3 + ch] < 0.0f ? 0 : rgb[i * 3 + ch] > 255.0f ? 255 : (int)rgb[i * 3 + ch]);
@@ -655,7 +694,7 @@ f32 fbmp(f32 u, f32 v, u32 salt, int period, int octaves)
 
 // electric goop as the game's: smooth teal paint with yellow marbled into it (long thin streaks and
 // broad swirls), sharp edged, not shaded (its gloss is the water over it)
-void makeElectric(u8* out)
+void makeElectric(u8* out, bool black = false)
 {
 	static f32 rgb[kTex * kTex * 3];
 	for (int y = 0; y < kTex; y++)
@@ -668,7 +707,9 @@ void makeElectric(u8* out)
 			const f32 blob   = smooth(0.63f, 0.66f, fbmp(u + 0.6f * rx, v + 0.6f * ry, 16u, 2, 3));
 			const f32 m      = streak > blob ? streak : blob;
 			const f32 g      = fbmp(u + 0.3f * rx, v, 17u, 2, 3);
-			const f32 tr = 25.0f + 20.0f * g, tg = 175.0f + 30.0f * g, tb = 175.0f + 25.0f * g;
+			// black goop: black where electric is teal (the yellow the same)
+			const f32 tr = black ? 10.0f + 16.0f * g : 25.0f + 20.0f * g, tg = black ? 10.0f + 15.0f * g : 175.0f + 30.0f * g,
+			          tb = black ? 12.0f + 18.0f * g : 175.0f + 25.0f * g;
 			const int i = y * kTex + x;
 			rgb[i * 3]     = tr + (245.0f - tr) * m;
 			rgb[i * 3 + 1] = tg + (235.0f - tg) * m;
@@ -759,6 +800,9 @@ void makeTextures()
 	if (s_madeTextures)
 		return;
 	makeElectric(s_texElectric);
+	makeElectric(s_texBlack, true);
+	GXInitTexObj(&s_objBlack, s_texBlack, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
+	GXInitTexObjLOD(&s_objBlack, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
 	makeGoop(s_texFire, false);
 	makeWater();
 	GXInitTexObj(&s_objWater, s_texWater, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
@@ -801,7 +845,7 @@ void textured(int kind)
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
-	GXLoadTexObj(kind == kFire ? &s_objFire : kind == kElectric ? &s_objElectric : &s_objWater, GX_TEXMAP0);
+	GXLoadTexObj(kind == kFire ? &s_objFire : kind == kElectric ? &s_objElectric : kind == kBlack ? &s_objBlack : &s_objWater, GX_TEXMAP0);
 	GXSetNumTexGens(1);
 	GXSetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
@@ -936,7 +980,7 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 	const f32 lift = 1.5f + 0.04f * (f32)index + (gloss ? 0.3f : 0.0f); // over the ground (and over each other)
 	const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
 	const f32 time   = (f32)s_frame / 60.0f;
-	const bool water = p.kind == kElectric; // electric goop: under a thin layer of moving water
+	const bool water = p.kind == kElectric || p.kind == kBlack; // under a thin layer of moving water
 	// fire goop flickers and flows; electric goop lies still, the water over it bending it a little
 	const int shade = p.kind == kFire ? (int)(255.0f * (0.93f + 0.07f * sinf(time * 9.0f + p.seed))) : 255;
 	const f32 fl    = p.kind == kFire ? flow(p.kind) : 0.0f;
@@ -1155,7 +1199,7 @@ void GoopPacket::draw()
 	GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetFog(GX_FOG_NONE, 0.0f, 0.0f, 0.0f, 0.0f, (GXColor){0, 0, 0, 0});
-	for (int kind = kFire; kind <= kElectric; kind++) {
+	for (int kind = kFire; kind <= kBlack; kind++) {
 		bool any = false;
 		for (int i = 0; i < kPuddles && !any; i++)
 			any = s_puddles[i].on && s_puddles[i].kind == kind;
@@ -1295,7 +1339,7 @@ void dressFludd()
 		undress();
 		s_dressedKind = s_kind;
 		makeTextures();
-		memcpy(s_pulse, s_kind == kFire ? s_rgbaFire : s_rgbaElectric, sizeof s_pulse);
+		memcpy(s_pulse, s_kind == kFire ? s_rgbaFire : s_kind == kBlack ? s_rgbaBlack : s_rgbaElectric, sizeof s_pulse);
 		s_dressNext = 0.0f;
 	}
 	if (s_time < s_dressNext)
@@ -1310,7 +1354,7 @@ void dressFludd()
 	}
 	s_namesTold = true;
 	if (s_dressedCount != before)
-		fprintf(stderr, "[goop] FLUDD dressed in %s goop (%d textures)\n", s_kind == kFire ? "fire" : "electric", s_dressedCount);
+		fprintf(stderr, "[goop] FLUDD dressed in %s goop (%d textures)\n", s_kind == kFire ? "fire" : s_kind == kBlack ? "black" : "electric", s_dressedCount);
 }
 
 PortExtension s_extension;
@@ -1335,9 +1379,9 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 	s_grassPress = (flags & (1 << 28)) == 0; // set: not
 	s_grassBurn  = (flags & (1 << 29)) == 0;
 	s_wallsOn    = (flags & (1 << 30)) == 0;
-	const int now = kind == kFire || kind == kElectric ? kind : 0;
+	const int now = isKind(kind) ? kind : 0;
 	if (now != s_kind)
-		fprintf(stderr, "[goop] %s\n", now == kFire ? "fire goop" : now == kElectric ? "electric goop" : "no goop");
+		fprintf(stderr, "[goop] %s\n", now == kFire ? "fire goop" : now == kElectric ? "electric goop" : now == kBlack ? "black goop" : "no goop");
 	s_kind   = now;
 	s_defeat = defeat;
 }
@@ -1345,9 +1389,9 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 // A goop weapon's numbers (set_weapon_stats): `every` seconds of it defeat an enemy, `range` how
 // long its goop lasts (times a minute), `burst` its puddles' size, `drop` its stream's blobs' (each
 // times its own); has 0: its own again. Returns 1 for a goop weapon.
-int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water)
+int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water, float push)
 {
-	if (kind != kFire && kind != kElectric)
+	if (!isKind(kind))
 		return 0;
 	Stats& st = statsOf(kind);
 	st        = kDefaults;
@@ -1358,6 +1402,8 @@ int PortGoopStats(int kind, int has, float every, float range, float burst, floa
 	st.size   = burst >= 0.2f ? burst : 0.2f;
 	st.drop   = drop >= 0.2f ? drop : 0.2f;
 	st.hits   = hits >= 1 ? (hits <= 50 ? hits : 50) : 1;
+	if (kind == kBlack)
+		s_blackSpeed = push >= 0.5f ? (push <= 3.0f ? push : 3.0f) : 1.0f; // (push: its speed)
 	st.water  = water > 0 ? (f32)(water <= 1000 ? water : 1000) / 100.0f : 1.0f; // (percent of FLUDD's)
 	s_wallLife = wall > 0.05f ? wall * 60.0f : 30.0f; // (both kinds': minutes)
 	return 1;

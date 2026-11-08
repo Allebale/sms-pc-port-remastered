@@ -75,7 +75,7 @@ bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at);
 extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
 // the goop weapons (modapi_goop_weapons.cpp): FLUDD's own stream as fire or electric goop
 void PortGoopSetWeapon(int kind, bool defeat, int flags);
-int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water);
+int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water, float push);
 bool PortGoopEmit(const TWaterEmitInfo& asked, int* made);
 void PortGoopWash(float x, float y, float z, float r);
 
@@ -2029,7 +2029,7 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
 	// a goop weapon (SMS_SPRAY_FIRE_GOOP 5, SMS_SPRAY_ELECTRIC_GOOP 6): FLUDD's own spray here (its
 	// stream made goop by modapi_goop_weapons.cpp)
-	PortGoopSetWeapon(weapon == 5 || weapon == 6 ? weapon : 0, (flags & 1) != 0, flags);
+	PortGoopSetWeapon(weapon >= 5 && weapon <= 7 ? weapon : 0, (flags & 1) != 0, flags);
 	const int now     = weapon > NORMAL && weapon < WEAPONS ? weapon : NORMAL;
 	const bool defeat = (flags & 1) != 0;
 	if (defeat != s_defeat) // counted afresh from when defeating is turned on
@@ -2237,8 +2237,8 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 		s_normalTime = has && every >= 0.1f ? every : 1.0f;
 		return 1;
 	}
-	if (weapon == 5 || weapon == 6) // a goop weapon's: its seconds to defeat, its goop's life and size, its blobs' size
-		return PortGoopStats(weapon, has, every, range, burst, dropSize, toDefeat, hit, water); // (hit_size: its goop on walls' minutes)
+	if (weapon >= 5 && weapon <= 7) // a goop weapon's: its seconds to defeat, its goop's life and size, its blobs' size
+		return PortGoopStats(weapon, has, every, range, burst, dropSize, toDefeat, hit, water, push); // (hit_size: its goop on walls' minutes)
 	if (weapon < NORMAL || weapon >= WEAPONS)
 		return 0;
 	Weapon& w       = kWeapons[weapon];
