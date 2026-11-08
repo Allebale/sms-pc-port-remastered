@@ -396,7 +396,9 @@ GoopPacket s_packet;
 const int kTex = 128;
 u8 s_texElectric[kTex * kTex * 4] __attribute__((aligned(32)));
 u8 s_texFire[kTex * kTex * 4] __attribute__((aligned(32)));
-GXTexObj s_objElectric, s_objFire;
+u8 s_texWater[kTex * kTex * 4] __attribute__((aligned(32))); // the glints of the water over electric goop
+u8 s_waterAlpha[kTex * kTex];                                   // (as rows, for FLUDD's look)
+GXTexObj s_objElectric, s_objFire, s_objWater;
 bool s_madeTextures;
 const f32 kTile = 300.0f; // world units a texture covers
 
@@ -466,6 +468,69 @@ void store(u8* out, const f32* rgb)
 		}
 }
 
+// noise of its own period and octaves
+f32 fbmp(f32 u, f32 v, u32 salt, int period, int octaves)
+{
+	f32 sum = 0.0f, amp = 0.5f, total = 0.0f;
+	for (int o = 0; o < octaves; o++) {
+		sum += amp * vnoise(u * (f32)period, v * (f32)period, period, salt + (u32)o * 17u);
+		total += amp;
+		amp *= 0.5f;
+		period *= 2;
+	}
+	return sum / total;
+}
+
+// electric goop as the game's: smooth teal paint with yellow marbled into it (long thin streaks and
+// broad swirls), sharp edged, not shaded (its gloss is the water over it)
+void makeElectric(u8* out)
+{
+	static f32 rgb[kTex * kTex * 3];
+	for (int y = 0; y < kTex; y++)
+		for (int x = 0; x < kTex; x++) {
+			const f32 u = (f32)x / kTex, v = (f32)y / kTex;
+			const f32 qx = fbmp(u, v, 11u, 2, 3), qy = fbmp(u + 0.37f, v + 0.11f, 12u, 2, 3);
+			const f32 rx = fbmp(u + 1.2f * qx, v + 1.2f * qy, 13u, 2, 4), ry = fbmp(u + 1.2f * qx + 0.2f, v + 1.2f * qy + 0.6f, 14u, 2, 4);
+			const f32 f      = fbmp(u + rx, v + ry, 15u, 2, 2);
+			const f32 streak = smooth(0.90f, 0.94f, 0.5f + 0.5f * sinf(f * 30.0f));
+			const f32 blob   = smooth(0.63f, 0.66f, fbmp(u + 0.6f * rx, v + 0.6f * ry, 16u, 2, 3));
+			const f32 m      = streak > blob ? streak : blob;
+			const f32 g      = fbmp(u + 0.3f * rx, v, 17u, 2, 3);
+			const f32 tr = 25.0f + 20.0f * g, tg = 175.0f + 30.0f * g, tb = 175.0f + 25.0f * g;
+			const int i = y * kTex + x;
+			rgb[i * 3]     = tr + (245.0f - tr) * m;
+			rgb[i * 3 + 1] = tg + (235.0f - tg) * m;
+			rgb[i * 3 + 2] = tb + (30.0f - tb) * m;
+		}
+	store(out, rgb);
+}
+
+// the water over it: thin white glints, wavy lines here and there (in its alpha)
+void makeWater()
+{
+	for (int y = 0; y < kTex; y++)
+		for (int x = 0; x < kTex; x++) {
+			const f32 u = (f32)x / kTex, v = (f32)y / kTex;
+			const f32 wx = fbmp(u, v, 41u, 2, 3), wy = fbmp(u + 0.5f, v + 0.3f, 42u, 2, 3);
+			const f32 c    = fbmp(u + 0.8f * wx, v + 0.8f * wy, 43u, 2, 2);
+			const f32 line = 1.0f - smooth(0.0f, 0.07f, fabsf(sinf(c * 28.0f)));
+			const f32 mask = smooth(0.52f, 0.62f, fbmp(u + 0.4f * wy, v + 0.4f * wx, 44u, 2, 4));
+			const f32 a    = line * mask;
+			s_waterAlpha[y * kTex + x] = (u8)(a * 255.0f);
+		}
+	for (int by = 0; by < kTex / 4; by++)
+		for (int bx = 0; bx < kTex / 4; bx++) {
+			u8* block = s_texWater + ((by * (kTex / 4) + bx) * 64);
+			for (int k = 0; k < 16; k++) {
+				const int x = bx * 4 + (k & 3), y = by * 4 + (k >> 2);
+				block[k * 2]          = s_waterAlpha[y * kTex + x];
+				block[k * 2 + 1]      = 255;
+				block[32 + k * 2]     = 255;
+				block[32 + k * 2 + 1] = 255;
+			}
+		}
+}
+
 // marbled goop: swirled bands of two colours, glossy (a light's shine on its ripples)
 void makeGoop(u8* out, bool electric)
 {
@@ -521,8 +586,11 @@ void makeTextures()
 {
 	if (s_madeTextures)
 		return;
-	makeGoop(s_texElectric, true);
+	makeElectric(s_texElectric);
 	makeGoop(s_texFire, false);
+	makeWater();
+	GXInitTexObj(&s_objWater, s_texWater, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
+	GXInitTexObjLOD(&s_objWater, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
 	GXInitTexObj(&s_objElectric, s_texElectric, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
 	GXInitTexObjLOD(&s_objElectric, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
 	GXInitTexObj(&s_objFire, s_texFire, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
@@ -561,7 +629,7 @@ void textured(int kind)
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
-	GXLoadTexObj(kind == kFire ? &s_objFire : &s_objElectric, GX_TEXMAP0);
+	GXLoadTexObj(kind == kFire ? &s_objFire : kind == kElectric ? &s_objElectric : &s_objWater, GX_TEXMAP0);
 	GXSetNumTexGens(1);
 	GXSetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
@@ -670,7 +738,7 @@ void basis(const Puddle& p, f32* t, f32* b)
 }
 
 // a puddle: a round of the goop's texture with a wavy edge, flat on the ground (textured() set)
-void drawPuddle(const Puddle& p, int index)
+void drawPuddle(const Puddle& p, int index, bool water = false)
 {
 	const f32 r = sizeNow(p);
 	if (r < 1.0f)
@@ -680,19 +748,22 @@ void drawPuddle(const Puddle& p, int index)
 	const f32 lift = 1.5f + 0.04f * (f32)index; // over the ground (and over each other)
 	const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
 	const f32 time = (f32)s_frame / 60.0f;
-	// electric goop's glow throbs; fire goop's flickers
-	const f32 pulse = p.kind == kFire ? 0.93f + 0.07f * sinf(time * 9.0f + p.seed) : 0.86f + 0.14f * sinf(time * 5.0f + p.seed);
-	const int shade = (int)(255.0f * pulse);
-	const f32 fl = flow(p.kind);
+	// fire goop flickers and flows; electric goop lies still (the water over it moves)
+	const f32 pulse = p.kind == kFire ? 0.93f + 0.07f * sinf(time * 9.0f + p.seed) : 1.0f;
+	const int shade = (int)(255.0f * pulse) + (p.kind == kFire ? 0 : 25);
+	const f32 fl    = p.kind == kFire ? flow(p.kind) : 0.0f;
+	// the water's glints: smaller, drifting one way
+	const f32 ws = water ? 0.7f : 1.0f, wu = water ? time * 18.0f : 0.0f, wv = water ? time * 11.0f : 0.0f;
 	const int kAround = 28;
 	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, (u16)(kAround + 2));
-	tcorner(cx, cy, cz, shade, (cx + fl) / kTile, cz / kTile);
+	const f32 lift2 = water ? 0.3f : 0.0f; // the water just over the goop
+	tcorner(cx + p.nx * lift2, cy + p.ny * lift2, cz + p.nz * lift2, shade, (cx + fl + wu) / (kTile * ws), (cz + wv) / (kTile * ws));
 	for (int k = 0; k <= kAround; k++) {
 		const f32 a  = 6.2831853f * (f32)(k % kAround) / kAround;
 		const f32 rr = r * (1.0f + 0.12f * sinf(3.0f * a + p.seed) + 0.07f * sinf(5.0f * a + p.seed * 1.7f) + 0.04f * sinf(9.0f * a + p.seed * 2.3f));
 		const f32 ca = cosf(a) * rr, sa = sinf(a) * rr;
 		const f32 x = cx + t[0] * ca + b[0] * sa, y = cy + t[1] * ca + b[1] * sa, z = cz + t[2] * ca + b[2] * sa;
-		tcorner(x, y, z, shade - 25, (x + fl) / kTile, z / kTile);
+		tcorner(x + p.nx * lift2, y + p.ny * lift2, z + p.nz * lift2, shade - 25, (x + fl + wu) / (kTile * ws), (z + wv) / (kTile * ws));
 	}
 	GXEnd();
 }
@@ -777,6 +848,16 @@ void GoopPacket::draw()
 			for (int i = 0; i < kPuddles; i++)
 				if (s_puddles[i].on && s_puddles[i].kind == kind)
 					drawPuddle(s_puddles[i], i);
+			if (kind == kElectric) { // the water over it, its white glints added on top, moving
+				textured(0);
+				GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_NOOP);
+				GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
+				for (int i = 0; i < kPuddles; i++)
+					if (s_puddles[i].on && s_puddles[i].kind == kind)
+						drawPuddle(s_puddles[i], i, true);
+				GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+				GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+			}
 		}
 		drawDrops(kind);
 	}
@@ -867,15 +948,18 @@ void dressFludd()
 	makeTextures();
 	const bool fire = s_kind == kFire;
 	const u8* base  = fire ? s_rgbaFire : s_rgbaElectric;
-	const f32 beat  = 0.5f + 0.5f * sinf(s_time * (fire ? 5.0f : 8.0f));
-	const f32 light = 0.7f + 0.5f * beat; // throbbing
-	const int sx = (int)(s_time * 10.0f) & (kTex - 1), sy = (int)(s_time * 4.0f) & (kTex - 1); // flowing
+	// fire throbbing and flowing; electric still, the water's glints moving over it
+	const f32 beat  = 0.5f + 0.5f * sinf(s_time * 5.0f);
+	const f32 light = fire ? 0.7f + 0.5f * beat : 1.0f;
+	const int sx = fire ? (int)(s_time * 10.0f) & (kTex - 1) : 0, sy = fire ? (int)(s_time * 4.0f) & (kTex - 1) : 0;
+	const int wx = (int)(s_time * 14.0f) & (kTex - 1), wy = (int)(s_time * 9.0f) & (kTex - 1);
 	for (int y = 0; y < kTex; y++)
 		for (int x = 0; x < kTex; x++) {
 			const u8* c = base + ((((y + sy) & (kTex - 1)) * kTex) + ((x + sx) & (kTex - 1))) * 4;
 			u8* o       = s_pulse + (y * kTex + x) * 4;
 			for (int ch = 0; ch < 3; ch++) {
-				const int v = (int)((f32)c[ch] * light);
+				const int glint = fire ? 0 : s_waterAlpha[((y + wy) & (kTex - 1)) * kTex + ((x + wx) & (kTex - 1))] * 220 / 255;
+				const int v     = (int)((f32)c[ch] * light) + glint;
 				o[ch]       = (u8)(v > 255 ? 255 : v);
 			}
 			o[3] = 255;
