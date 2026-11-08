@@ -156,6 +156,22 @@ f32 sizeNow(const Puddle& p)
 	return left >= kFade ? p.r : left > 0.0f ? p.r * left / kFade : 0.0f;
 }
 
+// Goop never lands round Mario's feet: how big a puddle (or a blob on a wall) at (x, y, z) may be
+// and still keep clear of him (its wavy edge reaching a quarter further, and a margin); no limit
+// when he is far above or below
+f32 roomFromMario(f32 x, f32 y, f32 z, bool wall)
+{
+	TMario* m = gpMarioOriginal;
+	if (!m)
+		return 1e30f;
+	const f32 dx = m->mPosition.x - x, dz = m->mPosition.z - z;
+	const f32 dy = wall ? m->mPosition.y + 80.0f - y : m->mPosition.y - y;
+	if (!wall && fabsf(dy) > 150.0f)
+		return 1e30f;
+	const f32 d = wall ? sqrtf(dx * dx + dy * dy + dz * dz) : sqrtf(dx * dx + dz * dz);
+	return (d - 45.0f) / 1.25f;
+}
+
 void addGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* ground)
 {
 	const Stats& st = statsOf(kind);
@@ -170,11 +186,19 @@ void addGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* ground)
 			best = &p, bestD = d;
 	}
 	if (best) {
-		const f32 most = kMostSize * st.size;
-		best->r        = best->r + kGrow * st.size < most ? best->r + kGrow * st.size : most;
-		best->born     = s_time;
+		f32 most       = kMostSize * st.size;
+		const f32 room = roomFromMario(best->x, best->y, best->z, false);
+		most           = most < room ? most : room; // not grown under his feet
+		if (best->r + kGrow * st.size <= most)
+			best->r += kGrow * st.size;
+		best->born = s_time;
 		return;
 	}
+	f32 start      = kStartSize * st.size;
+	const f32 room = roomFromMario(x, y, z, false);
+	if (room < 20.0f)
+		return; // at his feet: none
+	start = start < room ? start : room;
 	Puddle* p = 0; // a new one: a free place, or the oldest's
 	for (int i = 0; i < kPuddles && !p; i++)
 		if (!s_puddles[i].on)
@@ -194,7 +218,7 @@ void addGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* ground)
 		if (n.y > 0.3f)
 			p->nx = n.x, p->ny = n.y, p->nz = n.z;
 	}
-	p->r      = kStartSize * st.size;
+	p->r      = start;
 	p->born   = s_time;
 	p->seed   = random01() * 100.0f;
 	p->inside = 0.0f;
@@ -230,13 +254,18 @@ void addWallGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* wall)
 	if (fabsf(n.y) > 0.6f)
 		return; // not a wall
 	const f32 size = statsOf(kind).size;
+	const f32 room = roomFromMario(x, y, z, true);
+	if (room < 15.0f)
+		return; // where he is: none
 	for (int i = 0; i < kWalls; i++) { // the same kind's blob it hits: grown
 		WallGoop& g = s_wallGoop[i];
 		if (!g.on || g.kind != kind || g.nx * n.x + g.ny * n.y + g.nz * n.z < 0.8f)
 			continue;
 		const f32 dx = g.x - x, dy = g.y - y, dz = g.z - z;
 		if (dx * dx + dy * dy + dz * dz < g.r * g.r) {
-			g.r    = g.r + 2.5f * size < 140.0f * size ? g.r + 2.5f * size : 140.0f * size;
+			const f32 most = 140.0f * size < roomFromMario(g.x, g.y, g.z, true) ? 140.0f * size : roomFromMario(g.x, g.y, g.z, true);
+			if (g.r + 2.5f * size <= most)
+				g.r += 2.5f * size;
 			g.born = s_time;
 			return;
 		}
@@ -255,7 +284,7 @@ void addWallGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* wall)
 	g->x = x, g->y = y, g->z = z;
 	const f32 hl = sqrtf(n.x * n.x + n.z * n.z);
 	g->nx = n.x / hl, g->ny = 0.0f, g->nz = n.z / hl;
-	g->r     = 38.0f * size;
+	g->r     = 38.0f * size < room ? 38.0f * size : room;
 	g->born  = g->since = s_time;
 	g->seed  = random01() * 100.0f;
 }
