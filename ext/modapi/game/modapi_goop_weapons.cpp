@@ -779,34 +779,82 @@ void basis(const Puddle& p, f32* t, f32* b)
 	b[0] = p.ny * tz - p.nz * ty, b[1] = p.nz * tx - p.nx * tz, b[2] = p.nx * ty - p.ny * tx;
 }
 
-// a puddle: a round of the goop's texture with a wavy edge, flat on the ground (textured() set)
-void drawPuddle(const Puddle& p, int index, bool water = false)
+// a puddle: a round of the goop's texture with a wavy edge, flat on the ground (a web of rings,
+// so electric goop's thin layer of water can ripple over it). `gloss`: that water's shine instead
+// (untextured, added on top), else the goop (textured() set)
+void drawPuddle(const Puddle& p, int index, bool gloss = false)
 {
 	const f32 r = sizeNow(p);
 	if (r < 1.0f)
 		return;
 	f32 t[3], b[3];
 	basis(p, t, b);
-	const f32 lift = 1.5f + 0.04f * (f32)index; // over the ground (and over each other)
+	const f32 lift = 1.5f + 0.04f * (f32)index + (gloss ? 0.3f : 0.0f); // over the ground (and over each other)
 	const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
-	const f32 time = (f32)s_frame / 60.0f;
-	// fire goop flickers and flows; electric goop lies still (the water over it moves)
-	const f32 pulse = p.kind == kFire ? 0.93f + 0.07f * sinf(time * 9.0f + p.seed) : 1.0f;
-	const int shade = (int)(255.0f * pulse) + (p.kind == kFire ? 0 : 25);
+	const f32 time   = (f32)s_frame / 60.0f;
+	const bool water = p.kind == kElectric; // electric goop: under a thin layer of moving water
+	// fire goop flickers and flows; electric goop lies still, the water over it bending it a little
+	const int shade = p.kind == kFire ? (int)(255.0f * (0.93f + 0.07f * sinf(time * 9.0f + p.seed))) : 255;
 	const f32 fl    = p.kind == kFire ? flow(p.kind) : 0.0f;
-	// the water's glints: smaller, drifting one way
-	const f32 ws = water ? 0.7f : 1.0f, wu = water ? time * 18.0f : 0.0f, wv = water ? time * 11.0f : 0.0f;
-	const int kAround = 28;
-	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, (u16)(kAround + 2));
-	const f32 lift2 = water ? 0.3f : 0.0f; // the water just over the goop
-	tcorner(cx + p.nx * lift2, cy + p.ny * lift2, cz + p.nz * lift2, shade, (cx + fl + wu) / (kTile * ws), (cz + wv) / (kTile * ws));
-	for (int k = 0; k <= kAround; k++) {
-		const f32 a  = 6.2831853f * (f32)(k % kAround) / kAround;
-		const f32 rr = r * (1.0f + 0.12f * sinf(3.0f * a + p.seed) + 0.07f * sinf(5.0f * a + p.seed * 1.7f) + 0.04f * sinf(9.0f * a + p.seed * 2.3f));
-		const f32 ca = cosf(a) * rr, sa = sinf(a) * rr;
-		const f32 x = cx + t[0] * ca + b[0] * sa, y = cy + t[1] * ca + b[1] * sa, z = cz + t[2] * ca + b[2] * sa;
-		tcorner(x + p.nx * lift2, y + p.ny * lift2, z + p.nz * lift2, shade - 25, (x + fl + wu) / (kTile * ws), (z + wv) / (kTile * ws));
+	// the light the water shines with, and the way to the viewer
+	const f32 lx = 0.35f, ly = 0.8f, lz = 0.45f;
+	f32 hx = lx + s_view[2][0], hy = ly + s_view[2][1], hz = lz + s_view[2][2];
+	const f32 hl = sqrtf(hx * hx + hy * hy + hz * hz);
+	hx /= hl, hy /= hl, hz /= hl;
+	const int kAround = 28, kRings = 5;
+	static f32 pos[kRings + 1][kAround][3], uv[kRings + 1][kAround][2];
+	static int col[kRings + 1][kAround];
+	for (int j = 0; j <= kRings; j++)
+		for (int k = 0; k < kAround; k++) {
+			const f32 a  = 6.2831853f * (f32)k / kAround;
+			const f32 rr = r * (1.0f + 0.12f * sinf(3.0f * a + p.seed) + 0.07f * sinf(5.0f * a + p.seed * 1.7f) + 0.04f * sinf(9.0f * a + p.seed * 2.3f));
+			const f32 f  = (f32)j / kRings;
+			const f32 ca = cosf(a) * rr * f, sa = sinf(a) * rr * f;
+			const f32 x = cx + t[0] * ca + b[0] * sa, y = cy + t[1] * ca + b[1] * sa, z = cz + t[2] * ca + b[2] * sa;
+			pos[j][k][0] = x, pos[j][k][1] = y, pos[j][k][2] = z;
+			f32 du = 0.0f, dv = 0.0f, sx = 0.0f, sz = 0.0f;
+			if (water) { // the water's ripples: the goop under it shifted a little, its shine moving
+				const f32 w1 = x * 0.045f + time * 1.6f, w2 = z * 0.06f - time * 1.2f, w3 = z * 0.05f + time * 1.4f, w4 = x * 0.07f + time * 1.9f;
+				du = 3.5f * sinf(w1) + 2.5f * sinf(w2);
+				dv = 3.5f * sinf(w3) + 2.5f * sinf(w4);
+				sx = 0.16f * cosf(w1) + 0.17f * cosf(w4); // its slope across
+				sz = 0.15f * cosf(w2) + 0.17f * cosf(w3);
+			}
+			uv[j][k][0] = (x + fl + du) / kTile, uv[j][k][1] = (z + dv) / kTile;
+			if (gloss) {
+				f32 nx = p.nx - sx, ny = p.ny, nz = p.nz - sz;
+				const f32 nl = sqrtf(nx * nx + ny * ny + nz * nz);
+				f32 sp = (nx * hx + ny * hy + nz * hz) / nl;
+				sp = sp > 0.0f ? powf(sp, 24.0f) : 0.0f;
+				const f32 edge = j == kRings ? 0.3f : 1.0f; // fading at its edge
+				col[j][k] = (int)(sp * 200.0f * edge + 18.0f * edge); // a faint sheen everywhere, bright where it catches the light
+			} else
+				col[j][k] = j == kRings ? shade - 25 : shade;
+		}
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(kAround * 3 + kAround * (kRings - 1) * 6));
+	for (int k = 0; k < kAround; k++) { // the middle: ring 1 round it
+		const int m = (k + 1) % kAround;
+		const int c[3][2] = {{0, k}, {1, k}, {1, m}};
+		for (int v = 0; v < 3; v++) {
+			const int j = c[v][0], q = c[v][1];
+			if (gloss)
+				acorner(pos[j][q][0], pos[j][q][1], pos[j][q][2], 255, 255, 255, col[j][q]);
+			else
+				tcorner(pos[j][q][0], pos[j][q][1], pos[j][q][2], col[j][q], uv[j][q][0], uv[j][q][1]);
+		}
 	}
+	for (int j = 1; j < kRings; j++)
+		for (int k = 0; k < kAround; k++) {
+			const int m = (k + 1) % kAround;
+			const int c[6][2] = {{j, k}, {j + 1, k}, {j + 1, m}, {j, k}, {j + 1, m}, {j, m}};
+			for (int v = 0; v < 6; v++) {
+				const int jj = c[v][0], q = c[v][1];
+				if (gloss)
+					acorner(pos[jj][q][0], pos[jj][q][1], pos[jj][q][2], 255, 255, 255, col[jj][q]);
+				else
+					tcorner(pos[jj][q][0], pos[jj][q][1], pos[jj][q][2], col[jj][q], uv[jj][q][0], uv[jj][q][1]);
+			}
+		}
 	GXEnd();
 }
 
@@ -911,8 +959,15 @@ void GoopPacket::draw()
 			for (int i = 0; i < kPuddles; i++)
 				if (s_puddles[i].on && s_puddles[i].kind == kind)
 					drawPuddle(s_puddles[i], i);
-			if (kind == kElectric) { // the water over it, its white glints added on top, moving
-				textured(0);
+			if (kind == kElectric) { // the thin water over it: its shine added on top, moving
+				GXClearVtxDesc();
+				GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+				GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+				GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+				GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+				GXSetNumTexGens(0);
+				GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+				GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
 				GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_NOOP);
 				GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
 				for (int i = 0; i < kPuddles; i++)
@@ -961,21 +1016,7 @@ Dressed s_dressed[kDressMost];
 int s_dressedCount;
 f32 s_dressNext;
 u8 s_pulse[kTex * kTex * 4];
-u8 s_pulseTank[kTex * kTex * 4]; // fire goop's tank: reddish brown
 bool s_namesTold;
-
-// FLUDD's water tank's texture, by its name
-bool isTank(const char* name)
-{
-	if (!name)
-		return false;
-	char low[64];
-	int n = 0;
-	for (; name[n] && n < 63; n++)
-		low[n] = (char)(name[n] >= 'A' && name[n] <= 'Z' ? name[n] + 32 : name[n]);
-	low[n] = 0;
-	return strstr(low, "tank") || strstr(low, "mizu") || strstr(low, "water") || strstr(low, "tnk");
-}
 
 void undress()
 {
@@ -998,17 +1039,16 @@ void dressModel(J3DModel* model)
 		if (!s_namesTold && t)
 			fprintf(stderr, "[goop] FLUDD texture %s (%dx%d, format %d, alpha %d)\n", name ? name : "?", t->width, t->height,
 			        t->format, t->alphaEnabled);
-		const bool tank = s_kind == kFire && isTank(name);
-		if (!t || (t->alphaEnabled == 1 && !tank))
+		if (!t || t->alphaEnabled == 1)
 			continue; // a cut-out
 		// where GX reads it: the header's offset added in 32 bits, as on the console
 		const void* at  = (const void*)(uintptr_t)(u32)((uintptr_t)t + t->imageDataOffset);
 		const u32 bytes = GXGetTexBufferSize(t->width, t->height, t->format, GX_FALSE, 0);
-		GXPC_SetTextureOverride(at, bytes, tank ? s_pulseTank : s_pulse, kTex, kTex);
 		bool known = false;
 		for (int k = 0; k < s_dressedCount && !known; k++)
 			known = s_dressed[k].data == at;
 		if (!known && s_dressedCount < kDressMost) {
+			GXPC_SetTextureOverride(at, bytes, s_pulse, kTex, kTex);
 			s_dressed[s_dressedCount].data  = at;
 			s_dressed[s_dressedCount].bytes = bytes;
 			s_dressedCount++;
@@ -1016,6 +1056,7 @@ void dressModel(J3DModel* model)
 	}
 }
 
+int s_dressedKind;
 void dressFludd()
 {
 	if (!GXPC_SetTextureOverride)
@@ -1025,32 +1066,19 @@ void dressFludd()
 	if (!s_kind || !g) {
 		if (s_dressedCount)
 			undress();
+		s_dressedKind = 0;
 		return;
 	}
-	if (s_time < s_dressNext && s_dressedCount)
+	if (s_dressedKind != s_kind) { // the goop's texture, still, in place of FLUDD's own
+		undress();
+		s_dressedKind = s_kind;
+		makeTextures();
+		memcpy(s_pulse, s_kind == kFire ? s_rgbaFire : s_rgbaElectric, sizeof s_pulse);
+		s_dressNext = 0.0f;
+	}
+	if (s_time < s_dressNext)
 		return;
-	s_dressNext = s_time + 1.0f / 12.0f;
-	makeTextures();
-	const bool fire = s_kind == kFire;
-	const u8* base  = fire ? s_rgbaFire : s_rgbaElectric;
-	// fire throbbing and flowing; electric still, the water's glints moving over it
-	const f32 beat  = 0.5f + 0.5f * sinf(s_time * 5.0f);
-	const f32 light = fire ? 0.7f + 0.5f * beat : 1.0f;
-	const int sx = fire ? (int)(s_time * 10.0f) & (kTex - 1) : 0, sy = fire ? (int)(s_time * 4.0f) & (kTex - 1) : 0;
-	const int wx = (int)(s_time * 14.0f) & (kTex - 1), wy = (int)(s_time * 9.0f) & (kTex - 1);
-	for (int y = 0; y < kTex; y++)
-		for (int x = 0; x < kTex; x++) {
-			const u8* c = base + ((((y + sy) & (kTex - 1)) * kTex) + ((x + sx) & (kTex - 1))) * 4;
-			u8* o       = s_pulse + (y * kTex + x) * 4;
-			for (int ch = 0; ch < 3; ch++) {
-				const int glint = fire ? 0 : s_waterAlpha[((y + wy) & (kTex - 1)) * kTex + ((x + wx) & (kTex - 1))] * 220 / 255;
-				const int v     = (int)((f32)c[ch] * light) + glint;
-				o[ch]       = (u8)(v > 255 ? 255 : v);
-			}
-			o[3] = 255;
-			u8* k = s_pulseTank + (y * kTex + x) * 4; // fire goop's tank: the same, reddish brown
-			k[0] = (u8)(o[0] * 140 / 255), k[1] = (u8)(o[1] * 70 / 255 / 2 + 20), k[2] = (u8)(o[2] / 4 + 15), k[3] = 255;
-		}
+	s_dressNext = s_time + 1.0f; // (a texture of FLUDD's not yet dressed: another nozzle's, a new stage's)
 	const int before = s_dressedCount;
 	dressModel(g->mFluddModel ? g->mFluddModel->getModel() : 0);
 	for (int n = 0; n < 6; n++) {
@@ -1060,7 +1088,7 @@ void dressFludd()
 	}
 	s_namesTold = true;
 	if (s_dressedCount != before)
-		fprintf(stderr, "[goop] FLUDD dressed in %s goop (%d textures)\n", fire ? "fire" : "electric", s_dressedCount);
+		fprintf(stderr, "[goop] FLUDD dressed in %s goop (%d textures)\n", s_kind == kFire ? "fire" : "electric", s_dressedCount);
 }
 
 PortExtension s_extension;
