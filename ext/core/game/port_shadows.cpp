@@ -175,16 +175,18 @@ extern "C" void GXPC_ShadowCastOnly(int on);
 // map (GXPC_ShadowCastOnly), as the frame's shadows begin, each facing the sun. FLUDD's own drops
 // are stretched along their flight (a frame of it) so a stream's shadows run into one another; the
 // SMG's longer still (a streak); the other weapons' a round disc. At most 400 a frame.
+static u8 s_waterAlpha = 255; // Water Shadow Strength: how much of the sun the water takes (255 all)
+
 static void waterDisc(f32 x, f32 y, f32 z, f32 r, const f32* u, const f32* v, const f32* ca, const f32* sa, int sides)
 {
 	for (int k = 0; k < sides; k++) {
 		const int j = (k + 1) % sides;
 		GXPosition3f32(x, y, z);
-		GXColor4u8(255, 255, 255, 255);
+		GXColor4u8(255, 255, 255, s_waterAlpha);
 		GXPosition3f32(x + (u[0] * ca[k] + v[0] * sa[k]) * r, y + (u[1] * ca[k] + v[1] * sa[k]) * r, z + (u[2] * ca[k] + v[2] * sa[k]) * r);
-		GXColor4u8(255, 255, 255, 255);
+		GXColor4u8(255, 255, 255, s_waterAlpha);
 		GXPosition3f32(x + (u[0] * ca[j] + v[0] * sa[j]) * r, y + (u[1] * ca[j] + v[1] * sa[j]) * r, z + (u[2] * ca[j] + v[2] * sa[j]) * r);
-		GXColor4u8(255, 255, 255, 255);
+		GXColor4u8(255, 255, 255, s_waterAlpha);
 	}
 }
 
@@ -276,7 +278,7 @@ static void waterShadows(float (*view)[4], const f32 sun[3])
 		                     {bx + sx, by + sy, bz + sz}, {ax - sx, ay - sy, az - sz}, {bx - sx, by - sy, bz - sz}};
 		for (int k = 0; k < 6; k++) {
 			GXPosition3f32(q[k][0], q[k][1], q[k][2]);
-			GXColor4u8(255, 255, 255, 255);
+			GXColor4u8(255, 255, 255, s_waterAlpha);
 		}
 	}
 	GXEnd();
@@ -374,6 +376,10 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 	GXPC_ShadowSoftness(port_shadows_softness());  // Soft Shadow Edges
 	GXPC_ShadowMapSize(port_shadows_map_size());     // Shadow Size
 	GXPC_ShadowFrame(view, sun, focus, kStrength[level], kHalf, reach);
-	if (port_shadows_water())
-		waterShadows(view, sun);  // FLUDD's water in the air, and its spray weapons' shots
+	if (port_shadows_water()) {
+		static const u8 kStrength[3] = {90, 150, 255}; // Light, Medium, Strong
+		const int s  = port_shadows_water_strength();
+		s_waterAlpha = kStrength[s < 0 ? 0 : s > 2 ? 2 : s];
+		waterShadows(view, sun);
+	}  // FLUDD's water in the air, and its spray weapons' shots
 }

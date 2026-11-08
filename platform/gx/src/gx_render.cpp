@@ -1951,6 +1951,9 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     shadow[43] = g.shadowMain && !seeThrough && !warped && !g.shadowNoReceive ? 1.0f : 0.0f;
     // blended: what is drawn see-through (its alpha under 0.9: water) neither receives nor casts
     shadow[45] = (scm & 1) ? 1.0f : 0.0f;
+    // a cast-only draw (Water Shadows' drops): its alpha is how much of the sun it takes, drawn into
+    // the map as a fine scatter of points (the soft edges' filtering makes it a lighter shadow)
+    if (g.shadowCastOnly) shadow[45] = 2.0f;
     // Mario's own draw: looked up from a little toward the sun, so that he takes no shadow of
     // himself (his cap's on his nose) but still the world's (a tree's, a building's) on him
     shadow[46] = g.shadowTag ? kMarioSelfShadowSkip : 0.0f;

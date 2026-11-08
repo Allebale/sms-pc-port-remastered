@@ -14,6 +14,7 @@ int port_shadows(void);
 // old-off); 0 none of the game's own.
 int port_shadows_round(void);
 int port_shadows_water(void);  // Water Shadows (Off by default)
+int port_shadows_water_strength(void);  // Water Shadow Strength: 0 Light, 1 Medium, 2 Strong
 // Shadow Distance: how far the far map reaches either side of Mario, in units.
 float port_shadows_distance(void);
 // Keep the Original Shadow Direction: 1 the sun's shadows fall exactly where the game's own fell
