@@ -353,6 +353,11 @@ const int kFlat          = 256;
 const f32 kFlatCell      = 12.0f;
 f32 s_flat[kFlat * kFlat];               // how flat: 1 just pressed, 0 standing
 f32 s_flatDir[kFlat * kFlat][2];         // which way it lies (x, z)
+// burnt away (the goop weapons' fire goop): how much of each cell's blades is left (1 all, 0 none;
+// the map's alpha), growing back over a minute and a half once nothing burns it
+f32 s_left[kFlat * kFlat];
+bool s_burnUsed;
+const s32 kBurnMs = 1200, kRegrowMs = 90000;
 u8 s_flatMap[kFlat * kFlat * 4];
 int s_flatX0, s_flatZ0;                  // the map's first cell, in cells across the world
 bool s_flatUsed, s_flatShown;
@@ -364,6 +369,9 @@ void flatClear()
 {
 	memset(s_flat, 0, sizeof s_flat);
 	s_flatUsed = false;
+	for (int i = 0; i < kFlat * kFlat; i++)
+		s_left[i] = 1.0f;
+	s_burnUsed = false;
 }
 
 // The map's middle near Mario: moved by whole cells when he is a quarter of it away.
@@ -378,7 +386,10 @@ void flatFollow(f32 mx, f32 mz)
 	} else {
 		static f32 s_tmp[kFlat * kFlat];
 		static f32 s_tmpDir[kFlat * kFlat][2];
+		static f32 s_tmpLeft[kFlat * kFlat];
 		memset(s_tmp, 0, sizeof s_tmp);
+		for (int i = 0; i < kFlat * kFlat; i++)
+			s_tmpLeft[i] = 1.0f;
 		for (int z = 0; z < kFlat; z++)
 			for (int x = 0; x < kFlat; x++) {
 				const int ox = x + dx, oz = z + dz;
@@ -387,7 +398,9 @@ void flatFollow(f32 mx, f32 mz)
 				s_tmp[z * kFlat + x]       = s_flat[oz * kFlat + ox];
 				s_tmpDir[z * kFlat + x][0] = s_flatDir[oz * kFlat + ox][0];
 				s_tmpDir[z * kFlat + x][1] = s_flatDir[oz * kFlat + ox][1];
+				s_tmpLeft[z * kFlat + x]   = s_left[oz * kFlat + ox];
 			}
+		memcpy(s_left, s_tmpLeft, sizeof s_left);
 		memcpy(s_flat, s_tmp, sizeof s_flat);
 		memcpy(s_flatDir, s_tmpDir, sizeof s_flatDir);
 	}
@@ -425,16 +438,23 @@ void flatTick()
 	const s32 now = nowMs();
 	const s32 dt  = s_flatAt ? now - s_flatAt : 0;
 	s_flatAt      = now;
-	if (!s_flatUsed) {
+	if (!s_flatUsed && !s_burnUsed) {
 		if (s_flatShown) {
 			GXPC_GrassFlatMap(0, 0, 0.0f, 0.0f, 0.0f);
 			s_flatShown = false;
 		}
 		return;
 	}
-	const f32 fade = dt > 0 ? (f32)dt / (f32)s_sprayMs : 0.0f;
-	bool any       = false;
+	const f32 fade   = dt > 0 ? (f32)dt / (f32)s_sprayMs : 0.0f;
+	const f32 regrow = dt > 0 ? (f32)dt / (f32)kRegrowMs : 0.0f;
+	bool any = false, burnt = false;
 	for (int i = 0; i < kFlat * kFlat; i++) {
+		f32& left = s_left[i];
+		if (left < 1.0f) {
+			left  = left + regrow < 1.0f ? left + regrow : 1.0f;
+			burnt = burnt || left < 1.0f;
+		}
+		s_flatMap[i * 4 + 3] = (u8)(left * 255.0f + 0.5f);
 		f32& f = s_flat[i];
 		if (f <= 0.0f) {
 			s_flatMap[i * 4] = 0;
@@ -448,9 +468,9 @@ void flatTick()
 		s_flatMap[i * 4]     = (u8)(show * 255.0f + 0.5f);
 		s_flatMap[i * 4 + 1] = (u8)((s_flatDir[i][0] * 0.5f + 0.5f) * 255.0f + 0.5f);
 		s_flatMap[i * 4 + 2] = (u8)((s_flatDir[i][1] * 0.5f + 0.5f) * 255.0f + 0.5f);
-		s_flatMap[i * 4 + 3] = 255;
 	}
 	s_flatUsed = any;
+	s_burnUsed = burnt;
 	GXPC_GrassFlatMap(s_flatMap, kFlat, (f32)s_flatX0 * kFlatCell, (f32)s_flatZ0 * kFlatCell, kFlat * kFlatCell);
 	s_flatShown = true;
 }
@@ -719,3 +739,29 @@ void drawGrass(float (*view)[4])
 } // namespace
 
 void port_grass_draw(float (*view)[4]) { drawGrass(view); }
+
+// The goop weapons' goop on the grass (ext/modapi/game/modapi_goop_weapons.cpp), each tick for each
+// puddle: electric goop (kind 0) keeps the blades under it pressed flat; fire goop (kind 1) burns
+// them away (gone in a little over a second, growing back later). `ms` since the last tick.
+void port_grass_goop(float x, float z, float r, int kind, int ms)
+{
+	if (!s_style)
+		return;
+	if (kind == 0) {
+		flatStamp(x, z, r);
+		return;
+	}
+	const f32 fx = x / kFlatCell - (f32)s_flatX0, fz = z / kFlatCell - (f32)s_flatZ0;
+	const f32 rc = r / kFlatCell, burn = (f32)ms / (f32)kBurnMs;
+	const int x0 = (int)floorf(fx - rc), x1 = (int)ceilf(fx + rc);
+	const int z0 = (int)floorf(fz - rc), z1 = (int)ceilf(fz + rc);
+	for (int cz = z0 < 0 ? 0 : z0; cz <= z1 && cz < kFlat; cz++)
+		for (int cx = x0 < 0 ? 0 : x0; cx <= x1 && cx < kFlat; cx++) {
+			const f32 ddx = (f32)cx + 0.5f - fx, ddz = (f32)cz + 0.5f - fz;
+			if (ddx * ddx + ddz * ddz >= rc * rc)
+				continue;
+			f32& left  = s_left[cz * kFlat + cx];
+			left       = left - burn > 0.0f ? left - burn : 0.0f;
+			s_burnUsed = true;
+		}
+}

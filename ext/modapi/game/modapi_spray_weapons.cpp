@@ -74,7 +74,7 @@ bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at);
 
 extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
 // the goop weapons (modapi_goop_weapons.cpp): FLUDD's own stream as fire or electric goop
-void PortGoopSetWeapon(int kind, bool defeat);
+void PortGoopSetWeapon(int kind, bool defeat, int flags);
 int PortGoopStats(int kind, int has, float every, float range, float burst, float drop);
 bool PortGoopEmit(const TWaterEmitInfo& asked, int* made);
 void PortGoopWash(float x, float y, float z, float r);
@@ -2029,7 +2029,7 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 {
 	// a goop weapon (SMS_SPRAY_FIRE_GOOP 5, SMS_SPRAY_ELECTRIC_GOOP 6): FLUDD's own spray here (its
 	// stream made goop by modapi_goop_weapons.cpp)
-	PortGoopSetWeapon(weapon == 5 || weapon == 6 ? weapon : 0, (flags & 1) != 0);
+	PortGoopSetWeapon(weapon == 5 || weapon == 6 ? weapon : 0, (flags & 1) != 0, flags);
 	const int now     = weapon > NORMAL && weapon < WEAPONS ? weapon : NORMAL;
 	const bool defeat = (flags & 1) != 0;
 	if (defeat != s_defeat) // counted afresh from when defeating is turned on

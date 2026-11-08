@@ -1733,11 +1733,14 @@ void main() {
       down += amt * h * 0.55;
     }
   }
-  // the flattened grass (FLUDD's spray, Mario's steps: port_grass.cpp's map)
+  // the flattened grass (FLUDD's spray, Mario's steps: port_grass.cpp's map); its alpha how much
+  // of the blades is left (burnt away by fire goop)
+  float left = 1.0;
   if (u_gflatArea.z > 0.5) {
     vec2 fuv = (bp.xz - u_gflatArea.xy) * u_gflatArea.w;
     if (all(greaterThan(fuv, vec2(0.0))) && all(lessThan(fuv, vec2(1.0)))) {
       vec4 f = textureLod(u_gflat, fuv, 0.0);
+      left = f.a;
       if (f.r > 0.004) {
         vec2 dir = f.gb * 2.0 - 1.0;
         float dl = length(dir);
@@ -1751,7 +1754,8 @@ void main() {
   // the vertex: which side, how high
   ivec2 vtx = u_gtile.y > 1.5 ? kV2[gl_VertexID % 9] : kV1[gl_VertexID % 3];
   vec2 across = a_blade2.xy * (u_g[0].z * 0.5);
-  float topY = h - down;
+  float topY = (h - down) * left;
+  if (left < 0.03) across = vec2(0.0);  // burnt away: nothing left of it
   vec3 p;
   float level;
   if (vtx.y == 0) {
@@ -1776,6 +1780,7 @@ void main() {
   vec3 tipC  = ground.rgb * 1.22 + vec3(-0.01, 0.025, -0.01);
   if (dry) tipC *= vec3(1.3, 1.05, 0.8);
   v_col = clamp(mix(baseC, tipC, level) * shade, 0.0, 1.0);
+  if (left < 0.999) v_col = mix(v_col, vec3(0.07, 0.05, 0.03), clamp((1.0 - left) * 1.6, 0.0, 0.9));  // charred
   // placed as the GX vertex shader places the game's
   gl_Position = place(p);
   gl_ClipDistance[0] = s_gx.x;

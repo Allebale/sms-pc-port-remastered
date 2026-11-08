@@ -25,6 +25,8 @@ int port_grass_mario(void);
 // From port_draw_footprints (TModelWaterManager::perform, as the stage's ground is drawn): the
 // blades near Mario. view: the camera's (world to view).
 void port_grass_draw(float (*view)[4]);
+// the goop weapons' goop on the grass: electric (0) presses it flat, fire (1) burns it away
+void port_grass_goop(float x, float z, float r, int kind, int ms);
 
 #ifdef __cplusplus
 }

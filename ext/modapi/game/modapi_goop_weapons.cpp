@@ -62,6 +62,8 @@ const int kElectric = 6;  // SMS_SPRAY_ELECTRIC_GOOP
 int s_kind;           // the goop weapon chosen: kFire, kElectric, or 0 none
 bool s_defeat;        // it may defeat enemies
 bool s_emitting;      // our own request, let through
+bool s_grassPress = true, s_grassBurn = true; // (Remastered's 3D Grass) electric goop presses it, fire goop burns it
+extern "C" void port_grass_goop(float x, float z, float r, int kind, int ms) __attribute__((weak)); // port_grass.cpp
 f32 s_time;           // seconds played
 // each kind's numbers (the mod's menu): seconds of its stream, or of standing in its goop, that
 // defeat an enemy; how long its goop lasts, times a minute; its puddles' size, times their own
@@ -354,6 +356,12 @@ void afterMovement()
 	if (!any)
 		return;
 	hurtMario(dt);
+	if (port_grass_goop) // the grass under it: pressed flat, or burnt away
+		for (int i = 0; i < kPuddles; i++) {
+			const Puddle& p = s_puddles[i];
+			if (p.on && (p.kind == kFire ? s_grassBurn : s_grassPress))
+				port_grass_goop(p.x, p.z, sizeNow(p) * 0.95f, p.kind == kFire ? 1 : 0, (int)(dt * 1000.0f));
+		}
 	if (s_time - s_enemyCheck >= 0.1f && s_defeat && gpConductor) {
 		s_enemyCheck = s_time;
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
@@ -897,6 +905,21 @@ Dressed s_dressed[kDressMost];
 int s_dressedCount;
 f32 s_dressNext;
 u8 s_pulse[kTex * kTex * 4];
+u8 s_pulseTank[kTex * kTex * 4]; // fire goop's tank: reddish brown
+bool s_namesTold;
+
+// FLUDD's water tank's texture, by its name
+bool isTank(const char* name)
+{
+	if (!name)
+		return false;
+	char low[64];
+	int n = 0;
+	for (; name[n] && n < 63; n++)
+		low[n] = (char)(name[n] >= 'A' && name[n] <= 'Z' ? name[n] + 32 : name[n]);
+	low[n] = 0;
+	return strstr(low, "tank") || strstr(low, "mizu") || strstr(low, "water") || strstr(low, "tnk");
+}
 
 void undress()
 {
@@ -910,16 +933,22 @@ void dressModel(J3DModel* model)
 {
 	J3DModelData* data   = model ? model->getModelData() : 0;
 	J3DTexture* textures = data ? data->getTexture() : 0;
+	JUTNameTab* names    = data ? data->getTextureName() : 0;
 	if (!textures)
 		return;
 	for (u16 i = 0; i < textures->getNum(); i++) {
 		const ResTIMG* t = textures->getResTIMG(i);
-		if (!t || t->alphaEnabled == 1)
+		const char* name = names ? names->getName(i) : 0;
+		if (!s_namesTold && t)
+			fprintf(stderr, "[goop] FLUDD texture %s (%dx%d, format %d, alpha %d)\n", name ? name : "?", t->width, t->height,
+			        t->format, t->alphaEnabled);
+		const bool tank = s_kind == kFire && isTank(name);
+		if (!t || (t->alphaEnabled == 1 && !tank))
 			continue; // a cut-out
 		// where GX reads it: the header's offset added in 32 bits, as on the console
 		const void* at  = (const void*)(uintptr_t)(u32)((uintptr_t)t + t->imageDataOffset);
 		const u32 bytes = GXGetTexBufferSize(t->width, t->height, t->format, GX_FALSE, 0);
-		GXPC_SetTextureOverride(at, bytes, s_pulse, kTex, kTex);
+		GXPC_SetTextureOverride(at, bytes, tank ? s_pulseTank : s_pulse, kTex, kTex);
 		bool known = false;
 		for (int k = 0; k < s_dressedCount && !known; k++)
 			known = s_dressed[k].data == at;
@@ -963,6 +992,8 @@ void dressFludd()
 				o[ch]       = (u8)(v > 255 ? 255 : v);
 			}
 			o[3] = 255;
+			u8* k = s_pulseTank + (y * kTex + x) * 4; // fire goop's tank: the same, reddish brown
+			k[0] = (u8)(o[0] * 140 / 255), k[1] = (u8)(o[1] * 70 / 255 / 2 + 20), k[2] = (u8)(o[2] / 4 + 15), k[3] = 255;
 		}
 	const int before = s_dressedCount;
 	dressModel(g->mFluddModel ? g->mFluddModel->getModel() : 0);
@@ -971,6 +1002,7 @@ void dressFludd()
 		if (nozzle && nozzle->getMActor())
 			dressModel(nozzle->getMActor()->getModel());
 	}
+	s_namesTold = true;
 	if (s_dressedCount != before)
 		fprintf(stderr, "[goop] FLUDD dressed in %s goop (%d textures)\n", fire ? "fire" : "electric", s_dressedCount);
 }
@@ -992,8 +1024,10 @@ struct Register {
 
 // The goop weapon chosen (modg_spray_weapon_set, modapi_spray_weapons.cpp): SMS_SPRAY_FIRE_GOOP,
 // SMS_SPRAY_ELECTRIC_GOOP, or 0 none; and whether it may defeat enemies.
-void PortGoopSetWeapon(int kind, bool defeat)
+void PortGoopSetWeapon(int kind, bool defeat, int flags)
 {
+	s_grassPress = (flags & (1 << 28)) == 0; // set: not
+	s_grassBurn  = (flags & (1 << 29)) == 0;
 	const int now = kind == kFire || kind == kElectric ? kind : 0;
 	if (now != s_kind)
 		fprintf(stderr, "[goop] %s\n", now == kFire ? "fire goop" : now == kElectric ? "electric goop" : "no goop");
