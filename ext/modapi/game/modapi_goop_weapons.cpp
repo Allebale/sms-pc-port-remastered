@@ -49,6 +49,7 @@
 #include <string.h>
 
 extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
+bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
 // a picture shown in place of a texture, by its data (platform/gx/src/gx_texture.cpp)
 extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const unsigned char* rgba, int w, int h)
     __attribute__((weak));
@@ -67,7 +68,6 @@ extern "C" void port_grass_goop(float x, float y, float z, float r, int kind, in
 extern "C" int port_grass_burning(float x, float z) __attribute__((weak));
 extern "C" int port_grass_fires(float* out, int most) __attribute__((weak));
 extern "C" void port_grass_extinguish(float x, float z, float r) __attribute__((weak));
-bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
 f32 s_time;           // seconds played
 // each kind's numbers (the mod's menu): seconds of its stream, or of standing in its goop, that
 // defeat an enemy; how long its goop lasts, times a minute; its puddles' size, times their own
