@@ -45,8 +45,16 @@
 #include <Enemy/Conductor.hpp>
 #include <Enemy/Emario.hpp>
 #include <Enemy/EnemyMario.hpp>
+#include <Enemy/GateKeeper.hpp>
+#include <Enemy/BossPakkun.hpp>
+#include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
+#include <NPC/NpcBase.hpp>
+#include <Enemy/BossWanwan.hpp>
+#include <Enemy/BossManta.hpp>
+#include <Enemy/BossEel.hpp>
+#include <System/MarDirector.hpp>
 #include <MoveBG/MapObjTree.hpp>
 #include "port_framerate.h"
 
@@ -64,12 +72,86 @@ bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forwar
 void PortFluddHeldKick(f32 amount);
 bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at);
 
+extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
+
 namespace {
+
+#include "rocket_voices.inc" // Mario's cries as a rocket jump hurts him
 
 enum { NORMAL = 0, SHOTGUN = 1, RIFLE = 2, BAZOOKA = 3, SMG = 4, WEAPONS = 5 };
 const int kTagShift = 8; // the weapon in a drop's attack, above the game's own (1 to 255)
 
 const int kShotShift = 12; // and the shot (1 to 7, round again), above the weapon
+const int kVisual    = 15; // a drop's weapon tag: the bazooka's water shot seen flying, only to look at (hits nothing)
+struct Visual {
+	int tag; // its drop's tag (kVisual and the shot), 0 none
+	JGeometry::TVec3<f32> from, way;
+	f32 aim; // how far it flies
+};
+Visual s_visual;
+// the bazooka's green water balloon (s_shotLook 2): flown straight to where it bursts in as many
+// frames as its own drop, then it bursts there (its rubber in pieces, a splash). Drawn by
+// modapi_weapon_models.cpp (PortBazookaBalloon).
+struct Balloon {
+	bool on;
+	bool big; // the big one (SMS_SPRAY_SHOT_BIG)
+	JGeometry::TVec3<f32> from, way;
+	f32 aim, along, frames;
+};
+Balloon s_balloon;
+// its rubber, burst into pieces where it pops: thrown out from there, falling and tumbling, gone
+// after about half a second
+struct Piece {
+	JGeometry::TVec3<f32> at, v;
+	f32 spin, turn, size, life; // life: frames left, 0 none
+	JGeometry::TVec3<f32> axis;
+};
+const int kPieces = 12;
+Piece s_pieces[kPieces];
+
+// The hearts defeated enemies drop (SMS_SPRAY_HEARTS): beside its coin, popped up and falling to
+// the ground there, floating, turning and bobbing; Mario touching one gets a point of health back.
+// Gone after 15 seconds (blinking the last 3).
+struct Heart {
+	JGeometry::TVec3<f32> at;
+	f32 vy, ground, spin, life; // life: frames left, 0 none
+	bool landed;
+};
+const int kHearts = 8;
+Heart s_heartList[kHearts];
+// friendly characters washed by a shot (washNpc): each once a shot
+struct NpcShot {
+	TBaseNPC* npc;
+	int shot;
+	f32 at;
+};
+NpcShot s_npcShots[8];
+int s_nextNpcShot;
+TBaseNPC* s_npcHit;   // the character a weapon's drop is reaching now (objectHit), and its goop before
+f32 s_npcBefore;
+// Eely-Mouth's teeth a shot has counted on (toothHit)
+struct ToothOwed {
+	TBossEelTooth* tooth;
+	f32 owed;
+};
+ToothOwed s_toothOwed[8];
+int s_nextToothOwed;
+struct ToothShot {
+	TBossEelTooth* tooth;
+	int shot;
+};
+ToothShot s_toothShots[16];
+int s_nextToothShot;
+TBossManta* s_smgManta; // a Phantamanta the submachine gun's drop is reaching now (objectHit)
+// Big Chain Chomp being cooled (chompHit)
+TBossWanwan* s_chomp;   // the one being shot lately, its points after the last shot, and when
+int s_chompHp;
+f32 s_chompAt;
+f32 s_chompOwed;        // the share of a point owed (the submachine gun's 42 shots on fewer points)
+int s_chompShot;        // the shot that last counted on it
+const f32 kHeartLife = 450.0f; // 15 seconds of frames
+const f32 kVisualSize = 10.0f; // its blob, times the bazooka's own drop
+const int kVisualTail = 5;      // blobs in its streak, the head first
 
 struct Weapon {
 	int drops;     // at once
@@ -116,11 +198,25 @@ bool s_rocketAir;     // he is in the air from one (his fall then hurts him no m
 f32 s_rocketVX, s_rocketVZ, s_rocketTop; // his speed across the ground in the air from one, and its most
 void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
+bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
+bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
+bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
+bool s_rocketOuch;
+f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in percent)
+bool s_muteMario;          // SMS_SPRAY_MUTE_MARIO: Mario's own voice left out (a mod's: its rocket jump key held)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
+f32 s_goopArea;     // the bazooka's goop area (SmsSprayStats.goop_area), times 860 out from its middle (its burst at 130 percent); 0 its burst's size's
+f32 s_goop = 1.0f;  // how much goop the weapons clean, times the game's own (set_weapon's flags, SMS_SPRAY_GOOP_SHIFT)
+bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
+int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
 f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
 void followBazooka();
 void followStraight();
+void followVisual();
+void followBalloon();
+void followHearts();
+void followChomp();
 const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
 int s_weapon;   // the one chosen
@@ -191,6 +287,17 @@ void stageSetup()
 {
 	s_rocketAir = false;
 	clearStraights(); // (their enemies were the last stage's)
+	memset(&s_visual, 0, sizeof s_visual);
+	memset(&s_balloon, 0, sizeof s_balloon);
+	memset(s_pieces, 0, sizeof s_pieces);
+	memset(s_heartList, 0, sizeof s_heartList);
+	memset(s_npcShots, 0, sizeof s_npcShots);
+	s_npcHit = 0;
+	s_chomp  = 0;
+	s_smgManta = 0;
+	memset(s_toothShots, 0, sizeof s_toothShots);
+	memset(s_toothOwed, 0, sizeof s_toothOwed);
+	s_muteMario = false;
 	memset(s_hits, 0, sizeof s_hits);
 	s_ready = 0.0f;
 	s_burst = 0;
@@ -212,6 +319,10 @@ void afterMovement()
 		s_waterScaled                = s_farScale > 1.0f;
 	}
 	followStraight();
+	followVisual();
+	followBalloon();
+	followHearts();
+	followChomp();
 	followBazooka();
 	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
 		TMario* m = gpMarioOriginal;
@@ -273,6 +384,63 @@ bool moves(TSmallEnemy* e)
 	       && !dynamic_cast<TKageMarioModoki*>(e);
 }
 
+// A heart dropped where the bazooka defeated an enemy (SMS_SPRAY_HEARTS): beside its coin
+void dropHeart(TLiveActor* e)
+{
+	if (!s_hearts || !e)
+		return;
+	Heart* h = &s_heartList[0];
+	for (int i = 0; i < kHearts; i++) { // a free one, or the oldest
+		if (s_heartList[i].life <= 0.0f) {
+			h = &s_heartList[i];
+			break;
+		}
+		if (s_heartList[i].life < h->life)
+			h = &s_heartList[i];
+	}
+	const f32 a = random01() * 6.2831853f; // beside it, its coin in the middle
+	h->at.set(e->mPosition.x + sinf(a) * 45.0f, e->mPosition.y + 40.0f, e->mPosition.z + cosf(a) * 45.0f);
+	const TBGCheckData* floor = 0;
+	h->ground = gpMap ? gpMap->checkGround(h->at.x, h->at.y + 50.0f, h->at.z, &floor) : e->mPosition.y;
+	if (h->ground < -50000.0f || h->ground > h->at.y + 50.0f)
+		h->ground = e->mPosition.y;
+	h->vy     = 14.0f; // popped up
+	h->spin   = a;
+	h->life   = kHeartLife;
+	h->landed = false;
+	fprintf(stderr, "[weapons] a heart dropped\n");
+}
+
+// the hearts each frame: falling, floating, and picked up by Mario touching one
+void followHearts()
+{
+	const f32 dt = port_frame_scale();
+	TMario* m    = gpMarioOriginal;
+	for (int i = 0; i < kHearts; i++) {
+		Heart& h = s_heartList[i];
+		if (h.life <= 0.0f)
+			continue;
+		h.life -= dt;
+		h.spin += 0.08f * dt;
+		if (!h.landed) {
+			h.vy -= 1.5f * dt;
+			h.at.y += h.vy * dt;
+			if (h.at.y <= h.ground + 40.0f && h.vy < 0.0f)
+				h.at.y = h.ground + 40.0f, h.landed = true;
+		}
+		if (m && !m->onYoshi()) {
+			const f32 dx = m->mPosition.x - h.at.x, dz = m->mPosition.z - h.at.z, dy = h.at.y - m->mPosition.y;
+			if (dx * dx + dz * dz < 80.0f * 80.0f && dy > -60.0f && dy < 190.0f) {
+				h.life = 0.0f;
+				m->incHP(1);
+				m->emitGetCoinEffect(&h.at);
+				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_HP_RECOVER, 0, nullptr, 0);
+				fprintf(stderr, "[weapons] a heart picked up: a point of health\n");
+			}
+		}
+	}
+}
+
 // An enemy hit by a weapon's shot (`shot`: weapon and number), shoved along (dx, dz) and maybe
 // thrown up, and with defeat on, defeated after the weapon's shots.
 void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
@@ -284,16 +452,28 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		return;
 	const Weapon& k = kWeapons[weapon];
 	const bool fresh = h->lastShot != shot; // this shot's first drop to reach it
-	if (moves(e) && h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
+	// already in the air, with SMS_SPRAY_AIR_FORWARD (a mod's setting): the bazooka's hit pushes it on
+	// forward, away from Mario, and does not throw it up again
+	TMario* mario = gpMarioOriginal;
+	if (s_airForward && weapon == BAZOOKA && fresh && mario && moves(e) && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+		const f32 fx = e->mPosition.x - mario->mPosition.x, fz = e->mPosition.z - mario->mPosition.z;
+		const f32 fl = sqrtf(fx * fx + fz * fz);
+		if (fl > 1.0f)
+			dx = fx / fl, dz = fz / fl;
 		h->vx = dx * k.shove;
 		h->vz = dz * k.shove;
-	}
-	if (fresh && k.lift > 0.0f && moves(e)) { // thrown into the air: the game's own fall brings it down
-		JGeometry::TVec3<f32> v = e->getVelocity();
-		v.y = k.lift;
-		e->setVelocity(v);
-		e->mPosition.y += 8.0f;
-		e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	} else {
+		if (moves(e) && h->vx * h->vx + h->vz * h->vz < k.shove * k.shove) { // the strongest shove, not their sum
+			h->vx = dx * k.shove;
+			h->vz = dz * k.shove;
+		}
+		if (fresh && k.lift > 0.0f && moves(e)) { // thrown into the air: the game's own fall brings it down
+			JGeometry::TVec3<f32> v = e->getVelocity();
+			v.y = k.lift;
+			e->setVelocity(v);
+			e->mPosition.y += 8.0f;
+			e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+		}
 	}
 	if (!fresh)
 		return;
@@ -310,6 +490,8 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		h->hits = 0;
 		fprintf(stderr, "[weapons] an enemy defeated by the %s\n", kNames[weapon]);
 		e->kill(); // as a stomp: its own defeat, coins and all
+		if (weapon == BAZOOKA) // the bazooka's only
+			dropHeart(e);
 	}
 }
 
@@ -398,12 +580,278 @@ void shadowHit(TEMario* em, int weapon, int shot, bool gameCounted)
 		m->hitWater(em); // empty: down now
 }
 
+// Proto Piranha (TBiancoGateKeeper, the goop piranha plant). Asleep in its goop pile its body takes
+// water (mVulnerable): the game wakes it after about two seconds of spraying (unk17C counting up to
+// 255 while drops keep coming, unk17E); a bazooka burst wakes it at once, two rifle shots do. Awake,
+// water in its open mouth (its head, mHead, while that is mVulnerable) hurts it, one drop being
+// enough (unk154). The weapons reach both with bigger hitboxes.
+const f32 kGatekeeperHitbox = 2.5f; // its goop pile's
+
+// Its mouth's own size (its head's hit radius), only that: a shot must go into it.
+f32 mouthRadius(TBiancoGateKeeper* g)
+{
+	const f32 a = g->mHead->getAttackRadius(), d = g->mHead->getDamageRadius();
+	const f32 m = a > d ? a : d;
+	return m > 40.0f ? m : 40.0f;
+}
+
+// Where along the line the mouth is, -1 if the line misses it.
+f32 mouthAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, TBiancoGateKeeper* g, f32 most)
+{
+	const JGeometry::TVec3<f32>& h = g->mHead->mPosition;
+	const f32 cx = h.x - eye.x, cy = h.y - eye.y, cz = h.z - eye.z;
+	const f32 t = cx * f.x + cy * f.y + cz * f.z;
+	if (t < 0.0f || t > most + 200.0f)
+		return -1.0f;
+	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t, rad = mouthRadius(g);
+	return px * px + py * py + pz * pz <= rad * rad ? t : -1.0f;
+}
+
+TBiancoGateKeeper* asGatekeeper(TLiveActor* a) { return s_bosses ? dynamic_cast<TBiancoGateKeeper*>(a) : 0; }
+
+bool gatekeeperMouth(TBiancoGateKeeper* g)
+{
+	return g && g->mHead && g->mHead->mVulnerable && !g->checkLiveFlag(LIVE_FLAG_DEAD);
+}
+
+bool gatekeeperPile(TBiancoGateKeeper* g) { return g && g->mVulnerable && !g->checkLiveFlag(LIVE_FLAG_DEAD); }
+
+TBiancoGateKeeper* s_pileOf; // the last pile a rifle shot hit, when and how many times
+f32 s_pileAt;
+int s_pileHits;
+
+void gatekeeperHit(TBiancoGateKeeper* g, int weapon)
+{
+	if (gatekeeperMouth(g)) {
+		g->unk154++;
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &g->mHead->mPosition, 0, nullptr);
+		fprintf(stderr, "[weapons] Proto Piranha hit in the mouth by the %s\n", kNames[weapon]);
+		return;
+	}
+	if (!gatekeeperPile(g))
+		return;
+	g->unk154++;
+	g->unk17E = 0x10;
+	gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &g->mPosition, 0, nullptr);
+	bool wake = weapon == BAZOOKA;
+	if (weapon == RIFLE) {
+		if (s_pileOf != g || s_time - s_pileAt > 5.0f)
+			s_pileHits = 0;
+		s_pileOf = g, s_pileAt = s_time;
+		wake     = ++s_pileHits >= 2;
+	}
+	if (wake) {
+		g->unk17C  = 0xFF;
+		s_pileHits = 0;
+	}
+	fprintf(stderr, "[weapons] Proto Piranha's goop pile hit by the %s%s\n", kNames[weapon], wake ? ": it comes out" : "");
+}
+
+// Petey Piranha (TBossPakkun): water in his open mouth (BOSSPAKU_STATE_UNK2, inside his damage
+// cone) counts as the game counts a drop (gotWaterDamage, mWaterMark up to mSLWaterMarkLimit);
+// full, he tumbles over. A weapon's drop the game counted there fills him more: the bazooka's all
+// of him, the rifle's a quarter, the submachine gun's a 24th (the stream's drops fill him faster
+// than its few drops do). A bazooka burst at his open mouth fills him too.
+TBossPakkun* s_peteyHit; // the head a weapon's drop is hitting (objectHit), and his water before it
+int s_peteyMark;
+
+// Big Chain Chomp (TBossWanwan, Pianta Village): hot, each water drop takes one of its hit points
+// (mSLBWHitPointMax of them), which come back one every 20 frames; at none it is cooled. With the
+// weapons made for bosses each shot cools a share of it at once, as many shots as asked: the
+// bazooka's one (its burst too), the rifle's three, the submachine gun's 42 (its points not coming
+// back while it is being shot, so the counts are exact).
+const f32 kChompShots[WEAPONS] = {0.0f, 0.0f, 3.0f, 1.0f, 42.0f};
+TBossWanwan* chompOf(void* object)
+{
+	if (!s_bosses || !object)
+		return 0;
+	THitActor* a = static_cast<THitActor*>(object);
+	if (TBWHit* h = dynamic_cast<TBWHit*>(a))
+		return h->mOwner;
+	return dynamic_cast<TBossWanwan*>(a);
+}
+
+// a weapon's shot on it: true if it counted (its points then set). `gameNext`: the game takes one off
+// itself right after (the drop's own hit), so one more is left for it
+void chompHit(TBossWanwan* c, int weapon, int shot, bool gameNext)
+{
+	if (!c || c->mIsInBath || weapon <= NORMAL || weapon >= WEAPONS || kChompShots[weapon] <= 0.0f)
+		return;
+	int hp = c->getHitPoints();
+	if (shot == s_chompShot && c == s_chomp && s_time - s_chompAt < 3.0f) { // its other drops: the game's own taken back
+		if (gameNext && hp > 0)
+			c->mHitPoints = (u8)(hp + 1);
+		return;
+	}
+	if (hp == 0)
+		return;
+	const int most = c->getSaveParam2()->mSLBWHitPointMax.get();
+	f32 take       = (f32)most / kChompShots[weapon] + s_chompOwed;
+	int whole      = (int)take;
+	s_chompOwed    = take - (f32)whole;
+	if (whole < 1 && weapon == BAZOOKA)
+		whole = most;
+	int left = hp - whole;
+	if (left < 0)
+		left = 0;
+	s_chomp     = c;
+	s_chompHp   = left;
+	s_chompAt   = s_time;
+	s_chompShot = shot;
+	if (left == 0)
+		s_chompOwed = 0.0f;
+	if (gameNext) {
+		c->mHitPoints = (u8)(left + 1); // the game's own hit takes the last one (its own sound and steam)
+	} else { // a burst: as the game's own last hit
+		c->mHitPoints = (u8)left;
+		c->mSparkRequest += 1;
+		if (left == 0) {
+			gpMarioParticleManager->emitAndBindToMtxPtr(BWANWAN_JPA_MS_BWAN_DOWNYUGE, c->getModel()->getAnmMtx(1), 0, nullptr);
+			SMSGetMSound()->startSoundActor(MSD_SE_BS_WANWAN_TO_COOL, &c->mPosition);
+		} else
+			SMSGetMSound()->startSoundActor(MSD_SE_BS_WANWAN_COOL, &c->mPosition);
+	}
+	fprintf(stderr, "[weapons] Big Chain Chomp hit by the %s: %d of its %d heat left\n", kNames[weapon], left, most);
+}
+
+// each frame: its points not coming back while it is being shot (2 seconds after a shot)
+void followChomp()
+{
+	if (!s_chomp || s_time - s_chompAt > 2.0f)
+		return;
+	if (s_chomp->getHitPoints() > s_chompHp && s_chompHp > 0)
+		s_chomp->mHitPoints = (u8)s_chompHp;
+	else if (s_chomp->getHitPoints() < s_chompHp)
+		s_chompHp = s_chomp->getHitPoints(); // the normal spray too
+}
+
+// Phantamanta (TBossManta, Sirena Beach): each manta takes hits (16, 8, 4, 2, 1 by its generation,
+// unk19C counting them), a second apart (unk1A0, 30 frames), then splits into smaller ones (or, the
+// smallest, is gone). With the weapons made for bosses: a rifle shot finishes a manta at once, a
+// bazooka shot every manta in its burst; the submachine gun's hits come a third of a second sooner
+// (20 frames apart).
+const int kMantaHits[6] = {16, 8, 4, 2, 1, 1};
+TBossManta* mantaOf(void* object)
+{
+	if (!s_bosses || !object || !gpConductor)
+		return 0;
+	THitActor* a = static_cast<THitActor*>(object);
+	if (TBossMantaAdditionalCollision* c = dynamic_cast<TBossMantaAdditionalCollision*>(a)) {
+		// a wing's extra hit area (its manta kept to itself): the manta nearest it
+		TBossManta* best = 0;
+		f32 closest      = 1e12f;
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossManta* m = dynamic_cast<TBossManta*>((*it)->getObj(i))) {
+					const f32 x = m->mPosition.x - c->mPosition.x, z = m->mPosition.z - c->mPosition.z;
+					if (x * x + z * z < closest && !m->checkLiveFlag(LIVE_FLAG_DEAD))
+						closest = x * x + z * z, best = m;
+				}
+		return best;
+	}
+	return dynamic_cast<TBossManta*>(a);
+}
+
+// a rifle's or bazooka's shot on a manta, before the game's own hit (which then finishes it): its
+// last hit left. `now`: no drop of the game's follows (a burst): its hit made here
+void mantaFinish(TBossManta* m, bool now)
+{
+	if (!m || m->checkLiveFlag(LIVE_FLAG_DEAD) || !m->isDamageable())
+		return;
+	const int g    = m->mGeneration >= 0 && m->mGeneration < 6 ? m->mGeneration : 0;
+	const int most = kMantaHits[g];
+	if (m->unk19C < most - 1)
+		m->unk19C = most - 1;
+	fprintf(stderr, "[weapons] Phantamanta (generation %d) finished by a shot\n", g);
+	if (now) {
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &m->mPosition, 0, nullptr);
+		m->collidedWithWater();
+	}
+}
+
+// Eely-Mouth's teeth (TBossEelTooth, Noki Bay): each drop of water takes one of a tooth's points
+// (mSLToothMaxHitPoint, 50) a couple of frames apart; at 1 it is clean (a bad one comes off). With
+// the weapons made for bosses each shot takes a share at once: clean in the rifle's 1 shot, the
+// bazooka's 1 (every tooth in its burst), the submachine gun's a second of firing (at its fire rate).
+const int kToothShots[WEAPONS] = {0, 0, 1, 1, 0};
+int toothShots(int weapon)
+{
+	if (weapon != SMG)
+		return kToothShots[weapon];
+	const f32 every = kWeapons[SMG].every > 0.01f ? kWeapons[SMG].every : 0.14f;
+	const int n     = (int)(1.0f / every + 0.5f);
+	return n > 1 ? n : 1;
+}
+// a tooth's part of a point owed (toothHit)
+f32& toothOwed(TBossEelTooth* t)
+{
+	for (int i = 0; i < 8; i++)
+		if (s_toothOwed[i].tooth == t)
+			return s_toothOwed[i].owed;
+	ToothOwed& k = s_toothOwed[s_nextToothOwed++ % 8];
+	k.tooth = t, k.owed = 0.0f;
+	return k.owed;
+}
+
+// a shot on a tooth (once a shot): its share of cleaning. `now`: the game's own hit does not follow (a
+// burst), so it is made here
+void toothHit(TBossEelTooth* t, int weapon, int shot, bool now)
+{
+	if (!t || !t->mOwner || weapon <= NORMAL || weapon >= WEAPONS || !toothShots(weapon))
+		return;
+	if (t->mOwner->mToothBroken || t->mHitPoints <= 1 || t->mDamageCooldown != 0)
+		return;
+	for (int i = 0; i < 16; i++)
+		if (s_toothShots[i].tooth == t && s_toothShots[i].shot == shot)
+			return; // its other drops: the game's own
+	ToothShot& k = s_toothShots[s_nextToothShot++ % 16];
+	k.tooth = t, k.shot = shot;
+	const int most = t->mOwner->getBossEelParams().mSLToothMaxHitPoint.get();
+	// its share of the 49 points to clean, the parts of a point carried to the next shot (the
+	// submachine gun's 7 shots a second on 49 points: 7 each)
+	f32& owed = toothOwed(t);
+	const f32 share = (f32)(most - 1) / (f32)toothShots(weapon) + owed;
+	int take        = (int)(share + 0.001f);
+	owed            = share - (f32)take;
+	if (take < 1)
+		take = 1;
+	int left = t->mHitPoints - take;
+	if (left < 1)
+		left = 1;
+	t->mHitPoints = left + 1; // the game's own hit (its sound, its shine, a bad one off) takes the last
+	if (now)
+		t->receiveMessage(0, HIT_MESSAGE_SPRAYED_BY_WATER);
+	fprintf(stderr, "[weapons] Eely-Mouth's tooth hit by the %s: %d of its %d left\n", kNames[weapon], left, most);
+}
+
+TBossPakkun* peteyOf(void* object)
+{
+	TBPHeadHit* head = s_bosses ? dynamic_cast<TBPHeadHit*>(static_cast<THitActor*>(object)) : 0;
+	return head ? head->mOwner : 0;
+}
+
+void peteyFill(TBossPakkun* p, int weapon, bool counted)
+{
+	const int limit = p->getSaveParam2()->mSLWaterMarkLimit.get();
+	if (!counted && p->mState != BOSSPAKU_STATE_UNK2)
+		return;
+	const int add = weapon == BAZOOKA ? limit : weapon == RIFLE ? limit / 4 : weapon == SMG ? limit / 24 : 0;
+	if (!add)
+		return;
+	if (!counted)
+		p->gotWaterDamage(); // as a drop in his mouth (a burst at it)
+	p->mWaterMark = p->mWaterMark + add < limit ? p->mWaterMark + add : limit;
+	fprintf(stderr, "[weapons] Petey Piranha filled by the %s: %d of %d\n", kNames[weapon], p->mWaterMark, limit);
+}
+
 // A shot that got to what it was aimed at (far away, or Shadow Mario, who runs too fast to meet
 // a drop): an enemy hit, or Shadow Mario wetted (the game's own count, then the weapon's share).
 void hitTarget(TLiveActor* a, int weapon, int shot, f32 dx, f32 dz)
 {
 	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(a)) {
 		hitEnemy(e, weapon, shot, dx, dz);
+	} else if (TBiancoGateKeeper* g = asGatekeeper(a)) {
+		gatekeeperHit(g, weapon);
 	} else if (TEMario* em = dynamic_cast<TEMario*>(a)) {
 		if (sameShadowShot(shot))
 			return;
@@ -425,6 +873,44 @@ bool burstShadow(TEMario* em, int weapon, int shot, const JGeometry::TVec3<f32>&
 	return true;
 }
 
+// Friendly characters covered in goop (TBaseNPC, isPollutionNpc): each weapon's shot washes a share of
+// it off at once, as many shots as FLUDD's own bursts would take: the bazooka's one, the rifle's two,
+// the submachine gun's 42 (the game's own washing for its drop taken back out: these counts exact).
+// Not while talking or in a scene, as the game's own.
+const f32 kNpcWash[WEAPONS] = {0.0f, 0.0f, 0.5f, 1.0f, 1.0f / 42.0f};
+void washNpc(TBaseNPC* n, int weapon, int shot)
+{
+	if (!n || weapon <= NORMAL || weapon >= WEAPONS || kNpcWash[weapon] <= 0.0f || !n->isPollutionNpc()
+	    || n->mPollutionAmount <= 0.0f || !gpMarDirector || gpMarDirector->isTalkOrDemoModeNow())
+		return;
+	for (int i = 0; i < 8; i++) // a shot washes it once (its drops, or its burst and its drop)
+		if (s_npcShots[i].npc == n && s_npcShots[i].shot == shot && s_time - s_npcShots[i].at < 3.0f)
+			return;
+	NpcShot& k = s_npcShots[s_nextNpcShot++ % 8];
+	k.npc = n, k.shot = shot, k.at = s_time;
+	n->mPollutionAmount -= kNpcWash[weapon] + 0.001f;
+	if (n->mPollutionAmount <= 0.0f) { // clean: as the game's own (it thanks Mario)
+		n->mPollutionAmount = 0.0f;
+		n->mTalkForbidCount = 60;
+		n->onUnk1DA(TBaseNPC::UNK1DA_FLAG_UNK2);
+		fprintf(stderr, "[weapons] a character washed clean by the %s\n", kNames[weapon]);
+	}
+}
+
+// the characters within a bazooka burst: washed
+void burstNpcs(int shot, const JGeometry::TVec3<f32>& at, f32 r)
+{
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+			TBaseNPC* n = dynamic_cast<TBaseNPC*>((*it)->getObj(i));
+			if (!n)
+				continue;
+			const f32 x = n->mPosition.x - at.x, y = n->mPosition.y + 80.0f - at.y, z = n->mPosition.z - at.z;
+			if (x * x + y * y + z * z <= r * r)
+				washNpc(n, BAZOOKA, shot);
+		}
+}
+
 int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>& at, f32 r)
 {
 	if (!mgr)
@@ -433,6 +919,33 @@ int burstIn(TLiveManager* mgr, int weapon, int shot, const JGeometry::TVec3<f32>
 	for (int i = 0; i < mgr->getObjNum(); i++) {
 		if (TEMario* em = dynamic_cast<TEMario*>(mgr->getObj(i))) {
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
+			continue;
+		}
+		if (TBossPakkun* p = s_bosses && weapon == BAZOOKA ? dynamic_cast<TBossPakkun*>(mgr->getObj(i)) : 0) {
+			if (p->mHeadHit && p->mState == BOSSPAKU_STATE_UNK2 && !p->checkLiveFlag(LIVE_FLAG_DEAD)) {
+				const JGeometry::TVec3<f32>& h = p->mHeadHit->mPosition; // a burst at his open mouth
+				const f32 x = h.x - at.x, y = h.y - at.y, z = h.z - at.z;
+				const f32 rad = (p->mHeadHit->getDamageRadius() > p->mHeadHit->getAttackRadius() ? p->mHeadHit->getDamageRadius()
+				                                                                                 : p->mHeadHit->getAttackRadius())
+				              + 150.0f;
+				if (x * x + y * y + z * z <= rad * rad) {
+					peteyFill(p, weapon, false);
+					n++;
+				}
+			}
+			continue;
+		}
+		if (TBiancoGateKeeper* g = asGatekeeper(mgr->getObj(i))) { // Proto Piranha: near its open mouth or pile
+			const bool mouth = gatekeeperMouth(g);
+			if (mouth || gatekeeperPile(g)) {
+				const JGeometry::TVec3<f32>& h = mouth ? g->mHead->mPosition : g->mPosition;
+				const f32 x = h.x - at.x, y = h.y - at.y, z = h.z - at.z;
+				const f32 big = mouth ? mouthRadius(g) + 40.0f : r * kGatekeeperHitbox; // the mouth: only a burst in it
+				if (x * x + y * y + z * z <= big * big) {
+					gatekeeperHit(g, weapon);
+					n++;
+				}
+			}
 			continue;
 		}
 		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
@@ -539,7 +1052,21 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	s_rocketAir = true;
 	s_rocketVX  = hx, s_rocketVZ = hz; // steered from here (rocketSteer)
 	s_rocketTop = h > 30.0f ? h : 30.0f;
-	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f\n", dist, inAir ? " (in the air)" : "", up, h);
+	if (s_rocketHurt) { // SMS_SPRAY_ROCKET_HURT (a mod's setting): a point of his health for each, as the game takes it
+		m->decHP(1);
+		if (s_rocketOuch) { // SMS_SPRAY_ROCKET_OUCH: a cry of his, one of Allebale's picks at random (rocket_voices.inc):
+			                // low on health (3 or less, as the game's own "danger") one of the weak ones
+			const bool low       = m->getHealth() <= 3;
+			const VoiceClip* set = low ? kLowClips : kHurtClips;
+			const int n          = low ? (int)(sizeof kLowClips / sizeof *kLowClips) : (int)(sizeof kHurtClips / sizeof *kHurtClips);
+			int pick             = (int)(random01() * n);
+			if (pick >= n)
+				pick = n - 1;
+			port_clip_play(set[pick].pcm, set[pick].frames, set[pick].rate, s_voiceVolume);
+		}
+	}
+	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
+	        s_rocketHurt ? ", 1 health lost" : "");
 }
 
 // The bazooka's burst where its drop first hits an enemy or lands: every small enemy near,
@@ -590,6 +1117,30 @@ int shakeObjects(const JGeometry::TVec3<f32>& at, f32 r)
 	return n;
 }
 
+// The goop round a burst washed away as the stream's puddles wash it, spot by spot: its middle and
+// two rings of spots round it (each on the ground there, so slopes and steps are cleaned too).
+void cleanGoop(const JGeometry::TVec3<f32>& at, f32 r, f32 strength)
+{
+	if (!gpPollution || !gpMap)
+		return;
+	const f32 spot = r * 0.35f * (strength > 1.0f ? strength : 1.0f); // each spot bigger the more it cleans
+	int n = 0;
+	for (int ring = 0; ring < 3; ring++) {
+		const int count = ring == 0 ? 1 : ring == 1 ? 7 : 13;
+		const f32 rad   = ring == 0 ? 0.0f : ring == 1 ? r * 0.42f : r * 0.8f;
+		for (int i = 0; i < count; i++) {
+			const f32 a = 6.2831853f * (f32)i / (f32)count + ring * 0.4f;
+			const f32 x = at.x + cosf(a) * rad, z = at.z + sinf(a) * rad;
+			const TBGCheckData* g = 0;
+			f32 y = gpMap->checkGround(x, at.y + 300.0f, z, &g);
+			if (!g || y < at.y - 800.0f)
+				y = at.y;
+			gpPollution->clean(x, y, z, spot);
+			n++;
+		}
+	}
+}
+
 void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 {
 	const f32 r = kWeapons[weapon].burst;
@@ -603,7 +1154,40 @@ void burst(int weapon, int shot, const JGeometry::TVec3<f32>& at)
 	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
 		if (TEMario* em = dynamic_cast<TEMario*>(*it)) // a Shadow Mario on his own (the plaza's): no manager
 			n += burstShadow(em, weapon, shot, at, r) ? 1 : 0;
+	burstNpcs(shot, at, r);
+	if (s_bosses) // Eely-Mouth's teeth in it: each its share
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossEel* eel = dynamic_cast<TBossEel*>((*it)->getObj(i)))
+					for (int k = 0; k < 8; k++) {
+						TBossEelTooth* t = eel->mTeeth[k];
+						if (!t)
+							continue;
+						const f32 x = t->mPosition.x - at.x, y = t->mPosition.y - at.y, z = t->mPosition.z - at.z;
+						const f32 reach = r + 150.0f;
+						if (x * x + y * y + z * z <= reach * reach)
+							toothHit(t, BAZOOKA, shot, true);
+					}
+	if (s_bosses) // every Phantamanta in it (its middle, a wide one): finished
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossManta* m = dynamic_cast<TBossManta*>((*it)->getObj(i))) {
+					const f32 x = m->mPosition.x - at.x, y = m->mPosition.y - at.y, z = m->mPosition.z - at.z;
+					const f32 reach = r + 300.0f * m->mScaling.x;
+					if (x * x + y * y + z * z <= reach * reach)
+						mantaFinish(m, true);
+				}
+	if (s_bosses) // Big Chain Chomp within it (its body's middle, a big one)
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossWanwan* c = dynamic_cast<TBossWanwan*>((*it)->getObj(i))) {
+					const f32 x = c->mPosition.x - at.x, y = c->mPosition.y + 150.0f - at.y, z = c->mPosition.z - at.z;
+					const f32 reach = r + 250.0f;
+					if (x * x + y * y + z * z <= reach * reach)
+						chompHit(c, weapon, shot, false);
+				}
 	const int shaken = shakeObjects(at, r);
+	cleanGoop(at, s_goopArea > 0.0f ? 860.0f * s_goopArea : r * 1.2f, s_goop); // goop only: its own area, or the burst's
 	explode(at, r);
 	rocketJump(at, r);
 	fprintf(stderr, "[weapons] the bazooka burst at (%.0f, %.0f, %.0f), %d enemies and %d things in it\n", at.x, at.y, at.z, n, shaken);
@@ -628,9 +1212,45 @@ int dropWeapon(void* sender)
 int objectHit(void* object, void* sender, unsigned message)
 {
 	s_softened = 0;
+	s_peteyHit = 0;
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return 0;
 	const int weapon = dropWeapon(sender);
+	if (weapon == kVisual)
+		return 1; // the bazooka's shot seen flying: only to look at
+	if (s_bosses && weapon > NORMAL && weapon < WEAPONS)
+		if (TBossEelTooth* t = dynamic_cast<TBossEelTooth*>(static_cast<THitActor*>(object))) { // Eely-Mouth's tooth
+			TModelWaterManager* w = gpModelWaterManager;
+			TWaterHitActor* drop  = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+			const int shot = w && drop && drop->mParticleIndex >= 0 && drop->mParticleIndex < (int)w->mParticleCount
+			                     ? (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0x7f : 0;
+			toothHit(t, weapon, shot, false);
+		}
+	if (weapon == RIFLE || weapon == BAZOOKA)
+		if (TBossManta* m = mantaOf(object))
+			mantaFinish(m, false); // Phantamanta: the game's own hit (now) its last
+	if (weapon == SMG)
+		if (TBossManta* m = mantaOf(object))
+			s_smgManta = m->isDamageable() ? m : 0; // its wait after the game's hit shortened (objectHitDone)
+	if (weapon > NORMAL && weapon < WEAPONS)
+		if (TBossWanwan* c = chompOf(object)) { // Big Chain Chomp: its share of cooling for the shot
+			TModelWaterManager* w = gpModelWaterManager;
+			TWaterHitActor* drop  = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+			const int shot = w && drop && drop->mParticleIndex >= 0 && drop->mParticleIndex < (int)w->mParticleCount
+			                     ? (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0x7f : 0;
+			chompHit(c, weapon, shot, true);
+		}
+	s_npcHit = 0;
+	if (weapon > NORMAL && weapon < WEAPONS)
+		if (TBaseNPC* n = dynamic_cast<TBaseNPC*>(static_cast<THitActor*>(object))) { // its goop before the game washes it
+			s_npcHit    = n;
+			s_npcBefore = n->mPollutionAmount;
+		}
+	if (weapon > NORMAL && weapon < WEAPONS)
+		if (TBossPakkun* p = peteyOf(object)) { // his water before the game counts the drop
+			s_peteyHit  = p;
+			s_peteyMark = p->mWaterMark;
+		}
 	if (weapon <= NORMAL || weapon >= WEAPONS || s_gamePush[weapon] >= 1.0f)
 		return 0;
 	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object))) {
@@ -689,6 +1309,25 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	}
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return; // the normal spray, or any other water: the game's own
+	if (s_smgManta && weapon == SMG) { // Phantamanta hit by the submachine gun: its next hit sooner
+		if (s_smgManta->unk1A0 == 0x1E)
+			s_smgManta->unk1A0 = 20;
+		s_smgManta = 0;
+	}
+	if (s_npcHit && static_cast<THitActor*>(s_npcHit) == static_cast<THitActor*>(object)) { // a friendly character
+		TBaseNPC* n = s_npcHit;
+		s_npcHit    = 0;
+		if (n->mPollutionAmount > 0.0f && n->mPollutionAmount < s_npcBefore)
+			n->mPollutionAmount = s_npcBefore; // the game's own washing for the drop taken back out
+		washNpc(n, weapon, shot);
+	}
+	if (TBossPakkun* p = peteyOf(object)) { // Petey Piranha: the drop counted in his mouth fills him more
+		if (p == s_peteyHit && p->mWaterMark > s_peteyMark)
+			peteyFill(p, weapon, true);
+		s_peteyHit = 0;
+		if (kWeapons[weapon].burst <= 0.0f)
+			return;
+	}
 	if (TEMario* em = dynamic_cast<TEMario*>(static_cast<THitActor*>(object))) { // Shadow Mario: the weapon's share
 		if (kWeapons[weapon].burst > 0.0f) {
 			if (s_burst != shot) {
@@ -731,7 +1370,10 @@ f32 alongRay(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, T
 		return -1.0f;
 	const f32 rad = (rad0 + t * 0.03f * s_hitScale[s_weapon]) * grow; // kinder still far away (150 more at 5000)
 	const f32 px = cx - f.x * t, py = cy - f.y * t, pz = cz - f.z * t;
-	const f32 vy = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) * grow - 40.0f; // a body's height (and some) counts as near
+	// a body's height (and some) counts as near; the rifle's some grows with its hit size (a shot a
+	// little above or below still hits), the others' as before
+	const f32 tall = s_weapon == RIFLE && s_hitScale[RIFLE] > 1.0f ? s_hitScale[RIFLE] : 1.0f;
+	const f32 vy   = fabsf(py) - 0.5f * (hh > 60.0f ? hh : 60.0f) * grow - 40.0f * tall;
 	const f32 d2 = px * px + pz * pz + (vy > 0.0f ? vy * vy : 0.0f);
 	return d2 <= rad * rad ? t : -1.0f;
 }
@@ -742,9 +1384,113 @@ f32 shotAlong(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, 
 {
 	if (TEMario* em = dynamic_cast<TEMario*>(e))
 		return em->mEnemyMario && !em->checkLiveFlag(LIVE_FLAG_DEAD) ? alongRay(eye, f, em->mEnemyMario, most, kShadowHitbox) : -1.0f;
+	if (TBiancoGateKeeper* g = asGatekeeper(e)) // Proto Piranha: its open mouth, or its goop pile
+		return gatekeeperMouth(g) ? mouthAlong(eye, f, g, most)
+		       : gatekeeperPile(g) ? alongRay(eye, f, g, most + 300.0f, kGatekeeperHitbox)
+		                           : -1.0f;
 	if (!dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return -1.0f;
 	return alongRay(eye, f, e, most);
+}
+
+// The rifle's auto aim: an enemy's middle (a small enemy's body, or the Shadow Mario seen), false if
+// it cannot be aimed at now
+bool rifleAimPoint(TLiveActor* e, JGeometry::TVec3<f32>* c)
+{
+	if (TEMario* em = dynamic_cast<TEMario*>(e)) {
+		if (!em->mEnemyMario || em->checkLiveFlag(LIVE_FLAG_DEAD))
+			return false;
+		const JGeometry::TVec3<f32>& p = em->mEnemyMario->mPosition;
+		c->set(p.x, p.y + 80.0f, p.z);
+		return true;
+	}
+	if (asGatekeeper(e)) // Proto Piranha: its own aim (its mouth or pile), not this
+		return false;
+	TSmallEnemy* s = dynamic_cast<TSmallEnemy*>(e);
+	if (!s || s->checkLiveFlag(LIVE_FLAG_DEAD) || s->checkLiveFlag(LIVE_FLAG_HIDDEN))
+		return false;
+	const f32 hh = s->getDamageHeight() > s->getAttackHeight() ? s->getDamageHeight() : s->getAttackHeight();
+	c->set(s->mPosition.x, s->mPosition.y + 0.5f * (hh > 20.0f ? hh : 20.0f), s->mPosition.z);
+	return true;
+}
+
+// Nothing of the map between the eye and a point (a piece at a time, inside the stage)
+bool clearTo(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& c)
+{
+	const f32 x = c.x - eye.x, y = c.y - eye.y, z = c.z - eye.z;
+	const f32 l = sqrtf(x * x + y * y + z * z);
+	if (!gpMap || l < 1.0f)
+		return true;
+	const f32 most = l - 40.0f; // up to just short of it (its own floor or a wall behind it)
+	const f32 kPiece = 2000.0f;
+	for (f32 at = 0.0f; at < most; at += kPiece) {
+		const f32 to = at + kPiece < most ? at + kPiece : most;
+		JGeometry::TVec3<f32> a(eye.x + x / l * at, eye.y + y / l * at, eye.z + z / l * at);
+		JGeometry::TVec3<f32> b(eye.x + x / l * to, eye.y + y / l * to, eye.z + z / l * to), wall;
+		if (!gpMap->isInArea(a.x, a.z) || !gpMap->isInArea(b.x, b.z))
+			return true;
+		if (gpMap->intersectLine(a, b, true, &wall))
+			return false;
+	}
+	return true;
+}
+
+// The rifle: the enemy nearest the middle of the view (by its angle off it), within a cone that
+// grows with the rifle's hit size (about 2.5 degrees at 100, 7.5 at 450), seen (no wall in the way)
+// and within reach; 0 none. Its middle in *c.
+TLiveActor* rifleAutoAim(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* c)
+{
+	if (!gpConductor)
+		return 0;
+	const f32 hs     = s_hitScale[RIFLE] > 0.2f ? s_hitScale[RIFLE] : 0.2f;
+	f32 sinMax       = 0.02f + 0.025f * hs;
+	if (sinMax > 0.2f)
+		sinMax = 0.2f;
+	const f32 cosMin = sqrtf(1.0f - sinMax * sinMax);
+	TLiveActor* seen[96];
+	int n = 0;
+	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end() && n < 96; ++it)
+		if (dynamic_cast<TEMario*>(*it))
+			seen[n++] = *it; // a Shadow Mario on his own (the plaza's): no manager
+	for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum() && n < 96; i++)
+			seen[n++] = (*it)->getObj(i);
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum() && n < 96; i++)
+			seen[n++] = (*it)->getObj(i);
+	// the best few by angle first, then the first of them that is seen (the map's lines cost)
+	TLiveActor* best = 0;
+	f32 bestCos      = cosMin;
+	JGeometry::TVec3<f32> bestAt;
+	for (int tries = 0; tries < 4; tries++) {
+		TLiveActor* pick = 0;
+		f32 pickCos      = bestCos;
+		JGeometry::TVec3<f32> pickAt;
+		for (int i = 0; i < n; i++) {
+			JGeometry::TVec3<f32> p;
+			if (!seen[i] || !rifleAimPoint(seen[i], &p))
+				continue;
+			const f32 x = p.x - eye.x, y = p.y - eye.y, z = p.z - eye.z;
+			const f32 l = sqrtf(x * x + y * y + z * z);
+			if (l < 50.0f || l > reach)
+				continue;
+			const f32 cs = (x * f.x + y * f.y + z * f.z) / l;
+			if (cs > pickCos)
+				pickCos = cs, pick = seen[i], pickAt = p;
+		}
+		if (!pick)
+			break;
+		if (clearTo(eye, pickAt)) {
+			best = pick, bestAt = pickAt;
+			break;
+		}
+		for (int i = 0; i < n; i++) // hidden behind a wall: the next best
+			if (seen[i] == pick)
+				seen[i] = 0;
+	}
+	if (best)
+		*c = bestAt;
+	return best;
 }
 
 TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3<f32>& f, f32 reach, JGeometry::TVec3<f32>* at)
@@ -801,6 +1547,15 @@ TLiveActor* rifleTarget(const JGeometry::TVec3<f32>& eye, const JGeometry::TVec3
 		}
 	}
 	at->set(eye.x + f.x * bestT, eye.y + f.y * bestT, eye.z + f.z * bestT);
+	if (s_weapon == RIFLE && !asGatekeeper(best)) { // the rifle's auto aim: straight at the enemy nearest the view's middle
+		JGeometry::TVec3<f32> c;
+		if (TLiveActor* e = rifleAutoAim(eye, f, reach, &c)) {
+			*at = c;
+			return e;
+		}
+		if (best) // on the line but not seen (behind a wall's edge): at its middle all the same
+			rifleAimPoint(best, at);
+	}
 	return best;
 }
 
@@ -855,7 +1610,8 @@ bool thirdView(TMario* m, JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* f)
 	f->set(fx, 0.0f, fz);
 	if (!gpConductor)
 		return true;
-	const f32 kNear = 3000.0f, kCone = 0.87f; // within about 30 degrees of the way he faces
+	// within about 30 degrees of the way he faces; the rifle's about 40, a little further
+	const f32 kNear = s_weapon == RIFLE ? 4000.0f : 3000.0f, kCone = s_weapon == RIFLE ? 0.77f : 0.87f;
 	f32 best = kNear;
 	JGeometry::TVec3<f32> to;
 	bool found = false;
@@ -936,12 +1692,14 @@ void fire()
 		st->aim       = l;
 		if (s_weapon == BAZOOKA)
 			s_bazookaAim = at, s_bazookaAimDist = l;
-		st->target    = (l > 3000.0f || dynamic_cast<TEMario*>(e)) && s_weapon != BAZOOKA ? e : 0;
+		// what it was aimed at, hit as the shot gets there: far away, Shadow Mario, Proto Piranha, and
+		// the rifle's always (its auto aim: a shot aimed at an enemy hits it)
+		st->target    = (l > 3000.0f || s_weapon == RIFLE || dynamic_cast<TEMario*>(e) || asGatekeeper(e)) && s_weapon != BAZOOKA ? e : 0;
 		st->weapon    = s_weapon;
 		st->speed     = 0.0f;
 		st->laneCount = 0;
 		fprintf(stderr, "[weapons] the %s aimed at %s %.0f away\n", kNames[s_weapon],
-		        dynamic_cast<TEMario*>(e) ? "Shadow Mario" : e ? "an enemy" : "nothing", l);
+		        dynamic_cast<TEMario*>(e) ? "Shadow Mario" : asGatekeeper(e) ? "Proto Piranha" : e ? "an enemy" : "nothing", l);
 	}
 	const f32 reach = k.straight ? 1.0f : s_reachScale[s_weapon]; // further: faster and longer lived
 	const f32 pow   = n->mEmitParams.mEmitPow.get() * k.pow * (reach > 0.0f ? sqrtf(reach) : 1.0f);
@@ -973,6 +1731,55 @@ void fire()
 			st->lanes[st->laneCount++] = d; // each drop's own way, kept straight
 		info.mPow.set(pow * (1.0f - 0.05f * (f32)i)); // the rifle's in a line, one behind another
 		made += gpModelWaterManager->emitRequest(info) ? 1 : 0;
+	}
+	if (made && s_weapon == BAZOOKA && st && s_shotLook >= 2) { // a green water balloon flying to where it bursts (only to look at)
+		s_balloon.from   = info.mPos.value;
+		s_balloon.way    = way;
+		s_balloon.aim    = st->aim;
+		s_balloon.big    = s_shotLook == 3;
+		// from the muzzle (the small one comes out of it), the big one a little ahead (not over the camera)
+		s_balloon.along  = !s_balloon.big ? 0.0f : st->aim * 0.3f < 140.0f ? st->aim * 0.3f : 140.0f;
+		s_balloon.frames = st->aim < kBazookaNow ? 5.0f : 6.0f;
+		s_balloon.on     = true;
+	}
+	if (made && s_weapon == BAZOOKA && st && s_shotLook == 1) { // the water shot seen flying to where it bursts: one big blob, only to look at
+		info.mAttack.set((s16)(1 | ((kVisual | (s_shot << (kShotShift - kTagShift))) << kTagShift)));
+		info.mSize.set(n->mEmitParams.mSize.get() * k.size * kVisualSize);
+		info.mHitRadius.set(0.0f);
+		info.mHitHeight.set(0.0f);
+		info.mDir.value = way;
+		info.mPow.set(pow);
+		// a head and a tail of smaller blobs behind it (a streak), each a step back along its way;
+		// all a little ahead of the muzzle (none over the camera, or behind it)
+		const f32 head = info.mSize.get();
+		const JGeometry::TVec3<f32> muzzle = info.mPos.value;
+		const f32 gap  = st->aim / 6.0f * 0.3f; // a third of a frame's flight between them
+		s_visual.tag   = 0; // (the last shot's is long gone: 6 frames, and a shot every few tenths)
+		f32 lead       = 120.0f + gap * (f32)(kVisualTail - 1);
+		if (lead > st->aim - 60.0f)
+			lead = st->aim - 60.0f;
+		for (int t = kVisualTail - 1; t >= 0; t--) {
+			const f32 d = lead - gap * (f32)t;
+			if (d < 0.0f)
+				continue;
+			info.mSize.set(head * (1.0f - 0.18f * (f32)t));
+			info.mPos.value.set(muzzle.x + way.x * d, muzzle.y + way.y * d, muzzle.z + way.z * d);
+			if (gpModelWaterManager->emitRequest(info) && t == 0)
+				s_visual.tag = -1; // made (its tag below)
+		}
+		info.mSize.set(head);
+		info.mPos.value = muzzle;
+		if (s_visual.tag == -1) {
+			s_visual.tag  = kVisual | (s_shot << (kShotShift - kTagShift));
+			s_visual.from = info.mPos.value;
+			s_visual.way  = way;
+			s_visual.aim  = st->aim;
+			static bool told;
+			if (!told)
+				fprintf(stderr, "[weapons] the bazooka's water shot seen flying (%.0f across)\n", (double)info.mSize.get());
+			told = true;
+		} else
+			fprintf(stderr, "[weapons] the bazooka's water shot seen flying: no room for its drop\n");
 	}
 	s_firing = false;
 	if (!made)
@@ -1008,7 +1815,18 @@ void followStraight()
 		return;
 	TModelWaterManager* w = gpModelWaterManager;
 	for (int i = 0; i < (int)w->mParticleCount; i++) {
-		if ((w->mParticleFlagSOA[i] & 0xf) != 1)
+		const int landed = w->mParticleFlagSOA[i] & 0xf;
+		if (landed == 2 || landed == 3) { // on the ground or a wall: a rifle's or submachine gun's cleans more goop
+			const int wpn = (w->mParticleAttackSOA[i] >> kTagShift) & 0xf;
+			if ((wpn == RIFLE || wpn == SMG) && s_goop > 1.0f && gpPollution) {
+				const JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
+				const f32 own = w->mWaterParticleTypes[w->mParticleTypeSOA[i]]->mCleanSize.get() * 32.0f; // as the game's splash
+				gpPollution->clean(at.x, at.y, at.z, own * s_goop);
+				w->mParticleAttackSOA[i] &= 0xff; // once (no longer a weapon's: it has hit what it will)
+			}
+			continue;
+		}
+		if (landed != 1)
 			continue;
 		const int tag = (w->mParticleAttackSOA[i] >> kTagShift) & 0x7f;
 		if (!(tag & 0xf))
@@ -1048,7 +1866,7 @@ void followStraight()
 		// far away (long range): faster, to get there in about half a second, not seconds (an enemy
 		// walked out of the way meanwhile)
 		const f32 quick = st->weapon == BAZOOKA ? st->aim / 6.0f // the bazooka's there in a fifth of a second
-		                  : st->aim > 3000.0f || (st->target && dynamic_cast<TEMario*>(st->target)) ? st->aim / 15.0f : 0.0f;
+		                  : st->aim > 3000.0f || (st->target && (dynamic_cast<TEMario*>(st->target) || asGatekeeper(st->target))) ? st->aim / 15.0f : 0.0f;
 		const f32 extra = quick > st->speed ? (quick - st->speed) * port_frame_scale() : 0.0f;
 		if (along > 0.0f)
 			at.set(st->from.x + way.x * (along + extra), st->from.y + way.y * (along + extra), st->from.z + way.z * (along + extra));
@@ -1061,6 +1879,86 @@ void followStraight()
 		if (w->mParticleLifetimeSOA[i] < 30.0f)
 			w->mParticleLifetimeSOA[i] = 30.0f; // no end to its reach
 	}
+}
+
+void followBalloon()
+{
+	const f32 dt = port_frame_scale();
+	for (int i = 0; i < kPieces; i++) { // its rubber's pieces: flying out, falling, tumbling
+		Piece& q = s_pieces[i];
+		if (q.life <= 0.0f)
+			continue;
+		q.life -= dt;
+		q.v.y -= 1.6f * dt; // falling
+		q.v.x *= powf(0.92f, dt), q.v.z *= powf(0.92f, dt);
+		q.at.x += q.v.x * dt, q.at.y += q.v.y * dt, q.at.z += q.v.z * dt;
+		q.spin += q.turn * dt;
+	}
+	Balloon& b = s_balloon;
+	if (!b.on)
+		return;
+	b.along += b.aim / b.frames * dt;
+	if (b.along >= b.aim - (b.big ? 40.0f : 6.0f)) { // there: it bursts, its rubber in pieces, with a splash
+		b.along = b.aim - (b.big ? 40.0f : 6.0f);
+		b.on    = false;
+		JGeometry::TVec3<f32> at(b.from.x + b.way.x * b.along, b.from.y + b.way.y * b.along, b.from.z + b.way.z * b.along);
+		if (gpMarioParticleManager)
+			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &at, 0, nullptr);
+		for (int i = 0; i < kPieces; i++) {
+			Piece& q = s_pieces[i];
+			// out every way, more back towards Mario and up than into what it hit
+			JGeometry::TVec3<f32> d(random01() * 2.0f - 1.0f, random01() * 1.4f - 0.2f, random01() * 2.0f - 1.0f);
+			d.x -= b.way.x * 0.8f, d.y -= b.way.y * 0.8f, d.z -= b.way.z * 0.8f;
+			const f32 l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z) + 1e-4f;
+			const f32 sp = (7.0f + 9.0f * random01()) * (b.big ? 1.6f : 1.0f);
+			q.at   = at;
+			q.v.set(d.x / l * sp, d.y / l * sp + 4.0f, d.z / l * sp);
+			q.axis.set(random01() - 0.5f, random01() - 0.5f, random01() - 0.5f);
+			const f32 al = sqrtf(q.axis.x * q.axis.x + q.axis.y * q.axis.y + q.axis.z * q.axis.z) + 1e-4f;
+			q.axis.x /= al, q.axis.y /= al, q.axis.z /= al;
+			q.spin = random01() * 6.28f;
+			q.turn = 0.3f + 0.5f * random01();
+			q.size = (2.5f + 2.5f * random01()) * (b.big ? 5.0f : 1.0f);
+			q.life = 12.0f + 6.0f * random01();
+		}
+	}
+}
+
+// The bazooka's water shot seen flying (kVisual): flown dead straight to where it was aimed, there
+// in as many frames as the bazooka's own drop (6, a fifth of a second; 4 near), and gone just as it
+// gets there (the burst's own splash takes over) or if it touches the map first. It hits nothing.
+void followVisual()
+{
+	if (!s_visual.tag || !gpModelWaterManager)
+		return;
+	TModelWaterManager* w = gpModelWaterManager;
+	bool seen = false;
+	for (int i = 0; i < (int)w->mParticleCount; i++) {
+		if (((w->mParticleAttackSOA[i] >> kTagShift) & 0x7f) != s_visual.tag)
+			continue;
+		seen = true;
+		if ((w->mParticleFlagSOA[i] & 0xf) != 1) { // landed (the map): gone
+			w->mParticleLifetimeSOA[i] = 0.0f;
+			continue;
+		}
+		JGeometry::TVec3<f32>& at = w->mParticlePositionSOA[i];
+		const JGeometry::TVec3<f32>& way = s_visual.way;
+		// as the bazooka's own drop far away (there in 6 frames, a fifth of a second), 4 near
+		const f32 frames = s_visual.aim < kBazookaNow ? 5.0f : 6.0f;
+		const f32 step  = s_visual.aim / frames;
+		const f32 along = (at.x - s_visual.from.x) * way.x + (at.y - s_visual.from.y) * way.y + (at.z - s_visual.from.z) * way.z;
+		const f32 next  = along + step * port_frame_scale();
+		if (next >= s_visual.aim - 30.0f) { // there: gone
+			w->mParticleLifetimeSOA[i] = 0.0f;
+			continue;
+		}
+		at.set(s_visual.from.x + way.x * next, s_visual.from.y + way.y * next, s_visual.from.z + way.z * next);
+		w->mParticleVelocitySOA[i].set(way.x * step, way.y * step, way.z * step); // its streak
+		if (w->mParticleLifetimeSOA[i] < 30.0f)
+			w->mParticleLifetimeSOA[i] = 30.0f;
+	}
+	if (!seen)
+		s_visual.tag = 0;
 }
 
 // The bazooka's drop: followed until it lands or is gone, then it bursts there (if it hit no
@@ -1087,6 +1985,15 @@ void followBazooka()
 		s_bazookaShot = 0;
 }
 
+// Every sound the game plays: Mario's own voice (MSD_SE_MA_VO_* to MSD_SE_MV_*) left out while a mod
+// asks (SMS_SPRAY_MUTE_MARIO: its rocket jump key held), so his rocket jump's cries play alone
+int soundHook(unsigned* id, const float*, int)
+{
+	if (!id || !s_muteMario)
+		return 0;
+	return *id >= 0x7800u && *id <= 0x792Fu ? 1 : 0;
+}
+
 PortExtension s_extension;
 
 struct Register {
@@ -1099,6 +2006,7 @@ struct Register {
 		s_extension.afterMovement = afterMovement;
 		s_extension.objectHit     = objectHit;
 		s_extension.objectHitDone = objectHitDone;
+		s_extension.sound         = soundHook;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -1127,6 +2035,28 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 		fprintf(stderr, "[weapons] in third person %s\n", (flags & 8) ? "on" : "off");
 	s_third      = (flags & 8) != 0;
 	s_thirdModel = (flags & 16) != 0;
+	if (((flags & 32) != 0) != s_bosses)
+		fprintf(stderr, "[weapons] made for bosses %s\n", (flags & 32) ? "on" : "off");
+	s_bosses = (flags & 32) != 0;
+	if (((flags & 64) != 0) != s_airForward)
+		fprintf(stderr, "[weapons] the bazooka pushes enemies in the air forward %s\n", (flags & 64) ? "on" : "off");
+	s_airForward = (flags & 64) != 0;
+	if (((flags & 1024) != 0) != s_rocketHurt)
+		fprintf(stderr, "[weapons] rocket jumps hurt Mario %s\n", (flags & 1024) ? "on" : "off");
+	s_rocketHurt = (flags & 1024) != 0;
+	if (((flags & 2048) != 0) != s_hearts)
+		fprintf(stderr, "[weapons] defeated enemies drop hearts %s\n", (flags & 2048) ? "on" : "off");
+	s_hearts     = (flags & 2048) != 0;
+	s_rocketOuch = (flags & 4096) != 0;
+	s_muteMario  = (flags & (1 << 27)) != 0;
+	const int goop = (flags >> 20) & 127; // tenths; 0: the game's own (an older mod)
+	s_goop         = goop ? (f32)goop * 0.1f : 1.0f;
+	const int vol = (flags >> 13) & 127; // percent; 0: as recorded (an older mod)
+	s_voiceVolume = vol ? (f32)(vol < 100 ? vol : 100) * 0.01f : 1.0f;
+	const int look = (flags & 256) ? ((flags & 512) ? 3 : 2) : (flags & 128) ? 1 : 0;
+	if (look != s_shotLook)
+		fprintf(stderr, "[weapons] the bazooka's shot seen flying: %s\n", look == 3 ? "a big green water balloon" : look == 2 ? "a green water balloon" : look == 1 ? "water" : "none");
+	s_shotLook = look;
 	if (((flags & 4) != 0) != s_defeatNormal)
 		fprintf(stderr, "[weapons] the normal spray defeating enemies %s\n", (flags & 4) ? "on" : "off");
 	s_defeatNormal = (flags & 4) != 0;
@@ -1167,6 +2097,56 @@ bool PortSprayWeaponOnBack(TMario* m, bool* model)
 bool PortSprayWeaponTrigger() { return s_trigger; }
 
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
+// The bazooka's green water balloon now, for drawing (modapi_weapon_models.cpp): where it is, the
+// way it flies and how big; false none (burst, or not fired).
+bool PortBazookaBalloon(float* at, float* way, float* scale)
+{
+	const Balloon& b = s_balloon;
+	if (!b.on)
+		return false;
+	at[0] = b.from.x + b.way.x * b.along, at[1] = b.from.y + b.way.y * b.along, at[2] = b.from.z + b.way.z * b.along;
+	way[0] = b.way.x, way[1] = b.way.y, way[2] = b.way.z;
+	*scale = b.big ? 6.5f : 1.0f; // the big one: about 42 round
+	return true;
+}
+
+// The hearts now, for drawing (modapi_weapon_models.cpp): each its place and turn (4 floats),
+// blinking out at the end; how many
+int PortWeaponHearts(float* out, int most)
+{
+	int n = 0;
+	for (int i = 0; i < kHearts && n < most; i++) {
+		const Heart& h = s_heartList[i];
+		if (h.life <= 0.0f)
+			continue;
+		if (h.life < 90.0f && ((int)(h.life / 3.0f) & 1)) // its last 3 seconds: blinking
+			continue;
+		const f32 bob = h.landed ? 6.0f * sinf(h.spin * 2.5f) : 0.0f;
+		out[n * 4 + 0] = h.at.x, out[n * 4 + 1] = h.at.y + bob, out[n * 4 + 2] = h.at.z, out[n * 4 + 3] = h.spin;
+		n++;
+	}
+	return n;
+}
+
+// Its rubber's pieces now, for drawing: each its place, its tumbling (an axis and an angle) and
+// its size (8 floats); how many
+int PortBazookaBalloonPieces(float* out, int most)
+{
+	int n = 0;
+	for (int i = 0; i < kPieces && n < most; i++) {
+		const Piece& q = s_pieces[i];
+		if (q.life <= 0.0f)
+			continue;
+		float* o = out + n * 8;
+		o[0] = q.at.x, o[1] = q.at.y, o[2] = q.at.z;
+		o[3] = q.axis.x, o[4] = q.axis.y, o[5] = q.axis.z;
+		o[6] = q.spin;
+		o[7] = q.size * (q.life < 4.0f ? q.life / 4.0f : 1.0f); // shrinking away at the end
+		n++;
+	}
+	return n;
+}
+
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
 
 // How far through its pump the gun is after the last shot (0 to 1), or -1 past it: the held gun's
@@ -1193,6 +2173,17 @@ extern "C" int modg_spray_far_scale(float scale)
 	if (k != s_farScale)
 		fprintf(stderr, "[weapons] long range: enemies and characters out to %.1f times as far\n", k);
 	s_farScale = k;
+	return 1;
+}
+
+// The bazooka's goop area (SmsSprayStats.goop_area): the round it washes goop off where it bursts, times
+// its own (860 out from its middle, its burst at 130 percent; 0 its burst's size's instead)
+extern "C" int modg_spray_goop_area(float scale)
+{
+	const f32 k = scale > 0.0f ? (scale < 10.0f ? scale : 10.0f) : 0.0f;
+	if (k != s_goopArea)
+		fprintf(stderr, "[weapons] the bazooka's goop area: %.2f times its own\n", k);
+	s_goopArea = k;
 	return 1;
 }
 
