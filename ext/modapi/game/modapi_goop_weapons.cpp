@@ -421,7 +421,15 @@ void blackGoop(f32 dt)
 		return;
 	}
 	const f32 dx = m->mPosition.x - s_prevX, dz = m->mPosition.z - s_prevZ; // the game's step this tick
-	if (s_havePrev && fabsf(dx) < 300.0f && fabsf(dz) < 300.0f && onBlack(m)) {
+	const bool air = m->mPosition.y > m->mFloorPosition.y + 12.0f && !m->checkFlag(MARIO_FLAG_IN_WATER);
+	if (s_havePrev && s_gliding && air && fabsf(dx) < 300.0f && fabsf(dz) < 300.0f) {
+		// jumped off it: its speed carried on through the air, easing back to the game's own only slowly
+		const f32 k = 1.0f - powf(0.5f, dt / 1.5f);
+		s_glideX += (dx - s_glideX) * k;
+		s_glideZ += (dz - s_glideZ) * k;
+		m->mPosition.x = s_prevX + s_glideX;
+		m->mPosition.z = s_prevZ + s_glideZ;
+	} else if (s_havePrev && fabsf(dx) < 300.0f && fabsf(dz) < 300.0f && onBlack(m)) {
 		if (!s_gliding)
 			s_glideX = dx, s_glideZ = dz, s_gliding = true;
 		const f32 k = 1.0f - powf(0.5f, dt / 0.45f); // half way toward the game's step in 0.45 s
