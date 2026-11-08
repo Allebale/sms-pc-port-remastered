@@ -908,3 +908,21 @@ int port_grass_fires(float* out, int most)
 	}
 	return n;
 }
+
+// FLUDD's water landing on grass on fire (modapi_goop_weapons.cpp): the fire within r put out
+void port_grass_extinguish(float x, float z, float r)
+{
+	if (!s_style || !s_fireCount)
+		return;
+	int kept = 0;
+	for (int i = 0; i < s_fireCount; i++) {
+		const Fire& f = s_fires[i];
+		const f32 dx = ((f32)(s_flatX0 + f.cx) + 0.5f) * kFlatCell - x, dz = ((f32)(s_flatZ0 + f.cz) + 0.5f) * kFlatCell - z;
+		if (dx * dx + dz * dz <= r * r) {
+			s_burning[f.cz * kFlat + f.cx] = 0;
+			continue;
+		}
+		s_fires[kept++] = f;
+	}
+	s_fireCount = kept;
+}

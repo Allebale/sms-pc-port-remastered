@@ -66,6 +66,8 @@ bool s_grassPress = true, s_grassBurn = true; // (Remastered's 3D Grass) electri
 extern "C" void port_grass_goop(float x, float y, float z, float r, int kind, int ms) __attribute__((weak)); // port_grass.cpp
 extern "C" int port_grass_burning(float x, float z) __attribute__((weak));
 extern "C" int port_grass_fires(float* out, int most) __attribute__((weak));
+extern "C" void port_grass_extinguish(float x, float z, float r) __attribute__((weak));
+bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
 f32 s_time;           // seconds played
 // each kind's numbers (the mod's menu): seconds of its stream, or of standing in its goop, that
 // defeat an enemy; how long its goop lasts, times a minute; its puddles' size, times their own
@@ -92,6 +94,23 @@ const int kPuddles = 64;
 Puddle s_puddles[kPuddles];
 const f32 kStartSize = 95.0f, kMostSize = 380.0f, kGrow = 5.0f, kWash = 5.0f, kGone = 14.0f;
 const f32 kLife = 60.0f, kFade = 4.0f; // seconds, and the last of them shrinking away
+
+// goop on walls (the mod's "Goop sticks to walls"): a blob where a drop hit, dripping down the wall
+// more and more, gone after the mod's seconds (shrinking away at the end)
+struct WallGoop {
+	bool on;
+	int kind;
+	f32 x, y, z;    // its middle, on the wall
+	f32 nx, ny, nz; // the wall's way out
+	f32 r;
+	f32 born;  // when it was last added to
+	f32 since; // when it first stuck (its drips' length)
+	f32 seed;
+};
+const int kWalls = 48;
+WallGoop s_wallGoop[kWalls];
+bool s_wallsOn   = true;
+f32 s_wallLife   = 30.0f;
 
 // enemies touched by the goop: shocked (held still, trembling, sparks on them) or burning (the
 // burning flames of the game's on them) for the kind's seconds, then defeated
@@ -193,6 +212,65 @@ void washAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
 	}
 }
 
+f32 wallSizeNow(const WallGoop& g)
+{
+	const f32 left = s_wallLife - (s_time - g.born);
+	return left >= 3.0f ? g.r : left > 0.0f ? g.r * left / 3.0f : 0.0f;
+}
+
+void addWallGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* wall)
+{
+	if (!wall)
+		return;
+	const JGeometry::TVec3<f32>& n = wall->getNormal();
+	if (fabsf(n.y) > 0.6f)
+		return; // not a wall
+	const f32 size = statsOf(kind).size;
+	for (int i = 0; i < kWalls; i++) { // the same kind's blob it hits: grown
+		WallGoop& g = s_wallGoop[i];
+		if (!g.on || g.kind != kind || g.nx * n.x + g.ny * n.y + g.nz * n.z < 0.8f)
+			continue;
+		const f32 dx = g.x - x, dy = g.y - y, dz = g.z - z;
+		if (dx * dx + dy * dy + dz * dz < g.r * g.r) {
+			g.r    = g.r + 2.5f * size < 140.0f * size ? g.r + 2.5f * size : 140.0f * size;
+			g.born = s_time;
+			return;
+		}
+	}
+	WallGoop* g = 0;
+	for (int i = 0; i < kWalls && !g; i++)
+		if (!s_wallGoop[i].on)
+			g = &s_wallGoop[i];
+	if (!g) {
+		g = &s_wallGoop[0];
+		for (int i = 1; i < kWalls; i++)
+			if (s_wallGoop[i].born < g->born)
+				g = &s_wallGoop[i];
+	}
+	g->on = true, g->kind = kind;
+	g->x = x, g->y = y, g->z = z;
+	const f32 hl = sqrtf(n.x * n.x + n.z * n.z);
+	g->nx = n.x / hl, g->ny = 0.0f, g->nz = n.z / hl;
+	g->r     = 38.0f * size;
+	g->born  = g->since = s_time;
+	g->seed  = random01() * 100.0f;
+}
+
+void washWallAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
+{
+	for (int i = 0; i < kWalls; i++) {
+		WallGoop& g = s_wallGoop[i];
+		if (!g.on)
+			continue;
+		const f32 dx = g.x - x, dy = g.y - y, dz = g.z - z, r = g.r + reach;
+		if (dx * dx + dy * dy + dz * dz > r * r)
+			continue;
+		g.r -= amount;
+		if (g.r < 10.0f)
+			g.on = false;
+	}
+}
+
 // an enemy in the stream or the goop: shocked or set burning (once), defeated when that is over
 void burn(TSmallEnemy* e, int kind)
 {
@@ -284,6 +362,22 @@ void hurtMario(f32 dt)
 	TMario* m = gpMarioOriginal;
 	if (!m || m->onYoshi() || m->checkFlag(MARIO_FLAG_GAME_OVER) || m->checkFlag(MARIO_FLAG_IN_WATER))
 		return;
+	for (int i = 0; i < kWalls && !m->isInvincible(); i++) { // goop on a wall he touches
+		const WallGoop& g = s_wallGoop[i];
+		if (!g.on)
+			continue;
+		const f32 dx = m->mPosition.x - g.x, dz = m->mPosition.z - g.z, dy = m->mPosition.y + 80.0f - g.y;
+		const f32 out = dx * g.nx + dz * g.nz, r = wallSizeNow(g);
+		if (out < -10.0f || out > 50.0f || dx * dx + dz * dz - out * out > r * r || fabsf(dy) > r + 80.0f)
+			continue;
+		if (g.kind == kFire)
+			m->checkGraffitoFire();
+		else if (m->mStatus != MARIO_STATUS_ELECTRIC_DAMAGE) {
+			m->changePlayerStatus(MARIO_STATUS_ELECTRIC_DAMAGE, 0, false);
+			SMSGetMSound()->startSoundActor(MSD_SE_MA_DAMAGE_ELEC, &m->mPosition, 0, nullptr, 0, 4);
+		}
+		return;
+	}
 	if (m->mPosition.y > m->mFloorPosition.y + 12.0f) // in the air
 		return;
 	if (s_grassBurn && port_grass_burning && port_grass_burning(m->mPosition.x, m->mPosition.z) && !m->isInvincible()) {
@@ -361,6 +455,9 @@ bool anyPuddle()
 	for (int i = 0; i < kPuddles; i++)
 		if (s_puddles[i].on)
 			return true;
+	for (int i = 0; i < kWalls; i++)
+		if (s_wallGoop[i].on)
+			return true;
 	return false;
 }
 
@@ -370,6 +467,7 @@ void stageSetup()
 {
 	undress(); // (its textures' memory goes with the stage)
 	memset(s_puddles, 0, sizeof s_puddles);
+	memset(s_wallGoop, 0, sizeof s_wallGoop);
 	memset(s_zaps, 0, sizeof s_zaps);
 }
 
@@ -385,6 +483,12 @@ void afterMovement()
 		if (p.on && s_time - p.born > lifeOf(p))
 			p.on = false; // dried away
 		any = any || p.on;
+	}
+	for (int i = 0; i < kWalls; i++) {
+		WallGoop& g = s_wallGoop[i];
+		if (g.on && s_time - g.born > s_wallLife)
+			g.on = false; // dried away
+		any = any || g.on;
 	}
 	const bool grassFire = s_grassBurn && port_grass_fires && port_grass_fires(0, 0) > 0;
 	if (!any && !grassFire)
@@ -696,6 +800,11 @@ void drawDrops(int kind)
 	for (int k = 0; k < kAround; k++)
 		ca[k] = cosf(6.2831853f * k / kAround), sa[k] = sinf(6.2831853f * k / kAround);
 	const f32 vx = s_view[2][0], vy = s_view[2][1], vz = s_view[2][2]; // toward the viewer
+	// FLUDD held in view (first person): a thinner stream, thinner still near the view
+	const bool held = gpMarioOriginal && PortFluddHeld(gpMarioOriginal);
+	f32 eye[3];
+	for (int c = 0; c < 3; c++)
+		eye[c] = -(s_view[0][c] * s_view[0][3] + s_view[1][c] * s_view[1][3] + s_view[2][c] * s_view[2][3]);
 	const f32 fl0 = flow(kind);
 	int i = 0;
 	bool set = false;
@@ -714,7 +823,12 @@ void drawDrops(int kind)
 				continue;
 			const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
 			const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
-			const f32 r = w->mParticleSizeSOA[i] * 0.55f * statsOf(kind).drop;
+			f32 r = w->mParticleSizeSOA[i] * 0.55f * statsOf(kind).drop;
+			if (held) {
+				const f32 ex = p.x - eye[0], ey = p.y - eye[1], ez = p.z - eye[2];
+				const f32 d  = sqrtf(ex * ex + ey * ey + ez * ez) / 500.0f;
+				r *= 0.45f * (d < 0.3f ? 0.3f : d > 1.0f ? 1.0f : d);
+			}
 			f32 fx = v.x, fy = v.y, fz = v.z;
 			f32 fl = sqrtf(fx * fx + fy * fy + fz * fz);
 			if (fl < 1e-3f)
@@ -858,6 +972,67 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 	GXEnd();
 }
 
+f32 hash01(u32 h);
+// goop on walls of a kind: a blob on the wall with drips running down from it, growing longer
+void drawWalls(int kind)
+{
+	bool any = false;
+	for (int i = 0; i < kWalls && !any; i++)
+		any = s_wallGoop[i].on && s_wallGoop[i].kind == kind;
+	if (!any)
+		return;
+	textured(kind);
+	const f32 time = (f32)s_frame / 60.0f;
+	for (int i = 0; i < kWalls; i++) {
+		const WallGoop& g = s_wallGoop[i];
+		if (!g.on || g.kind != kind)
+			continue;
+		const f32 r = wallSizeNow(g);
+		if (r < 1.0f)
+			continue;
+		// across the wall (level), and down it
+		const f32 tx = -g.nz, tz = g.nx;
+		const f32 lift = 1.2f + 0.03f * (f32)i;
+		const f32 cx = g.x + g.nx * lift, cy = g.y, cz = g.z + g.nz * lift;
+		const int kAround = 20;
+		GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, (u16)(kAround + 2));
+		tcorner(cx, cy, cz, 255, (cx * tx + cz * tz) / kTile, -cy / kTile);
+		for (int k = 0; k <= kAround; k++) {
+			const f32 a  = 6.2831853f * (f32)(k % kAround) / kAround;
+			const f32 rr = r * (1.0f + 0.14f * sinf(3.0f * a + g.seed) + 0.08f * sinf(5.0f * a + g.seed * 1.3f));
+			const f32 ox = cosf(a) * rr, oy = sinf(a) * rr;
+			const f32 x = cx + tx * ox, y = cy + oy, z = cz + tz * ox;
+			tcorner(x, y, z, 235, (x * tx + z * tz) / kTile, -y / kTile);
+		}
+		GXEnd();
+		// the drips: running down from its lower half, longer with time, each its own
+		const int drips   = 3 + (int)(r / 25.0f);
+		const f32 running = (s_time - g.since) / 5.0f; // reaching their length in five seconds
+		const f32 most    = (r * 1.4f + 40.0f) * (running < 1.0f ? running : 1.0f);
+		GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(drips * 9));
+		for (int d = 0; d < drips; d++) {
+			const u32 key  = (u32)i * 131u + (u32)d * 977u + (u32)(g.seed * 10.0f);
+			const f32 off  = (hash01(key) * 2.0f - 1.0f) * r * 0.65f;
+			const f32 wide = r * (0.08f + 0.08f * hash01(key + 1u));
+			const f32 len  = most * (0.35f + 0.65f * hash01(key + 2u)) * (0.97f + 0.03f * sinf(time * 2.0f + (f32)d));
+			const f32 top  = cy - r * 0.2f, bottom = cy - r * 0.55f - len;
+			const f32 bx = cx + tx * off, bz = cz + tz * off;
+			const f32 u0 = ((bx - tx * wide) * tx + (bz - tz * wide) * tz) / kTile, u1 = ((bx + tx * wide) * tx + (bz + tz * wide) * tz) / kTile;
+			tcorner(bx - tx * wide, top, bz - tz * wide, 245, u0, -top / kTile);
+			tcorner(bx + tx * wide, top, bz + tz * wide, 245, u1, -top / kTile);
+			tcorner(bx + tx * wide, bottom, bz + tz * wide, 225, u1, -bottom / kTile);
+			tcorner(bx - tx * wide, top, bz - tz * wide, 245, u0, -top / kTile);
+			tcorner(bx + tx * wide, bottom, bz + tz * wide, 225, u1, -bottom / kTile);
+			tcorner(bx - tx * wide, bottom, bz - tz * wide, 225, u0, -bottom / kTile);
+			// its rounded end: a drop hanging
+			tcorner(bx - tx * wide * 1.3f, bottom, bz - tz * wide * 1.3f, 225, u0, -bottom / kTile);
+			tcorner(bx + tx * wide * 1.3f, bottom, bz + tz * wide * 1.3f, 225, u1, -bottom / kTile);
+			tcorner(bx, bottom - wide * 1.8f, bz, 210, (u0 + u1) * 0.5f, -(bottom - wide * 1.8f) / kTile);
+		}
+		GXEnd();
+	}
+}
+
 f32 hash01(u32 h)
 {
 	h = (h ^ 61u) ^ (h >> 16);
@@ -977,10 +1152,13 @@ void GoopPacket::draw()
 				GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 			}
 		}
+		drawWalls(kind);
 		drawDrops(kind);
 	}
 	// the flames last: soft, added to what is behind, not hiding what is behind them
 	bool fire = port_grass_fires && port_grass_fires(0, 0) > 0;
+	for (int i = 0; i < kWalls && !fire; i++)
+		fire = s_wallGoop[i].on && s_wallGoop[i].kind == kFire;
 	for (int i = 0; i < kPuddles && !fire; i++)
 		fire = s_puddles[i].on && s_puddles[i].kind == kFire;
 	if (fire) {
@@ -998,6 +1176,20 @@ void GoopPacket::draw()
 			if (s_puddles[i].on && s_puddles[i].kind == kFire)
 				drawFlames(s_puddles[i], i);
 		drawGrassFires();
+		for (int i = 0; i < kWalls; i++) { // fire goop on walls: a flame or two off it
+			const WallGoop& g = s_wallGoop[i];
+			const f32 r       = g.on && g.kind == kFire ? wallSizeNow(g) : 0.0f;
+			if (r < 8.0f)
+				continue;
+			const f32 time = (f32)s_frame / 60.0f;
+			GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(2 * 18));
+			for (int k = 0; k < 2; k++) {
+				const f32 tall = 30.0f + r * 0.3f;
+				flame(g.x + g.nx * 8.0f - g.nz * (k ? 0.3f : -0.3f) * r, g.y - r * 0.2f, g.z + g.nz * 8.0f + g.nx * (k ? 0.3f : -0.3f) * r,
+				      tall, tall * (0.6f + 0.4f * sinf(time * 8.0f + g.seed + (f32)k * 2.0f)), 0.1f * tall * sinf(time * 5.0f + (f32)k));
+			}
+			GXEnd();
+		}
 		GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 	}
@@ -1112,6 +1304,7 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 {
 	s_grassPress = (flags & (1 << 28)) == 0; // set: not
 	s_grassBurn  = (flags & (1 << 29)) == 0;
+	s_wallsOn    = (flags & (1 << 30)) == 0;
 	const int now = kind == kFire || kind == kElectric ? kind : 0;
 	if (now != s_kind)
 		fprintf(stderr, "[goop] %s\n", now == kFire ? "fire goop" : now == kElectric ? "electric goop" : "no goop");
@@ -1122,7 +1315,7 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 // A goop weapon's numbers (set_weapon_stats): `every` seconds of it defeat an enemy, `range` how
 // long its goop lasts (times a minute), `burst` its puddles' size, `drop` its stream's blobs' (each
 // times its own); has 0: its own again. Returns 1 for a goop weapon.
-int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits)
+int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall)
 {
 	if (kind != kFire && kind != kElectric)
 		return 0;
@@ -1135,6 +1328,7 @@ int PortGoopStats(int kind, int has, float every, float range, float burst, floa
 	st.size   = burst >= 0.2f ? burst : 0.2f;
 	st.drop   = drop >= 0.2f ? drop : 0.2f;
 	st.hits   = hits >= 1 ? (hits <= 50 ? hits : 50) : 1;
+	s_wallLife = wall > 0.05f ? wall * 60.0f : 30.0f; // (both kinds': minutes)
 	return 1;
 }
 
@@ -1184,12 +1378,34 @@ bool PortGoopDropLands(int i, const TBGCheckData* ground)
 		washAt(p.x, p.y, p.z, 40.0f, 28.0f);
 	else
 		washAt(p.x, p.y, p.z, w->mParticleSizeSOA[i] * 0.7f, kWash);
+	if (port_grass_extinguish) // and the grass on fire there put out
+		port_grass_extinguish(p.x, p.z, weapon == 4 ? 70.0f : 30.0f + w->mParticleSizeSOA[i] * 0.6f);
+	return false;
+}
+
+// Patch zzzzzzzzz-goop-weapons: any drop on a wall: a goop drop leaves goop there (with "Goop
+// sticks to walls") and is gone (true); FLUDD's water washes the wall's goop
+bool PortGoopDropWall(int i, const TBGCheckData* wall)
+{
+	TModelWaterManager* w = gpModelWaterManager;
+	if (!w || i < 0 || i >= (int)w->mParticleCount)
+		return false;
+	const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+	const int kind = dropKind(i);
+	if (kind) {
+		if (s_wallsOn)
+			addWallGoop(kind, p.x, p.y, p.z, wall);
+		return true;
+	}
+	const int weapon = port_spray_tagged_drops ? ((unsigned short)w->mParticleAttackSOA[i] >> kTagShift) & 0xf : 0;
+	washWallAt(p.x, p.y, p.z, weapon == 4 ? 40.0f : w->mParticleSizeSOA[i] * 0.7f, weapon == 4 ? 28.0f : kWash);
 	return false;
 }
 
 // The bazooka's burst washing goop off (modapi_spray_weapons.cpp's cleanGoop): the puddles in it too
 void PortGoopWash(float x, float y, float z, float r)
 {
+	washWallAt(x, y, z, r, 1000.0f);
 	for (int i = 0; i < kPuddles; i++) {
 		Puddle& p = s_puddles[i];
 		if (!p.on || fabsf(p.y - y) > 300.0f)

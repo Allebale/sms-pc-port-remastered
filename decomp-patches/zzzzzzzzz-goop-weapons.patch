@@ -1,6 +1,6 @@
 --- a/src/Player/ModelWaterManager.cpp
 +++ b/src/Player/ModelWaterManager.cpp
-@@ -385,6 +385,10 @@
+@@ -385,6 +385,11 @@
  #ifdef TARGET_PC
  // FLUDD's spray weapons (ext/modapi/game/modapi_spray_weapons.cpp)
  bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made);
@@ -8,10 +8,11 @@
 +// left as goop where they land (any drop landing: true to end it there)
 +bool PortGoopDropHidden(int i);
 +bool PortGoopDropLands(int i, const TBGCheckData* ground);
++bool PortGoopDropWall(int i, const TBGCheckData* wall); // ...and any drop on a wall
  #endif
  
  u8 TModelWaterManager::emitRequest(const TWaterEmitInfo& param_1)
-@@ -705,6 +709,10 @@
+@@ -705,6 +710,10 @@
  
  				mParticlePositionSOA[i].y = f31 - getWPGravity(i);
  #ifdef TARGET_PC
@@ -22,12 +23,12 @@
  				// port: a puddle that had landed before this tick (not one
  				// landing now) sprays the object under it on its ticks only
  				const bool portLingering = getFlagBottom4Bits(i) == 2;
-@@ -803,6 +811,12 @@
+@@ -803,6 +812,12 @@
  					       * (r27->mPlaneDistance
  					          + mParticlePositionSOA[i].dot(r27->getNormal()));
  
 +#ifdef TARGET_PC
-+					if (PortGoopDropHidden(i)) { // a goop drop on a wall: gone
++					if (PortGoopDropWall(i, r27)) { // a goop drop on a wall: goop there, the drop gone
 +						mParticleLifetimeSOA[i] = 0.0f;
 +						continue;
 +					}
@@ -35,7 +36,7 @@
  					if (getFlagBottom4Bits(i) == 1) {
  						JGeometry::TVec3<f32> local_1A4
  						    = mParticlePositionSOA[i]
-@@ -993,6 +1007,10 @@
+@@ -993,6 +1008,10 @@
  
  		if (getFlagBottom4Bits(i) != 1)
  			continue;
