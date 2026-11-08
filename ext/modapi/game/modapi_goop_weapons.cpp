@@ -959,7 +959,7 @@ void GoopPacket::draw()
 			for (int i = 0; i < kPuddles; i++)
 				if (s_puddles[i].on && s_puddles[i].kind == kind)
 					drawPuddle(s_puddles[i], i);
-			if (kind == kElectric) { // the thin water over it: its shine added on top, moving
+			if (false && kind == kElectric) { // (the water's shine added on top: too white, left out)
 				GXClearVtxDesc();
 				GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
 				GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
