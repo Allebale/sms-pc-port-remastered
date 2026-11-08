@@ -391,31 +391,48 @@ void zaps()
 	}
 }
 
-// black goop under Mario: he runs faster and faster through it (up to twice his own speed, times
-// the mod's setting), and a slide or a dive's belly slide keeps its speed instead of slowing down
-f32 s_slideSpeed;
-f32 s_slipAt = -1.0f;
-void slippery(TMario* m)
+// black goop under Mario: slippery as ice and fast. Each tick the game moves him as ever; on black
+// goop his way across the ground is kept from tick to tick instead, turning toward the game's own
+// step (times the mod's speed) only slowly: he speeds up beyond his own speed, slides on when the
+// stick is let go, and turns wide, as on ice
+bool s_havePrev, s_gliding;
+f32 s_prevX, s_prevZ, s_glideX, s_glideZ;
+
+bool onBlack(TMario* m)
 {
-	if (s_slipAt == s_time)
-		return; // once a tick
-	if (s_time - s_slipAt > 0.1f)
-		s_slideSpeed = m->mForwardVel; // just come onto it
-	s_slipAt          = s_time;
-	const u32 st      = m->mStatus;
-	const bool slide  = st == 0x800456 || st == 0x84045D; // a dive's belly slide
-	const f32 fastest = 58.0f * s_blackSpeed;
-	if (slide) {
-		if (m->mForwardVel < s_slideSpeed * 0.996f && m->mForwardVel > 2.0f)
-			m->mForwardVel = s_slideSpeed * 0.996f; // hardly slowing
-		s_slideSpeed = m->mForwardVel;
+	if (m->onYoshi() || m->checkFlag(MARIO_FLAG_IN_WATER) || m->mPosition.y > m->mFloorPosition.y + 12.0f)
+		return false;
+	for (int i = 0; i < kPuddles; i++) {
+		const Puddle& p = s_puddles[i];
+		if (!p.on || p.kind != kBlack)
+			continue;
+		const f32 r = sizeNow(p) * 0.9f, dx = m->mPosition.x - p.x, dz = m->mPosition.z - p.z;
+		if (dx * dx + dz * dz <= r * r && fabsf(m->mPosition.y - p.y) < 40.0f)
+			return true;
+	}
+	return false;
+}
+
+void blackGoop(f32 dt)
+{
+	TMario* m = gpMarioOriginal;
+	if (!m) {
+		s_havePrev = s_gliding = false;
 		return;
 	}
-	s_slideSpeed = m->mForwardVel;
-	if ((m->mStatus & MARIO_STATUS_TYPE_MASK) == MARIO_STATUS_TYPE_RUNNING && (m->mInput & 1) && m->mForwardVel > 1.0f) {
-		const f32 v    = m->mForwardVel * 1.04f + 0.6f;
-		m->mForwardVel = v < fastest ? v : (m->mForwardVel > fastest ? m->mForwardVel : fastest);
-	}
+	const f32 dx = m->mPosition.x - s_prevX, dz = m->mPosition.z - s_prevZ; // the game's step this tick
+	if (s_havePrev && fabsf(dx) < 300.0f && fabsf(dz) < 300.0f && onBlack(m)) {
+		if (!s_gliding)
+			s_glideX = dx, s_glideZ = dz, s_gliding = true;
+		const f32 k = 1.0f - powf(0.5f, dt / 0.45f); // half way toward the game's step in 0.45 s
+		s_glideX += (dx * s_blackSpeed - s_glideX) * k;
+		s_glideZ += (dz * s_blackSpeed - s_glideZ) * k;
+		m->mPosition.x = s_prevX + s_glideX;
+		m->mPosition.z = s_prevZ + s_glideZ;
+	} else
+		s_gliding = false;
+	s_prevX = m->mPosition.x, s_prevZ = m->mPosition.z;
+	s_havePrev = true;
 }
 
 // Mario standing in a puddle: hurt as by the game's own goop of its kind
@@ -458,10 +475,8 @@ void hurtMario(f32 dt)
 			continue;
 		}
 		p.inside += dt;
-		if (p.kind == kBlack) {
-			slippery(m);
-			continue;
-		}
+		if (p.kind == kBlack)
+			continue; // (slippery: blackGoop)
 		if (m->isInvincible())
 			continue;
 		if (p.kind == kFire) {
@@ -570,6 +585,7 @@ void afterMovement()
 	zaps();
 	dressFludd();
 	drain();
+	blackGoop(dt);
 	bool any = false;
 	for (int i = 0; i < kPuddles; i++) {
 		Puddle& p = s_puddles[i];
@@ -1434,7 +1450,7 @@ int PortGoopStats(int kind, int has, float every, float range, float burst, floa
 	st.drop   = drop >= 0.2f ? drop : 0.2f;
 	st.hits   = hits >= 1 ? (hits <= 50 ? hits : 50) : 1;
 	if (kind == kBlack)
-		s_blackSpeed = push >= 0.5f ? (push <= 3.0f ? push : 3.0f) : 1.0f; // (push: its speed)
+		s_blackSpeed = push >= 0.5f ? (push <= 10.0f ? push : 10.0f) : 1.0f; // (push: its speed)
 	st.water  = water > 0 ? (f32)(water <= 1000 ? water : 1000) / 100.0f : 1.0f; // (percent of FLUDD's)
 	s_wallLife = wall > 0.05f ? wall * 60.0f : 30.0f; // (both kinds': minutes)
 	return 1;
