@@ -115,6 +115,7 @@ struct State {
     float shadow[48];
     float shadowProj[7];
     bool shadowArmed, shadowMain, shadowTag;
+    bool shadowCastOnly;  // GXPC_ShadowCastOnly: batches only into the sun's shadow map
     bool shadowNoReceive;  // GXPC_ShadowReceive(0): what is drawn now takes no sun shadow
     // Round Shadows Under Characters (GXPC_ShadowRound): Mario and the characters cast none;
     // shadowNoCast: a character's display list is drawn now

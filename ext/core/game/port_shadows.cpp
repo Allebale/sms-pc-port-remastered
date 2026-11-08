@@ -30,6 +30,7 @@
 #include <Player/Mario.hpp>
 #include <Player/Yoshi.hpp>
 #include <Player/MarioAccess.hpp>
+#include <Player/ModelWaterManager.hpp>
 
 #include <math.h>
 #include <stdio.h>
@@ -167,6 +168,76 @@ struct Register {
 } // namespace
 
 extern "C" void GXPC_Ladders3D(int on);
+extern "C" void GXPC_ShadowCastOnly(int on);
+
+// Water in the air casts a shadow too (with Real Shadows): FLUDD's drops and its spray weapons'
+// shots (all of gpModelWaterManager's flying drops), each a small disc facing the sun, drawn only
+// into the sun's shadow map (GXPC_ShadowCastOnly), as the frame's shadows begin. A disc a little
+// smaller than the drop (its size is its drawn blob's, softer at the edge), at most 400 a frame.
+static void waterShadows(float (*view)[4], const f32 sun[3])
+{
+	TModelWaterManager* w = gpModelWaterManager;
+	if (!w || !w->mParticleCount)
+		return;
+	// across the sun: two ways at right angles to it
+	f32 ux = -sun[2], uy = 0.0f, uz = sun[0];
+	f32 ul = sqrtf(ux * ux + uz * uz);
+	if (ul < 1e-3f)
+		ux = 1.0f, uz = 0.0f, ul = 1.0f;
+	ux /= ul, uz /= ul;
+	const f32 vx = sun[1] * uz - sun[2] * uy, vy = sun[2] * ux - sun[0] * uz, vz = sun[0] * uy - sun[1] * ux;
+	const int kSides = 6;
+	f32 ca[kSides], sa[kSides];
+	for (int k = 0; k < kSides; k++)
+		ca[k] = cosf(6.2831853f * k / kSides), sa[k] = sinf(6.2831853f * k / kSides);
+	int n = 0;
+	for (int i = 0; i < (int)w->mParticleCount && n < 400; i++)
+		if ((w->mParticleFlagSOA[i] & 0xf) == 1 && w->mParticleLifetimeSOA[i] > 0.0f)
+			n++;
+	if (!n)
+		return;
+	GXPC_ShadowCastOnly(1);
+	GXSetCurrentMtx(GX_PNMTX0);
+	GXLoadPosMtxImm(view, GX_PNMTX0);
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_VTX, GX_SRC_VTX, 0, GX_DF_NONE, GX_AF_NONE);
+	GXSetNumTexGens(0);
+	GXSetNumIndStages(0);
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+	GXSetCullMode(GX_CULL_NONE);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetColorUpdate(GX_TRUE);
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * kSides * 3));
+	int done = 0;
+	for (int i = 0; i < (int)w->mParticleCount && done < n; i++) {
+		if ((w->mParticleFlagSOA[i] & 0xf) != 1 || w->mParticleLifetimeSOA[i] <= 0.0f)
+			continue;
+		done++;
+		const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+		f32 r = w->mParticleSizeSOA[i] * 0.35f;
+		r     = r < 3.0f ? 3.0f : r > 120.0f ? 120.0f : r;
+		for (int k = 0; k < kSides; k++) {
+			const int j = (k + 1) % kSides;
+			GXPosition3f32(p.x, p.y, p.z);
+			GXColor4u8(255, 255, 255, 255);
+			GXPosition3f32(p.x + (ux * ca[k] + vx * sa[k]) * r, p.y + (uy * ca[k] + vy * sa[k]) * r, p.z + (uz * ca[k] + vz * sa[k]) * r);
+			GXColor4u8(255, 255, 255, 255);
+			GXPosition3f32(p.x + (ux * ca[j] + vx * sa[j]) * r, p.y + (uy * ca[j] + vy * sa[j]) * r, p.z + (uz * ca[j] + vz * sa[j]) * r);
+			GXColor4u8(255, 255, 255, 255);
+		}
+	}
+	GXEnd();
+	GXPC_ShadowCastOnly(0);
+}
 
 void port_shadows_main_view(void* camera, float (*view)[4])
 {
@@ -259,4 +330,6 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 	GXPC_ShadowSoftness(port_shadows_softness());  // Soft Shadow Edges
 	GXPC_ShadowMapSize(port_shadows_map_size());     // Shadow Size
 	GXPC_ShadowFrame(view, sun, focus, kStrength[level], kHalf, reach);
+	if (port_shadows_water())
+		waterShadows(view, sun);  // FLUDD's water in the air, and its spray weapons' shots
 }

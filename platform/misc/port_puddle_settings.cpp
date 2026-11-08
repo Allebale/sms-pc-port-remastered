@@ -94,6 +94,7 @@ int s_vegetation = 0;     // Moving Vegetation: 0 off through 4 very windy
 int s_sandy = 0;          // Sandy Mario: 0 off, 1 light, 2 normal, 3 heavy
 int s_grassCutHeight = 2, s_grassWildHeight = 2;  // into kGrassHeights
 int s_shadows = 0;        // Real Shadows: 0 off (the game's own), 1 soft, 2 strong
+int s_waterShadows = 0;   // Water Shadows, with Real Shadows: FLUDD's water and the spray weapons' shots cast
 int s_shadowsRound = 0;   // Round Shadows Under Characters, with Real Shadows: 1 kept (lighter)
 int s_shadowsDistance = 2;  // Shadow Distance: into kShadowDistances
 int s_shadowsMap = 2;       // Shadow Size: 0 low (1024), 1 medium (2048), 2 high (4096, as it was)
@@ -305,6 +306,8 @@ void load() {
             s_grassDistance = value < 0 ? 0 : value > 4 ? 4 : value;
         } else if (sscanf(line, " grassblades = %d", &value) == 1) {
             s_grass = value < 0 ? 0 : value > 3 ? 3 : value;
+        } else if (sscanf(line, " watershadows = %d", &value) == 1) {
+            s_waterShadows = value != 0;
         } else if (sscanf(line, " characterroundshadows = %d", &value) == 1) {
             s_shadowsRound = value != 0;
         } else if (sscanf(line, " shadowsize = %d", &value) == 1) {
@@ -447,6 +450,7 @@ void save() {
     fprintf(f, "shadows = %d\n", s_shadows);
     fprintf(f, "# characterroundshadows: with shadows on, 1 the game's round shadows under characters kept (lighter), 0 not.\n");
     fprintf(f, "characterroundshadows = %d\n", s_shadowsRound);
+    fprintf(f, "watershadows = %d\n", s_waterShadows);
     fprintf(f, "# shadowdistance: how far the shadows reach: 0 short, 1 medium, 2 long, 3 very long, 4 max.\n");
     fprintf(f, "shadowdistance = %d\n", s_shadowsDistance);
     fprintf(f, "# shadowsoftedges: the shadows' edges: 0 sharp (as before), 1 subtle, 2 mild, 3 light, 4 soft.\n");
@@ -844,6 +848,19 @@ int originalSet(int i) {
     return 1;
 }
 
+int waterShadowsGet() {
+    load();
+    return s_waterShadows;
+}
+int waterShadowsSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_waterShadows = i;
+    save();
+    port_log("[shadows] Water Shadows changed: %s\n", i ? "on" : "off");
+    return 1;
+}
+
 int roundGet() {
     load();
     return s_shadowsRound;
@@ -1214,6 +1231,7 @@ const EffectValue kEffects[] = {
     {"Puddle Lifetime", {"Original", "8x", "4x", "2x"}},
     {"Real Shadows", {"Off", "Strong", "Strong", "Strong"}},
     {"Round Shadows Under Characters", {"Off", "Off", "Off", "Off"}},
+    {"Water Shadows", {"Off", "On", "On", "Off"}},
     {"Shadow Distance", {"Long", "Very Long", "Medium", "Short"}},
     {"Keep the Original Shadow Direction", {"Off", "Off", "Off", "Off"}},
     {"Shadow Size", {"High", "High", "Medium", "Low"}},
@@ -1417,6 +1435,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 97, "Round Shadows Under Characters",
      "With Real Shadows, Mario and characters get the game's round shadow instead.", 0, nullptr,
      offOnCount, offOnName, roundGet, roundSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 97, "Water Shadows",
+     "With Real Shadows, FLUDD's water and the weapons' shots cast shadows too.", 0, nullptr,
+     offOnCount, offOnName, waterShadowsGet, waterShadowsSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 98, "Shadow Distance",
      "How far from Mario Real Shadows reach. Farther is a little softer far away.", 0, nullptr,
      distanceCount5, shadowDistanceName, shadowDistanceGet, shadowDistanceSet},
@@ -1658,6 +1679,10 @@ float port_grass_distance(void) {
 int port_shadows(void) {
     load();
     return s_shadows;
+}
+int port_shadows_water(void) {
+    load();
+    return s_waterShadows;
 }
 int port_shadows_round(void) {
     load();

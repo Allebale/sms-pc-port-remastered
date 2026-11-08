@@ -3835,6 +3835,15 @@ static const char* shadowNoCast() {
     return nullptr;
 }
 
+// Shapes drawn only into the sun's shadow map, nothing in the view (GXPC_ShadowCastOnly): water in
+// the air (FLUDD's drops, its spray weapons' shots), as discs facing the sun, drawn by the game as
+// the frame's shadows begin (port_shadows.cpp)
+extern "C" void GXPC_ShadowCastOnly(int on) {
+    if (g.shadowCastOnly == (on != 0)) return;
+    flushBatch();
+    g.shadowCastOnly = on != 0;
+}
+
 // Mario's own draw, for the log (GXPC_ShadowTag, from port_wet_mario_draw): whether its batches
 // cast, and why not.
 extern "C" void GXPC_ShadowTag(int on) {
@@ -4216,7 +4225,9 @@ void flushBatch() {
             else ranges.push_back(Range{vaoForFormat(s_bfmt), iOff + size_t(sg.first) * 4, GLsizei(sg.count), streamBase});
         }
     }
-    if (earlyFallback) {
+    if (g.shadowCastOnly) {
+        // only a shadow (GXPC_ShadowCastOnly): nothing drawn in the view, cast below
+    } else if (earlyFallback) {
         const ShaderProgram* depthSp = shaderForCurrentState(true, s_bclass == PRIM_LINES);
         glcUseProgram(depthSp->prog);
         uploadUniforms(depthSp, texW, texH);
@@ -4281,7 +4292,8 @@ void flushBatch() {
         ladderLayers(ranges, mode, sp, texW, texH);
     if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn) charCast(ranges, mode, sp);
     if (g.shadowArmed && s_bclass == PRIM_TRIS && !g.shellOn) {  // a ladder's layers: its card casts once
-        const char* why = g.shadowMain ? shadowNoCast() : "not the main camera's view";
+        const char* why = g.shadowCastOnly ? (g.shadowMain ? nullptr : "not the main camera's view")
+                          : g.shadowMain ? shadowNoCast() : "not the main camera's view";
         if (!why) shadowCast(ranges, mode, sp, texW, texH);
         // the log: Mario's batches that cast no shadow, and why (the first few)
         static int s_toldMario;
