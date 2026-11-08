@@ -73,9 +73,10 @@ f32 s_time;           // seconds played
 // defeat an enemy; how long its goop lasts, times a minute; its puddles' size, times their own
 struct Stats {
 	f32 defeat, life, size, drop;
-	int hits; // times an enemy is shocked or burnt before it is defeated
+	int hits;  // times an enemy is shocked or burnt before it is defeated
+	f32 water; // the water it uses, times FLUDD's own
 };
-const Stats kDefaults = {1.0f, 1.0f, 1.0f, 1.0f, 1};
+const Stats kDefaults = {1.0f, 1.0f, 1.0f, 1.0f, 1, 1.0f};
 Stats s_stats[2]      = {kDefaults, kDefaults};
 Stats& statsOf(int kind) { return s_stats[kind == kElectric ? 1 : 0]; }
 
@@ -463,6 +464,30 @@ bool anyPuddle()
 
 void undress();
 void dressFludd();
+
+// the water a goop weapon uses: FLUDD's own (what left the tank this tick), times its setting
+s32 s_lastWater = -1;
+f32 s_waterCarry;
+void drain()
+{
+	TMario* m    = gpMarioOriginal;
+	TWaterGun* g = m ? m->mWaterGun : 0;
+	if (!g) {
+		s_lastWater = -1;
+		return;
+	}
+	s32 now = g->mCurrentWater;
+	if (s_kind && s_lastWater >= 0 && now < s_lastWater) {
+		const f32 more = (f32)(s_lastWater - now) * (statsOf(s_kind).water - 1.0f) + s_waterCarry;
+		const s32 whole = (s32)more;
+		s_waterCarry    = more - (f32)whole;
+		now -= whole;
+		const s32 most = g->mNozzleList[0] ? (s32)g->mNozzleList[0]->mEmitParams.mAmountMax.get() : now;
+		now            = now < 0 ? 0 : now > most ? most : now;
+		g->mCurrentWater = now;
+	}
+	s_lastWater = now;
+}
 void stageSetup()
 {
 	undress(); // (its textures' memory goes with the stage)
@@ -477,6 +502,7 @@ void afterMovement()
 	s_time += dt;
 	zaps();
 	dressFludd();
+	drain();
 	bool any = false;
 	for (int i = 0; i < kPuddles; i++) {
 		Puddle& p = s_puddles[i];
@@ -1319,7 +1345,7 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 // A goop weapon's numbers (set_weapon_stats): `every` seconds of it defeat an enemy, `range` how
 // long its goop lasts (times a minute), `burst` its puddles' size, `drop` its stream's blobs' (each
 // times its own); has 0: its own again. Returns 1 for a goop weapon.
-int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall)
+int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water)
 {
 	if (kind != kFire && kind != kElectric)
 		return 0;
@@ -1332,6 +1358,7 @@ int PortGoopStats(int kind, int has, float every, float range, float burst, floa
 	st.size   = burst >= 0.2f ? burst : 0.2f;
 	st.drop   = drop >= 0.2f ? drop : 0.2f;
 	st.hits   = hits >= 1 ? (hits <= 50 ? hits : 50) : 1;
+	st.water  = water > 0 ? (f32)(water <= 1000 ? water : 1000) / 100.0f : 1.0f; // (percent of FLUDD's)
 	s_wallLife = wall > 0.05f ? wall * 60.0f : 30.0f; // (both kinds': minutes)
 	return 1;
 }
