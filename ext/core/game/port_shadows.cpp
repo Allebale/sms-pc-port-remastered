@@ -170,10 +170,24 @@ struct Register {
 extern "C" void GXPC_Ladders3D(int on);
 extern "C" void GXPC_ShadowCastOnly(int on);
 
-// Water in the air casts a shadow too (with Real Shadows): FLUDD's drops and its spray weapons'
-// shots (all of gpModelWaterManager's flying drops), each a small disc facing the sun, drawn only
-// into the sun's shadow map (GXPC_ShadowCastOnly), as the frame's shadows begin. A disc a little
-// smaller than the drop (its size is its drawn blob's, softer at the edge), at most 400 a frame.
+// Water in the air casts a shadow too (with Water Shadows and Real Shadows): FLUDD's drops and its
+// spray weapons' shots (all of gpModelWaterManager's flying drops), drawn only into the sun's shadow
+// map (GXPC_ShadowCastOnly), as the frame's shadows begin, each facing the sun. FLUDD's own drops
+// are stretched along their flight (a frame of it) so a stream's shadows run into one another; the
+// SMG's longer still (a streak); the other weapons' a round disc. At most 400 a frame.
+static void waterDisc(f32 x, f32 y, f32 z, f32 r, const f32* u, const f32* v, const f32* ca, const f32* sa, int sides)
+{
+	for (int k = 0; k < sides; k++) {
+		const int j = (k + 1) % sides;
+		GXPosition3f32(x, y, z);
+		GXColor4u8(255, 255, 255, 255);
+		GXPosition3f32(x + (u[0] * ca[k] + v[0] * sa[k]) * r, y + (u[1] * ca[k] + v[1] * sa[k]) * r, z + (u[2] * ca[k] + v[2] * sa[k]) * r);
+		GXColor4u8(255, 255, 255, 255);
+		GXPosition3f32(x + (u[0] * ca[j] + v[0] * sa[j]) * r, y + (u[1] * ca[j] + v[1] * sa[j]) * r, z + (u[2] * ca[j] + v[2] * sa[j]) * r);
+		GXColor4u8(255, 255, 255, 255);
+	}
+}
+
 static void waterShadows(float (*view)[4], const f32 sun[3])
 {
 	TModelWaterManager* w = gpModelWaterManager;
@@ -186,10 +200,12 @@ static void waterShadows(float (*view)[4], const f32 sun[3])
 		ux = 1.0f, uz = 0.0f, ul = 1.0f;
 	ux /= ul, uz /= ul;
 	const f32 vx = sun[1] * uz - sun[2] * uy, vy = sun[2] * ux - sun[0] * uz, vz = sun[0] * uy - sun[1] * ux;
-	const int kSides = 6;
+	const f32 U[3] = {ux, uy, uz}, V[3] = {vx, vy, vz};
+	const int kSides = 8;
 	f32 ca[kSides], sa[kSides];
 	for (int k = 0; k < kSides; k++)
 		ca[k] = cosf(6.2831853f * k / kSides), sa[k] = sinf(6.2831853f * k / kSides);
+	const int kVerts = kSides * 3 * 2 + 6; // a disc at each end and the band between
 	int n = 0;
 	for (int i = 0; i < (int)w->mParticleCount && n < 400; i++)
 		if ((w->mParticleFlagSOA[i] & 0xf) == 1 && w->mParticleLifetimeSOA[i] > 0.0f)
@@ -216,22 +232,45 @@ static void waterShadows(float (*view)[4], const f32 sun[3])
 	GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetColorUpdate(GX_TRUE);
-	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * kSides * 3));
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * kVerts));
 	int done = 0;
 	for (int i = 0; i < (int)w->mParticleCount && done < n; i++) {
 		if ((w->mParticleFlagSOA[i] & 0xf) != 1 || w->mParticleLifetimeSOA[i] <= 0.0f)
 			continue;
 		done++;
 		const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+		const JGeometry::TVec3<f32>& vel = w->mParticleVelocitySOA[i];
 		f32 r = w->mParticleSizeSOA[i] * 0.35f;
 		r     = r < 3.0f ? 3.0f : r > 120.0f ? 120.0f : r;
-		for (int k = 0; k < kSides; k++) {
-			const int j = (k + 1) % kSides;
-			GXPosition3f32(p.x, p.y, p.z);
-			GXColor4u8(255, 255, 255, 255);
-			GXPosition3f32(p.x + (ux * ca[k] + vx * sa[k]) * r, p.y + (uy * ca[k] + vy * sa[k]) * r, p.z + (uz * ca[k] + vz * sa[k]) * r);
-			GXColor4u8(255, 255, 255, 255);
-			GXPosition3f32(p.x + (ux * ca[j] + vx * sa[j]) * r, p.y + (uy * ca[j] + vy * sa[j]) * r, p.z + (uz * ca[j] + vz * sa[j]) * r);
+		// whose drop: the spray weapons' tag above the game's own attack (FLUDD's none, 0; the SMG 4)
+		const int weapon = ((unsigned short)w->mParticleAttackSOA[i] >> 8) & 0xf;
+		f32 back = 0.0f, ahead = 0.0f; // its flight's frames behind and ahead of it
+		if (weapon == 0)
+			back = 0.8f, ahead = 0.3f;
+		else if (weapon == 4)
+			back = 6.0f, ahead = 1.0f, r *= 0.8f;
+		// its flight, flattened across the sun
+		const f32 along = vel.x * sun[0] + vel.y * sun[1] + vel.z * sun[2];
+		f32 dx = vel.x - sun[0] * along, dy = vel.y - sun[1] * along, dz = vel.z - sun[2] * along;
+		f32 dl = sqrtf(dx * dx + dy * dy + dz * dz);
+		if (dl * (back + ahead) > 1500.0f) {
+			const f32 k = 1500.0f / (dl * (back + ahead));
+			back *= k, ahead *= k;
+		}
+		const f32 ax = p.x - dx * back, ay = p.y - dy * back, az = p.z - dz * back;
+		const f32 bx = p.x + dx * ahead, by = p.y + dy * ahead, bz = p.z + dz * ahead;
+		waterDisc(ax, ay, az, r, U, V, ca, sa, kSides);
+		waterDisc(bx, by, bz, r, U, V, ca, sa, kSides);
+		// the band between: across the flight, facing the sun
+		f32 sx = sun[1] * dz - sun[2] * dy, sy = sun[2] * dx - sun[0] * dz, sz = sun[0] * dy - sun[1] * dx;
+		f32 sl = sqrtf(sx * sx + sy * sy + sz * sz);
+		if (sl < 1e-4f)
+			sx = ux, sy = uy, sz = uz, sl = 1.0f;
+		sx *= r / sl, sy *= r / sl, sz *= r / sl;
+		const f32 q[6][3] = {{ax + sx, ay + sy, az + sz}, {ax - sx, ay - sy, az - sz}, {bx + sx, by + sy, bz + sz},
+		                     {bx + sx, by + sy, bz + sz}, {ax - sx, ay - sy, az - sz}, {bx - sx, by - sy, bz - sz}};
+		for (int k = 0; k < 6; k++) {
+			GXPosition3f32(q[k][0], q[k][1], q[k][2]);
 			GXColor4u8(255, 255, 255, 255);
 		}
 	}
