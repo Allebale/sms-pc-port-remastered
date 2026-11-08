@@ -26,7 +26,10 @@ int port_grass_mario(void);
 // blades near Mario. view: the camera's (world to view).
 void port_grass_draw(float (*view)[4]);
 // the goop weapons' goop on the grass: electric (0) presses it flat, fire (1) burns it away
-void port_grass_goop(float x, float z, float r, int kind, int ms);
+void port_grass_goop(float x, float y, float z, float r, int kind, int ms);
+// grass on fire there (fire goop's fire running through it); the burning places, at most `most`
+int port_grass_burning(float x, float z);
+int port_grass_fires(float* out, int most);
 
 #ifdef __cplusplus
 }

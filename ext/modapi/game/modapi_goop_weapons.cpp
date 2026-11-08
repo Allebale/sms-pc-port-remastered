@@ -63,14 +63,17 @@ int s_kind;           // the goop weapon chosen: kFire, kElectric, or 0 none
 bool s_defeat;        // it may defeat enemies
 bool s_emitting;      // our own request, let through
 bool s_grassPress = true, s_grassBurn = true; // (Remastered's 3D Grass) electric goop presses it, fire goop burns it
-extern "C" void port_grass_goop(float x, float z, float r, int kind, int ms) __attribute__((weak)); // port_grass.cpp
+extern "C" void port_grass_goop(float x, float y, float z, float r, int kind, int ms) __attribute__((weak)); // port_grass.cpp
+extern "C" int port_grass_burning(float x, float z) __attribute__((weak));
+extern "C" int port_grass_fires(float* out, int most) __attribute__((weak));
 f32 s_time;           // seconds played
 // each kind's numbers (the mod's menu): seconds of its stream, or of standing in its goop, that
 // defeat an enemy; how long its goop lasts, times a minute; its puddles' size, times their own
 struct Stats {
 	f32 defeat, life, size, drop;
+	int hits; // times an enemy is shocked or burnt before it is defeated
 };
-const Stats kDefaults = {1.0f, 1.0f, 1.0f, 1.0f};
+const Stats kDefaults = {1.0f, 1.0f, 1.0f, 1.0f, 1};
 Stats s_stats[2]      = {kDefaults, kDefaults};
 Stats& statsOf(int kind) { return s_stats[kind == kElectric ? 1 : 0]; }
 
@@ -87,7 +90,7 @@ struct Puddle {
 };
 const int kPuddles = 64;
 Puddle s_puddles[kPuddles];
-const f32 kStartSize = 95.0f, kMostSize = 380.0f, kGrow = 5.0f, kWash = 1.6f, kGone = 14.0f;
+const f32 kStartSize = 95.0f, kMostSize = 380.0f, kGrow = 5.0f, kWash = 5.0f, kGone = 14.0f;
 const f32 kLife = 60.0f, kFade = 4.0f; // seconds, and the last of them shrinking away
 
 // enemies touched by the goop: shocked (held still, trembling, sparks on them) or burning (the
@@ -98,6 +101,9 @@ struct Zap {
 	f32 start;
 	f32 bx, by, bz;               // where it was shocked (held there)
 	JGeometry::TVec3<f32> centre; // the sparks' place (on it)
+	int hits;                     // times shocked or burnt so far
+	bool resting;                 // between two: let go
+	f32 until;                    // its rest's end
 };
 const int kZaps = 24;
 Zap s_zaps[kZaps];
@@ -194,13 +200,25 @@ void burn(TSmallEnemy* e, int kind)
 		return;
 	Zap* free = 0;
 	for (int i = 0; i < kZaps; i++) {
-		if (s_zaps[i].e == e)
-			return; // already
-		if (!free && !s_zaps[i].e)
-			free = &s_zaps[i];
+		Zap& z = s_zaps[i];
+		if (z.e == e) {
+			if (!z.resting || s_time < z.until)
+				return; // already, or resting a moment
+			free = &z; // again
+			break;
+		}
+		if (!free && !z.e)
+			free = &z;
 	}
+	if (!free) // the longest resting one's place
+		for (int i = 0; i < kZaps; i++)
+			if (s_zaps[i].resting && (!free || s_zaps[i].until < free->until))
+				free = &s_zaps[i];
 	if (!free)
 		return;
+	if (free->e != e)
+		free->hits = 0;
+	free->resting = false;
 	free->e     = e;
 	free->kind  = kind;
 	free->start = s_time;
@@ -223,6 +241,13 @@ void zaps()
 			continue;
 		}
 		const f32 size = e->mScaling.y > 0.1f ? e->mScaling.y : 1.0f;
+		if (z.resting)
+			continue;
+		if (s_time - z.start >= statsOf(z.kind).defeat && ++z.hits < statsOf(z.kind).hits) {
+			z.resting = true; // let go; shocked or burnt again when it touches the goop again
+			z.until   = s_time + 0.6f;
+			continue;
+		}
 		if (s_time - z.start >= statsOf(z.kind).defeat) {
 			z.e = 0;
 			if (gpMarioParticleManager)
@@ -261,6 +286,10 @@ void hurtMario(f32 dt)
 		return;
 	if (m->mPosition.y > m->mFloorPosition.y + 12.0f) // in the air
 		return;
+	if (s_grassBurn && port_grass_burning && port_grass_burning(m->mPosition.x, m->mPosition.z) && !m->isInvincible()) {
+		m->checkGraffitoFire(); // the grass on fire under him
+		return;
+	}
 	for (int i = 0; i < kPuddles; i++) {
 		Puddle& p = s_puddles[i];
 		if (!p.on)
@@ -297,6 +326,10 @@ void hurtEnemiesIn(TLiveManager* mgr)
 		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
 		if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 			continue;
+		if (s_grassBurn && port_grass_burning && port_grass_burning(e->mPosition.x, e->mPosition.z)) {
+			burn(e, kFire); // in the grass on fire
+			continue;
+		}
 		for (int k = 0; k < kPuddles; k++) {
 			const Puddle& p = s_puddles[k];
 			if (!p.on)
@@ -353,14 +386,15 @@ void afterMovement()
 			p.on = false; // dried away
 		any = any || p.on;
 	}
-	if (!any)
+	const bool grassFire = s_grassBurn && port_grass_fires && port_grass_fires(0, 0) > 0;
+	if (!any && !grassFire)
 		return;
 	hurtMario(dt);
 	if (port_grass_goop) // the grass under it: pressed flat, or burnt away
 		for (int i = 0; i < kPuddles; i++) {
 			const Puddle& p = s_puddles[i];
 			if (p.on && (p.kind == kFire ? s_grassBurn : s_grassPress))
-				port_grass_goop(p.x, p.z, sizeNow(p) * 0.95f, p.kind == kFire ? 1 : 0, (int)(dt * 1000.0f));
+				port_grass_goop(p.x, p.y, p.z, sizeNow(p) * 0.95f, p.kind == kFire ? 1 : 0, (int)(dt * 1000.0f));
 		}
 	if (s_time - s_enemyCheck >= 0.1f && s_defeat && gpConductor) {
 		s_enemyCheck = s_time;
@@ -786,6 +820,40 @@ f32 hash01(u32 h)
 	return (f32)(h & 0xFFFF) / 65535.0f;
 }
 
+// a flame at (x, y, z): a soft teardrop (a fan of six) `h` high now, `tall` at most, facing the view
+void flame(f32 x, f32 y, f32 z, f32 tall, f32 h, f32 sway)
+{
+	const f32 rx = s_view[0][0], rz = s_view[0][2]; // the view's right
+	const f32 w = tall * 0.32f;
+	const f32 pts[7][2] = {{0.0f, 0.0f},  {-w, 0.3f * h},          {-0.5f * w, 0.7f * h}, {sway, 1.05f * h},
+	                       {0.5f * w, 0.7f * h}, {w, 0.3f * h}, {0.0f, 0.0f}};
+	const int al[7] = {120, 110, 70, 0, 70, 110, 120};
+	const f32 my    = 0.35f * h;
+	for (int k = 0; k < 6; k++) {
+		acorner(x, y + my, z, 255, 150, 70, 210);
+		acorner(x + rx * pts[k][0], y + pts[k][1], z + rz * pts[k][0], 255, 80, 60, al[k]);
+		acorner(x + rx * pts[k + 1][0], y + pts[k + 1][1], z + rz * pts[k + 1][0], 255, 80, 60, al[k + 1]);
+	}
+}
+
+// grass on fire (fire goop's fire running through it, port_grass.cpp): a flame at each burning place
+void drawGrassFires()
+{
+	static float at[300 * 3];
+	const int n = port_grass_fires ? port_grass_fires(at, 300) : 0;
+	if (!n)
+		return;
+	const f32 time = (f32)s_frame / 60.0f;
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * 18));
+	for (int i = 0; i < n; i++) {
+		const u32 key  = (u32)((int)(at[i * 3] / 12.0f) * 73856093) ^ (u32)((int)(at[i * 3 + 2] / 12.0f) * 19349663);
+		const f32 tall = 30.0f + 25.0f * hash01(key);
+		const f32 h    = tall * (0.6f + 0.4f * sinf(time * 9.0f + hash01(key + 1u) * 6.28f));
+		flame(at[i * 3], at[i * 3 + 1], at[i * 3 + 2], tall, h, 0.12f * tall * sinf(time * 6.0f + (f32)i));
+	}
+	GXEnd();
+}
+
 // fire: flames rising off it, soft and see-through, each one flaring up and dying away somewhere
 // new; turned to face the view
 void drawFlames(const Puddle& p, int index)
@@ -795,7 +863,6 @@ void drawFlames(const Puddle& p, int index)
 		return;
 	f32 t[3], b[3];
 	basis(p, t, b);
-	const f32 rx = s_view[0][0], ry = s_view[0][1], rz = s_view[0][2]; // the view's right
 	const int count = 2 + (int)(r / 45.0f);
 	const f32 time  = (f32)s_frame / 60.0f;
 	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(count * 18));
@@ -809,19 +876,7 @@ void drawFlames(const Puddle& p, int index)
 		const f32 x = p.x + t[0] * ox + b[0] * oz, y = p.y + t[1] * ox + b[1] * oz, z = p.z + t[2] * ox + b[2] * oz;
 		const f32 tall = (45.0f + r * 0.12f) * (0.7f + 0.6f * hash01(key + 2u));
 		const f32 h    = tall * sinf(3.14159f * life);
-		const f32 w    = tall * 0.32f;
-		const f32 sway = 0.12f * tall * sinf(time * 6.0f + (f32)i * 2.1f);
-		// a flame: a soft teardrop (a fan of six), brightest low in the middle, gone at its tip
-		const f32 pts[7][2] = {{0.0f, 0.0f},  {-w, 0.3f * h},          {-0.5f * w, 0.7f * h}, {sway, 1.05f * h},
-		                       {0.5f * w, 0.7f * h}, {w, 0.3f * h}, {0.0f, 0.0f}};
-		const int al[7] = {120, 110, 70, 0, 70, 110, 120};
-		const f32 mx = 0.0f, my = 0.35f * h;
-		for (int k = 0; k < 6; k++) {
-			acorner(x + rx * mx, y + my, z + rz * mx, 255, 150, 70, 210);
-			acorner(x + rx * pts[k][0], y + pts[k][1], z + rz * pts[k][0], 255, 80, 60, al[k]);
-			acorner(x + rx * pts[k + 1][0], y + pts[k + 1][1], z + rz * pts[k + 1][0], 255, 80, 60, al[k + 1]);
-		}
-		(void)ry;
+		flame(x, y, z, tall, h, 0.12f * tall * sinf(time * 6.0f + (f32)i * 2.1f));
 	}
 	GXEnd();
 }
@@ -870,7 +925,7 @@ void GoopPacket::draw()
 		drawDrops(kind);
 	}
 	// the flames last: soft, added to what is behind, not hiding what is behind them
-	bool fire = false;
+	bool fire = port_grass_fires && port_grass_fires(0, 0) > 0;
 	for (int i = 0; i < kPuddles && !fire; i++)
 		fire = s_puddles[i].on && s_puddles[i].kind == kFire;
 	if (fire) {
@@ -887,6 +942,7 @@ void GoopPacket::draw()
 		for (int i = 0; i < kPuddles; i++)
 			if (s_puddles[i].on && s_puddles[i].kind == kFire)
 				drawFlames(s_puddles[i], i);
+		drawGrassFires();
 		GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 	}
@@ -1038,7 +1094,7 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 // A goop weapon's numbers (set_weapon_stats): `every` seconds of it defeat an enemy, `range` how
 // long its goop lasts (times a minute), `burst` its puddles' size, `drop` its stream's blobs' (each
 // times its own); has 0: its own again. Returns 1 for a goop weapon.
-int PortGoopStats(int kind, int has, float every, float range, float burst, float drop)
+int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits)
 {
 	if (kind != kFire && kind != kElectric)
 		return 0;
@@ -1050,6 +1106,7 @@ int PortGoopStats(int kind, int has, float every, float range, float burst, floa
 	st.life   = range >= 0.1f ? range : 0.1f;
 	st.size   = burst >= 0.2f ? burst : 0.2f;
 	st.drop   = drop >= 0.2f ? drop : 0.2f;
+	st.hits   = hits >= 1 ? (hits <= 50 ? hits : 50) : 1;
 	return 1;
 }
 
@@ -1070,6 +1127,7 @@ bool PortGoopEmit(const TWaterEmitInfo& asked, int* made)
 	TWaterEmitInfo info(asked);
 	const s16 base = asked.mAttack.get();
 	info.mAttack.set((s16)(((base > 0 && base < 256) ? base : 1) | (s_kind << kTagShift)));
+	info.mPow.set(asked.mPow.get() * 1.4f); // further than water: not landing at Mario's feet as he walks
 	s_emitting = true;
 	*made      = gpModelWaterManager->emitRequest(info);
 	s_emitting = false;
@@ -1093,7 +1151,11 @@ bool PortGoopDropLands(int i, const TBGCheckData* ground)
 		addGoop(kind, p.x, p.y, p.z, ground);
 		return true;
 	}
-	washAt(p.x, p.y, p.z, w->mParticleSizeSOA[i] * 0.5f, kWash);
+	const int weapon = port_spray_tagged_drops ? ((unsigned short)w->mParticleAttackSOA[i] >> kTagShift) & 0xf : 0;
+	if (weapon == 4) // the SMG's shot: a good splash of it
+		washAt(p.x, p.y, p.z, 40.0f, 28.0f);
+	else
+		washAt(p.x, p.y, p.z, w->mParticleSizeSOA[i] * 0.7f, kWash);
 	return false;
 }
 
@@ -1122,6 +1184,6 @@ void PortGoopEntry()
 {
 	if (!s_haveView || !j3dSys.getDrawBuffer(0))
 		return;
-	if ((s_kind && port_spray_tagged_drops) || anyPuddle() || goopFlying())
+	if ((s_kind && port_spray_tagged_drops) || anyPuddle() || goopFlying() || (port_grass_fires && port_grass_fires(0, 0) > 0))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
 }
