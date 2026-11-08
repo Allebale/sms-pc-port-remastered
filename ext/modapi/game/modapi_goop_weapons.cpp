@@ -707,13 +707,15 @@ void makeElectric(u8* out, bool black = false)
 			const f32 blob   = smooth(0.63f, 0.66f, fbmp(u + 0.6f * rx, v + 0.6f * ry, 16u, 2, 3));
 			const f32 m      = streak > blob ? streak : blob;
 			const f32 g      = fbmp(u + 0.3f * rx, v, 17u, 2, 3);
-			// black goop: black where electric is teal (the yellow the same)
+			// black goop: black where electric is teal, grey where it is yellow
 			const f32 tr = black ? 10.0f + 16.0f * g : 25.0f + 20.0f * g, tg = black ? 10.0f + 15.0f * g : 175.0f + 30.0f * g,
 			          tb = black ? 12.0f + 18.0f * g : 175.0f + 25.0f * g;
 			const int i = y * kTex + x;
-			rgb[i * 3]     = tr + (245.0f - tr) * m;
-			rgb[i * 3 + 1] = tg + (235.0f - tg) * m;
-			rgb[i * 3 + 2] = tb + (30.0f - tb) * m;
+			// its streaks: yellow (black goop's grey)
+			const f32 sr = black ? 140.0f : 245.0f, sg = black ? 140.0f : 235.0f, sb = black ? 145.0f : 30.0f;
+			rgb[i * 3]     = tr + (sr - tr) * m;
+			rgb[i * 3 + 1] = tg + (sg - tg) * m;
+			rgb[i * 3 + 2] = tb + (sb - tb) * m;
 		}
 	store(out, rgb);
 }
