@@ -1,18 +1,20 @@
 // FLUDD's goop weapons (api->held_fludd->set_weapon SMS_SPRAY_FIRE_GOOP and SMS_SPRAY_ELECTRIC_GOOP,
 // a weapons mod's): FLUDD sprays as ever (its own model, animation, pump, sound and water), but its
 // stream is fire goop or electric goop, not water. Its drops carry the kind in their attack's upper
-// bits (as the spray weapons' do, modapi_spray_weapons.cpp), are drawn here as goop (glowing orange,
-// or yellow and crackling) instead of water (patch zzzzzzzzz-goop-weapons leaves them out of the
-// water's drawing), and where one lands on the ground it leaves goop: a puddle, or a puddle there
-// grown bigger. A drop on a wall or in water is just gone.
+// bits (as the spray weapons' do, modapi_spray_weapons.cpp), are drawn here as goop instead of water
+// (patch zzzzzzzzz-goop-weapons leaves them out of the water's drawing), and where one lands on the
+// ground it leaves goop: a puddle, or a puddle there grown bigger. A drop on a wall or in water is
+// just gone.
 //
-// The puddles are the port's own (any ground of any stage, not only the stage's goop surfaces):
-// drawn here, flat on the ground, burning (flames) or crackling (sparks). Mario stepping in one gets
-// hurt as by the game's own goop: fire throws him up burning (TMario::checkGraffitoFire), electric
-// shocks him (MARIO_STATUS_ELECTRIC_DAMAGE). Enemies (with "can defeat enemies") are burned or
-// shocked by the stream and by standing in a puddle: defeated after so many seconds of it. FLUDD's
-// water landing in a puddle washes it away bit by bit (and the bazooka's burst); left alone a puddle
-// lasts a minute (the mod's setting), shrinking away at its end.
+// The puddles are the port's own (any ground of any stage, not only the stage's goop surfaces),
+// drawn as the game's goop of the kind looks: electric marbled teal and yellow, fire orange with
+// red swirls and flames rising off it. Mario stepping in one is hurt as by the game's own goop: fire
+// throws him up burning (TMario::checkGraffitoFire), electric shocks him
+// (MARIO_STATUS_ELECTRIC_DAMAGE). Enemies (with "can defeat enemies") touched by the stream or
+// standing in a puddle are shocked (held trembling, Mario's shock sparks on them) or set burning
+// (the game's burning flames), then defeated. FLUDD's water landing in a puddle washes it away bit
+// by bit (and the bazooka's burst); left alone a puddle lasts a minute (the mod's setting),
+// shrinking away at its end.
 //
 // Without a weapons mod choosing one, nothing here does anything: no drop is tagged, none hidden.
 #include <JSystem/J3D/J3DGraphBase/J3DPacket.hpp>
@@ -33,6 +35,8 @@
 #include <Strategic/LiveManager.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/SoundEffects.hpp>
+#include <System/EmitterViewObj.hpp>
+#include <System/Particles.hpp>
 #include "port_ext.h"
 #include "port_framerate.h"
 
@@ -74,17 +78,20 @@ struct Puddle {
 };
 const int kPuddles = 64;
 Puddle s_puddles[kPuddles];
-const f32 kStartSize = 34.0f, kMostSize = 190.0f, kGrow = 1.8f, kWash = 0.9f, kGone = 12.0f;
+const f32 kStartSize = 95.0f, kMostSize = 380.0f, kGrow = 5.0f, kWash = 1.6f, kGone = 14.0f;
 const f32 kLife = 60.0f, kFade = 4.0f; // seconds, and the last of them shrinking away
 
-// enemies burned or shocked lately: since when, and the last moment
-struct Burn {
+// enemies touched by the goop: shocked (held still, trembling, sparks on them) or burning (the
+// burning flames of the game's on them) for the kind's seconds, then defeated
+struct Zap {
 	TSmallEnemy* e;
-	f32 start, last;
+	int kind;
+	f32 start;
+	f32 bx, by, bz;               // where it was shocked (held there)
+	JGeometry::TVec3<f32> centre; // the sparks' place (on it)
 };
-const int kBurns = 24;
-Burn s_burns[kBurns];
-const f32 kBurnGap = 0.5f; // out of it longer than this: counted afresh
+const int kZaps = 24;
+Zap s_zaps[kZaps];
 
 u32 s_seed = 777u;
 f32 random01()
@@ -121,7 +128,7 @@ void addGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* ground)
 		if (!p.on || p.kind != kind || fabsf(p.y - y) > 50.0f)
 			continue;
 		const f32 dx = p.x - x, dz = p.z - z, d = dx * dx + dz * dz;
-		if (d < p.r * p.r * 0.85f && d < bestD)
+		if (d < p.r * p.r && d < bestD)
 			best = &p, bestD = d;
 	}
 	if (best) {
@@ -171,37 +178,69 @@ void washAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
 	}
 }
 
-Burn* burnOf(TSmallEnemy* e)
-{
-	Burn* free = 0;
-	for (int i = 0; i < kBurns; i++) {
-		if (s_burns[i].e == e)
-			return &s_burns[i];
-		if (!free && (!s_burns[i].e || s_time - s_burns[i].last > 2.0f))
-			free = &s_burns[i];
-	}
-	if (free) {
-		free->e     = e;
-		free->start = free->last = s_time;
-	}
-	return free;
-}
-
-// an enemy in the stream or the goop this moment: defeated after its seconds of it
+// an enemy in the stream or the goop: shocked or set burning (once), defeated when that is over
 void burn(TSmallEnemy* e, int kind)
 {
 	if (!s_defeat || !e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return;
-	Burn* b = burnOf(e);
-	if (!b)
+	Zap* free = 0;
+	for (int i = 0; i < kZaps; i++) {
+		if (s_zaps[i].e == e)
+			return; // already
+		if (!free && !s_zaps[i].e)
+			free = &s_zaps[i];
+	}
+	if (!free)
 		return;
-	if (s_time - b->last > kBurnGap)
-		b->start = s_time;
-	b->last = s_time;
-	if (s_time - b->start >= statsOf(kind).defeat) {
-		b->e = 0;
-		fprintf(stderr, "[goop] an enemy %s\n", kind == kFire ? "burned" : "shocked");
-		e->kill(); // as a stomp: its own defeat, coins and all
+	free->e     = e;
+	free->kind  = kind;
+	free->start = s_time;
+	free->bx = e->mPosition.x, free->by = e->mPosition.y, free->bz = e->mPosition.z;
+	free->centre = e->mPosition;
+	SMSGetMSound()->startSoundActor(kind == kFire ? MSD_SE_EF_FIRE : MSD_SE_EN_DENNOKO_ELEC_DOWN, &e->mPosition, 0, nullptr, 0, 4);
+	fprintf(stderr, "[goop] an enemy %s\n", kind == kFire ? "set burning" : "shocked");
+}
+
+// each frame: the shocked held still and trembling with sparks, the burning in flames; defeated at the end
+void zaps()
+{
+	for (int i = 0; i < kZaps; i++) {
+		Zap& z = s_zaps[i];
+		if (!z.e)
+			continue;
+		TSmallEnemy* e = z.e;
+		if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN)) {
+			z.e = 0;
+			continue;
+		}
+		const f32 size = e->mScaling.y > 0.1f ? e->mScaling.y : 1.0f;
+		if (s_time - z.start >= statsOf(z.kind).defeat) {
+			z.e = 0;
+			if (gpMarioParticleManager)
+				gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &e->mPosition, 0, nullptr); // a puff of smoke
+			e->kill(); // its own defeat, coins and all
+			continue;
+		}
+		if (z.kind == kElectric) { // held where it was shocked, trembling
+			const f32 j = 3.0f * size;
+			e->mPosition.x = z.bx + (random01() - 0.5f) * 2.0f * j;
+			e->mPosition.y = z.by;
+			e->mPosition.z = z.bz + (random01() - 0.5f) * 2.0f * j;
+		}
+		z.centre.x = e->mPosition.x;
+		z.centre.y = e->mPosition.y + 40.0f * size;
+		z.centre.z = e->mPosition.z;
+		if (!gpMarioParticleManager)
+			continue;
+		if (z.kind == kElectric) { // Mario's own shock's sparks
+			gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_M_BIRI_A, &z.centre, 1, e);
+			gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_M_BIRI_C, &z.centre, 1, e);
+			gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_M_BIRI_B, &z.centre, 1, e);
+		} else { // the game's burning flames (a burning Strollin' Stu's)
+			gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_MOE_FIRE_A, &e->mPosition, 1, e);
+			gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_MOE_FIRE_B, &e->mPosition, 1, e);
+			gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_MOE_FIRE_D, &e->mPosition, 1, e);
+		}
 	}
 }
 
@@ -286,13 +325,14 @@ bool anyPuddle()
 void stageSetup()
 {
 	memset(s_puddles, 0, sizeof s_puddles);
-	memset(s_burns, 0, sizeof s_burns);
+	memset(s_zaps, 0, sizeof s_zaps);
 }
 
 void afterMovement()
 {
 	const f32 dt = port_frame_scale() / 30.0f;
 	s_time += dt;
+	zaps();
 	bool any = false;
 	for (int i = 0; i < kPuddles; i++) {
 		Puddle& p = s_puddles[i];
@@ -326,6 +366,12 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 }
 
 // ---- drawing: the stream's goop and the puddles, a packet of the scene's opaque draw buffer ----
+//
+// Both kinds are textured as the game's own goop of that kind looks: electric goop marbled teal
+// and yellow, glossy; fire goop orange with darker red swirls, flames rising off it (soft, see-
+// through, added to what is behind). The textures are made here once (tileable, 128 square), laid
+// on the ground by its own place in the world (overlapping puddles join up seamlessly), and flow
+// slowly.
 
 Mtx s_view;
 bool s_haveView;
@@ -336,35 +382,197 @@ public:
 };
 GoopPacket s_packet;
 
+const int kTex = 128;
+u8 s_texElectric[kTex * kTex * 4] __attribute__((aligned(32)));
+u8 s_texFire[kTex * kTex * 4] __attribute__((aligned(32)));
+GXTexObj s_objElectric, s_objFire;
+bool s_madeTextures;
+const f32 kTile = 300.0f; // world units a texture covers
+
+// tileable value noise (period cells across the texture)
+f32 lattice(int x, int y, int period, u32 salt)
+{
+	x = ((x % period) + period) % period;
+	y = ((y % period) + period) % period;
+	u32 h = (u32)x * 374761393u + (u32)y * 668265263u + salt * 2246822519u;
+	h     = (h ^ (h >> 13)) * 1274126177u;
+	return (f32)((h ^ (h >> 16)) & 0xFFFF) / 65535.0f;
+}
+f32 vnoise(f32 x, f32 y, int period, u32 salt)
+{
+	const int ix = (int)floorf(x), iy = (int)floorf(y);
+	f32 fx = x - (f32)ix, fy = y - (f32)iy;
+	fx = fx * fx * (3.0f - 2.0f * fx);
+	fy = fy * fy * (3.0f - 2.0f * fy);
+	const f32 a = lattice(ix, iy, period, salt), b = lattice(ix + 1, iy, period, salt);
+	const f32 c = lattice(ix, iy + 1, period, salt), d = lattice(ix + 1, iy + 1, period, salt);
+	return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy;
+}
+// u, v in 0..1 (tileable): four octaves
+f32 fbm(f32 u, f32 v, u32 salt)
+{
+	f32 sum = 0.0f, amp = 0.5f;
+	int period = 3;
+	for (int o = 0; o < 4; o++) {
+		sum += amp * vnoise(u * (f32)period, v * (f32)period, period, salt + (u32)o * 17u);
+		amp *= 0.5f;
+		period *= 2;
+	}
+	return sum / 0.9375f;
+}
+f32 smooth(f32 a, f32 b, f32 x)
+{
+	f32 t = (x - a) / (b - a);
+	t     = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+	return t * t * (3.0f - 2.0f * t);
+}
+
+// a texture into the GameCube's RGBA8 layout (4x4 blocks: alpha and red, then green and blue)
+void store(u8* out, const f32* rgb)
+{
+	for (int by = 0; by < kTex / 4; by++)
+		for (int bx = 0; bx < kTex / 4; bx++) {
+			u8* block = out + ((by * (kTex / 4) + bx) * 64);
+			for (int k = 0; k < 16; k++) {
+				const int x = bx * 4 + (k & 3), y = by * 4 + (k >> 2);
+				const f32* c = rgb + (y * kTex + x) * 3;
+				u8 v[3];
+				for (int ch = 0; ch < 3; ch++)
+					v[ch] = (u8)(c[ch] < 0.0f ? 0 : c[ch] > 255.0f ? 255 : (int)c[ch]);
+				block[k * 2]          = 255;
+				block[k * 2 + 1]      = v[0];
+				block[32 + k * 2]     = v[1];
+				block[32 + k * 2 + 1] = v[2];
+			}
+		}
+}
+
+// marbled goop: swirled bands of two colours, glossy (a light's shine on its ripples)
+void makeGoop(u8* out, bool electric)
+{
+	static f32 h[kTex * kTex], rgb[kTex * kTex * 3];
+	static f32 mix[kTex * kTex];
+	for (int y = 0; y < kTex; y++)
+		for (int x = 0; x < kTex; x++) {
+			const f32 u = (f32)x / kTex, v = (f32)y / kTex;
+			const f32 qx = fbm(u, v, electric ? 11u : 31u), qy = fbm(u + 0.37f, v + 0.11f, electric ? 12u : 32u);
+			const f32 rx = fbm(u + 0.9f * qx, v + 0.9f * qy, electric ? 13u : 33u);
+			const f32 ry = fbm(u + 0.9f * qx + 0.2f, v + 0.9f * qy + 0.6f, electric ? 14u : 34u);
+			const f32 f  = fbm(u + 0.8f * rx, v + 0.8f * ry, electric ? 15u : 35u);
+			const f32 band = 0.5f + 0.5f * sinf(f * (electric ? 16.0f : 12.0f) + qx * 3.0f);
+			mix[y * kTex + x] = electric ? smooth(0.74f, 0.86f, band) : smooth(0.62f, 0.9f, band);
+			h[y * kTex + x]   = f + 0.08f * mix[y * kTex + x];
+		}
+	const f32 lx = -0.45f, ly = -0.55f, lz = 0.70f; // the light (normalised below)
+	const f32 ll = sqrtf(lx * lx + ly * ly + lz * lz);
+	for (int y = 0; y < kTex; y++)
+		for (int x = 0; x < kTex; x++) {
+			const int i = y * kTex + x;
+			const f32 dx = h[y * kTex + ((x + 1) & (kTex - 1))] - h[y * kTex + ((x + kTex - 1) & (kTex - 1))];
+			const f32 dy = h[((y + 1) & (kTex - 1)) * kTex + x] - h[((y + kTex - 1) & (kTex - 1)) * kTex + x];
+			f32 nx = -dx * 4.5f, ny = -dy * 4.5f, nz = 1.0f;
+			const f32 nl = sqrtf(nx * nx + ny * ny + nz * nz);
+			nx /= nl, ny /= nl, nz /= nl;
+			const f32 diffuse = nx * lx / ll + ny * ly / ll + nz * lz / ll;
+			// the shine: halfway between the light and straight up (the viewer)
+			f32 hx = lx / ll, hy = ly / ll, hz = lz / ll + 1.0f;
+			const f32 hl = sqrtf(hx * hx + hy * hy + hz * hz);
+			f32 sp = (nx * hx + ny * hy + nz * hz) / hl;
+			sp = sp > 0.0f ? powf(sp, electric ? 70.0f : 50.0f) : 0.0f;
+			const f32 m = mix[i], g = fbm((f32)x / kTex + 0.5f, (f32)y / kTex, 77u);
+			f32 r, gr, b;
+			if (electric) { // teal (lighter and darker) and yellow
+				const f32 tr = 15.0f + 25.0f * g, tg = 140.0f + 60.0f * g, tb = 140.0f + 50.0f * g;
+				r = tr + (235.0f - tr) * m, gr = tg + (225.0f - tg) * m, b = tb + (25.0f - tb) * m;
+			} else { // orange, darker red swirls, a lighter yellow-orange here and there
+				const f32 lite = smooth(0.55f, 0.8f, g);
+				const f32 or_ = 255.0f, og = 120.0f + 40.0f * lite, ob = 20.0f + 20.0f * lite;
+				r = or_ + (205.0f - or_) * m, gr = og + (55.0f - og) * m, b = ob + (12.0f - ob) * m;
+			}
+			const f32 shade = 0.8f + 0.25f * diffuse;
+			const f32 shine = sp * (electric ? 260.0f : 120.0f);
+			rgb[i * 3]     = r * shade + shine;
+			rgb[i * 3 + 1] = gr * shade + shine;
+			rgb[i * 3 + 2] = b * shade + shine;
+		}
+	store(out, rgb);
+}
+
+void makeTextures()
+{
+	if (s_madeTextures)
+		return;
+	makeGoop(s_texElectric, true);
+	makeGoop(s_texFire, false);
+	GXInitTexObj(&s_objElectric, s_texElectric, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
+	GXInitTexObjLOD(&s_objElectric, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+	GXInitTexObj(&s_objFire, s_texFire, kTex, kTex, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
+	GXInitTexObjLOD(&s_objFire, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+	s_madeTextures = true;
+}
+
 void corner(f32 x, f32 y, f32 z, int r, int g, int b)
 {
 	GXPosition3f32(x, y, z);
 	GXColor4u8((u8)(r < 0 ? 0 : r > 255 ? 255 : r), (u8)(g < 0 ? 0 : g > 255 ? 255 : g), (u8)(b < 0 ? 0 : b > 255 ? 255 : b), 255);
 }
+// a textured corner: its colour multiplies the texture
+void tcorner(f32 x, f32 y, f32 z, int shade, f32 u, f32 v)
+{
+	GXPosition3f32(x, y, z);
+	const u8 s = (u8)(shade < 0 ? 0 : shade > 255 ? 255 : shade);
+	GXColor4u8(s, s, s, 255);
+	GXTexCoord2f32(u, v);
+}
+// a see-through corner (the flames)
+void acorner(f32 x, f32 y, f32 z, int r, int g, int b, int a)
+{
+	GXPosition3f32(x, y, z);
+	GXColor4u8((u8)r, (u8)g, (u8)b, (u8)(a < 0 ? 0 : a > 255 ? 255 : a));
+}
 
-// the stream's drops: each a small blob of goop, longer along its flight
-void drawDrops()
+f32 flow(int kind) { return (f32)s_frame / 60.0f * (kind == kFire ? 10.0f : 5.0f); } // the goop's slow flow
+
+void textured(int kind)
+{
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+	GXLoadTexObj(kind == kFire ? &s_objFire : &s_objElectric, GX_TEXMAP0);
+	GXSetNumTexGens(1);
+	GXSetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+	GXSetTevOp(GX_TEVSTAGE0, GX_MODULATE);
+}
+
+// the stream's drops of one kind: each a small blob of goop, longer along its flight
+void drawDrops(int kind)
 {
 	TModelWaterManager* w = gpModelWaterManager;
 	if (!w || !port_spray_tagged_drops)
 		return;
 	int n = 0;
 	for (int i = 0; i < (int)w->mParticleCount; i++)
-		if ((w->mParticleFlagSOA[i] & 0xf) == 1 && w->mParticleLifetimeSOA[i] > 0.0f && dropKind(i))
+		if ((w->mParticleFlagSOA[i] & 0xf) == 1 && w->mParticleLifetimeSOA[i] > 0.0f && dropKind(i) == kind)
 			n++;
 	if (!n)
 		return;
 	n = n < 600 ? n : 600;
+	textured(kind);
+	const f32 fl0 = flow(kind);
 	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * 24));
 	int done = 0;
 	for (int i = 0; i < (int)w->mParticleCount && done < n; i++) {
-		const int kind = (w->mParticleFlagSOA[i] & 0xf) == 1 && w->mParticleLifetimeSOA[i] > 0.0f ? dropKind(i) : 0;
-		if (!kind)
+		if ((w->mParticleFlagSOA[i] & 0xf) != 1 || w->mParticleLifetimeSOA[i] <= 0.0f || dropKind(i) != kind)
 			continue;
 		done++;
 		const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
 		const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
-		const f32 r = w->mParticleSizeSOA[i] * 0.42f * statsOf(kind).drop;
+		const f32 r = w->mParticleSizeSOA[i] * 0.5f * statsOf(kind).drop;
 		f32 fx = v.x, fy = v.y, fz = v.z;
 		f32 fl = sqrtf(fx * fx + fy * fy + fz * fz);
 		if (fl < 1e-3f)
@@ -385,18 +593,16 @@ void drawDrops()
 			ring[k][1] = p.y + (ay * c + by * s) * r;
 			ring[k][2] = p.z + (az * c + bz * s) * r;
 		}
-		const f32 flick = 0.8f + 0.2f * sinf((f32)(s_frame + i * 7) * 0.9f);
-		int mr, mg, mb, er, eg, eb; // its middle's colour and its tips'
-		if (kind == kFire)
-			mr = 255, mg = (int)(150 * flick), mb = 30, er = 220, eg = 60, eb = 10;
-		else
-			mr = 255, mg = 250, mb = (int)(150 * flick), er = 200, eg = 170, eb = 20;
+		// the texture over it, a piece of it each drop (by its place and number)
+		const f32 u0 = (f32)(i % 7) * 0.13f + fl0 / kTile, v0 = (f32)(i % 5) * 0.17f;
+		const f32 tu[2] = {u0, u0 + 0.25f}, ru[4] = {u0 + 0.12f, u0 + 0.12f, u0 + 0.12f, u0 + 0.12f};
+		const f32 rv[4] = {v0, v0 + 0.06f, v0 + 0.12f, v0 + 0.18f};
 		for (int t = 0; t < 2; t++)
 			for (int k = 0; k < 4; k++) {
 				const int j = (k + 1) & 3;
-				corner(tip[t][0], tip[t][1], tip[t][2], er, eg, eb);
-				corner(ring[k][0], ring[k][1], ring[k][2], mr, mg, mb);
-				corner(ring[j][0], ring[j][1], ring[j][2], mr, mg, mb);
+				tcorner(tip[t][0], tip[t][1], tip[t][2], 200, tu[t], v0 + 0.09f);
+				tcorner(ring[k][0], ring[k][1], ring[k][2], 255, ru[k], rv[k]);
+				tcorner(ring[j][0], ring[j][1], ring[j][2], 255, ru[j], rv[j]);
 			}
 	}
 	GXEnd();
@@ -414,7 +620,7 @@ void basis(const Puddle& p, f32* t, f32* b)
 	b[0] = p.ny * tz - p.nz * ty, b[1] = p.nz * tx - p.nx * tz, b[2] = p.nx * ty - p.ny * tx;
 }
 
-// a puddle: a round of goop with a wavy edge, flat on the ground, its middle glowing
+// a puddle: a round of the goop's texture with a wavy edge, flat on the ground (textured() set)
 void drawPuddle(const Puddle& p, int index)
 {
 	const f32 r = sizeNow(p);
@@ -425,99 +631,69 @@ void drawPuddle(const Puddle& p, int index)
 	const f32 lift = 1.5f + 0.04f * (f32)index; // over the ground (and over each other)
 	const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
 	const f32 time = (f32)s_frame / 60.0f;
-	const f32 pulse = 0.85f + 0.15f * sinf(time * (p.kind == kFire ? 9.0f : 23.0f) + p.seed);
-	int ir, ig, ib, orr, og, ob;
-	if (p.kind == kFire)
-		ir = (int)(255 * pulse), ig = (int)(130 * pulse), ib = 20, orr = 120, og = 25, ob = 10;
-	else {
-		const bool flash = ((s_frame / 3 + (int)p.seed) % 11) == 0;
-		ir = flash ? 255 : (int)(235 * pulse), ig = flash ? 255 : (int)(215 * pulse), ib = flash ? 200 : 40, orr = 70, og = 60, ob = 15;
-	}
-	const int kAround = 24;
+	// electric goop's glow throbs; fire goop's flickers
+	const f32 pulse = p.kind == kFire ? 0.93f + 0.07f * sinf(time * 9.0f + p.seed) : 0.86f + 0.14f * sinf(time * 5.0f + p.seed);
+	const int shade = (int)(255.0f * pulse);
+	const f32 fl = flow(p.kind);
+	const int kAround = 28;
 	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, (u16)(kAround + 2));
-	corner(cx, cy, cz, ir, ig, ib);
+	tcorner(cx, cy, cz, shade, (cx + fl) / kTile, cz / kTile);
 	for (int k = 0; k <= kAround; k++) {
 		const f32 a  = 6.2831853f * (f32)(k % kAround) / kAround;
-		const f32 rr = r * (1.0f + 0.14f * sinf(3.0f * a + p.seed) + 0.08f * sinf(5.0f * a + p.seed * 1.7f) + 0.03f * sinf(time * 2.0f + a * 4.0f));
+		const f32 rr = r * (1.0f + 0.12f * sinf(3.0f * a + p.seed) + 0.07f * sinf(5.0f * a + p.seed * 1.7f) + 0.04f * sinf(9.0f * a + p.seed * 2.3f));
 		const f32 ca = cosf(a) * rr, sa = sinf(a) * rr;
-		corner(cx + t[0] * ca + b[0] * sa, cy + t[1] * ca + b[1] * sa, cz + t[2] * ca + b[2] * sa, orr, og, ob);
+		const f32 x = cx + t[0] * ca + b[0] * sa, y = cy + t[1] * ca + b[1] * sa, z = cz + t[2] * ca + b[2] * sa;
+		tcorner(x, y, z, shade - 25, (x + fl) / kTile, z / kTile);
 	}
 	GXEnd();
 }
 
-// fire: flames rising off it, each two crossed tongues, flickering
-void drawFlames(const Puddle& p)
+f32 hash01(u32 h)
+{
+	h = (h ^ 61u) ^ (h >> 16);
+	h *= 9u;
+	h = h ^ (h >> 4);
+	h *= 0x27d4eb2du;
+	h = h ^ (h >> 15);
+	return (f32)(h & 0xFFFF) / 65535.0f;
+}
+
+// fire: flames rising off it, soft and see-through, each one flaring up and dying away somewhere
+// new; turned to face the view
+void drawFlames(const Puddle& p, int index)
 {
 	const f32 r = sizeNow(p);
-	if (r < 6.0f)
+	if (r < 10.0f)
 		return;
 	f32 t[3], b[3];
 	basis(p, t, b);
-	const int count = 3 + (int)(r / 30.0f);
+	const f32 rx = s_view[0][0], ry = s_view[0][1], rz = s_view[0][2]; // the view's right
+	const int count = 2 + (int)(r / 45.0f);
 	const f32 time  = (f32)s_frame / 60.0f;
-	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(count * 12));
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(count * 18));
 	for (int i = 0; i < count; i++) {
-		const f32 a  = p.seed * 3.1f + (f32)i * 2.39996f; // spread over it (the golden angle)
-		const f32 d  = r * 0.7f * sqrtf(((f32)i + 0.5f) / (f32)count);
+		const f32 phase = time * 1.3f + (f32)i * 0.618f + p.seed;
+		const int cycle = (int)floorf(phase);
+		const f32 life  = phase - (f32)cycle;
+		const u32 key   = (u32)index * 977u + (u32)i * 131u + (u32)cycle * 7919u;
+		const f32 a = hash01(key) * 6.2831853f, d = r * 0.8f * sqrtf(hash01(key + 1u));
 		const f32 ox = cosf(a) * d, oz = sinf(a) * d;
 		const f32 x = p.x + t[0] * ox + b[0] * oz, y = p.y + t[1] * ox + b[1] * oz, z = p.z + t[2] * ox + b[2] * oz;
-		const f32 h = (22.0f + r * 0.18f) * (0.7f + 0.3f * sinf(time * 11.0f + (f32)i * 1.7f + p.seed));
-		const f32 w = h * 0.28f;
-		const f32 sway = 3.0f * sinf(time * 7.0f + (f32)i);
-		for (int c = 0; c < 2; c++) {
-			const f32 wx = c ? w : 0.0f, wz = c ? 0.0f : w;
-			// a tongue: its foot wide and low, its tip up high (a diamond), red to yellow
-			corner(x - wx, y + h * 0.3f, z - wz, 255, 90, 0);
-			corner(x + wx, y + h * 0.3f, z + wz, 255, 90, 0);
-			corner(x + sway, y + h, z, 255, 230, 90);
-			corner(x - wx, y + h * 0.3f, z - wz, 255, 90, 0);
-			corner(x + wx, y + h * 0.3f, z + wz, 255, 90, 0);
-			corner(x, y, z, 230, 50, 0);
+		const f32 tall = (45.0f + r * 0.12f) * (0.7f + 0.6f * hash01(key + 2u));
+		const f32 h    = tall * sinf(3.14159f * life);
+		const f32 w    = tall * 0.32f;
+		const f32 sway = 0.12f * tall * sinf(time * 6.0f + (f32)i * 2.1f);
+		// a flame: a soft teardrop (a fan of six), brightest low in the middle, gone at its tip
+		const f32 pts[7][2] = {{0.0f, 0.0f},  {-w, 0.3f * h},          {-0.5f * w, 0.7f * h}, {sway, 1.05f * h},
+		                       {0.5f * w, 0.7f * h}, {w, 0.3f * h}, {0.0f, 0.0f}};
+		const int al[7] = {120, 110, 70, 0, 70, 110, 120};
+		const f32 mx = 0.0f, my = 0.35f * h;
+		for (int k = 0; k < 6; k++) {
+			acorner(x + rx * mx, y + my, z + rz * mx, 255, 150, 70, 210);
+			acorner(x + rx * pts[k][0], y + pts[k][1], z + rz * pts[k][0], 255, 80, 60, al[k]);
+			acorner(x + rx * pts[k + 1][0], y + pts[k + 1][1], z + rz * pts[k + 1][0], 255, 80, 60, al[k + 1]);
 		}
-	}
-	GXEnd();
-}
-
-// electric: sparks crackling over it, zigzags made afresh every few frames
-void drawSparks(const Puddle& p)
-{
-	const f32 r = sizeNow(p);
-	if (r < 6.0f)
-		return;
-	f32 t[3], b[3];
-	basis(p, t, b);
-	const int count = 2 + (int)(r / 45.0f);
-	const int kSteps = 6;
-	u32 seed = (u32)(p.seed * 1000.0f) + (u32)(s_frame / 4) * 2654435761u;
-	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(count * kSteps * 12));
-	for (int i = 0; i < count; i++) {
-		f32 pts[kSteps + 1][3];
-		for (int s = 0; s <= kSteps; s++) {
-			seed = seed * 1664525u + 1013904223u;
-			const f32 ra = (f32)((seed >> 8) & 0xFFFF) / 65535.0f;
-			seed = seed * 1664525u + 1013904223u;
-			const f32 rb = (f32)((seed >> 8) & 0xFFFF) / 65535.0f;
-			const f32 a = ra * 6.2831853f, d = r * 0.8f * sqrtf(rb);
-			const f32 ox = cosf(a) * d, oz = sinf(a) * d, up = 4.0f + 14.0f * rb;
-			pts[s][0] = p.x + t[0] * ox + b[0] * oz + p.nx * up;
-			pts[s][1] = p.y + t[1] * ox + b[1] * oz + p.ny * up;
-			pts[s][2] = p.z + t[2] * ox + b[2] * oz + p.nz * up;
-		}
-		for (int s = 0; s < kSteps; s++) {
-			const f32* a = pts[s];
-			const f32* c = pts[s + 1];
-			// a thin ribbon, standing up and lying flat (seen from the side and from above)
-			const f32 hw = 1.6f;
-			for (int k = 0; k < 2; k++) {
-				const f32 ux = k ? hw : 0.0f, uy = k ? 0.0f : hw, uz = k ? hw : 0.0f;
-				corner(a[0] - ux, a[1] - uy, a[2] - uz, 255, 255, 170);
-				corner(a[0] + ux, a[1] + uy, a[2] + uz, 255, 255, 230);
-				corner(c[0] + ux, c[1] + uy, c[2] + uz, 255, 255, 230);
-				corner(a[0] - ux, a[1] - uy, a[2] - uz, 255, 255, 170);
-				corner(c[0] + ux, c[1] + uy, c[2] + uz, 255, 255, 230);
-				corner(c[0] - ux, c[1] - uy, c[2] - uz, 255, 255, 170);
-			}
-		}
+		(void)ry;
 	}
 	GXEnd();
 }
@@ -526,41 +702,56 @@ void GoopPacket::draw()
 {
 	if (!s_haveView)
 		return;
+	makeTextures();
 	s_frame++;
 	Mtx identity;
 	MTXIdentity(identity);
 	GXSetCurrentMtx(GX_PNMTX0);
 	GXLoadPosMtxImm(s_view, GX_PNMTX0);
 	GXLoadNrmMtxImm(identity, GX_PNMTX0);
-	GXClearVtxDesc();
-	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
-	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
-	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
-	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 	GXSetNumChans(1);
 	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_VTX, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
 	GXSetChanCtrl(GX_COLOR1A1, GX_FALSE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
-	GXSetNumTexGens(0);
 	GXSetNumIndStages(0);
 	GXSetNumTevStages(1);
-	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
-	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
 	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 	GXSetCullMode(GX_CULL_NONE);
 	GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetFog(GX_FOG_NONE, 0.0f, 0.0f, 0.0f, 0.0f, (GXColor){0, 0, 0, 0});
-	for (int i = 0; i < kPuddles; i++)
-		if (s_puddles[i].on)
-			drawPuddle(s_puddles[i], i);
-	for (int i = 0; i < kPuddles; i++)
-		if (s_puddles[i].on) {
-			if (s_puddles[i].kind == kFire)
-				drawFlames(s_puddles[i]);
-			else
-				drawSparks(s_puddles[i]);
+	for (int kind = kFire; kind <= kElectric; kind++) {
+		bool any = false;
+		for (int i = 0; i < kPuddles && !any; i++)
+			any = s_puddles[i].on && s_puddles[i].kind == kind;
+		if (any) {
+			textured(kind);
+			for (int i = 0; i < kPuddles; i++)
+				if (s_puddles[i].on && s_puddles[i].kind == kind)
+					drawPuddle(s_puddles[i], i);
 		}
-	drawDrops();
+		drawDrops(kind);
+	}
+	// the flames last: soft, added to what is behind, not hiding what is behind them
+	bool fire = false;
+	for (int i = 0; i < kPuddles && !fire; i++)
+		fire = s_puddles[i].on && s_puddles[i].kind == kFire;
+	if (fire) {
+		GXClearVtxDesc();
+		GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+		GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+		GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+		GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+		GXSetNumTexGens(0);
+		GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+		GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_NOOP);
+		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
+		for (int i = 0; i < kPuddles; i++)
+			if (s_puddles[i].on && s_puddles[i].kind == kFire)
+				drawFlames(s_puddles[i], i);
+		GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	}
 }
 
 PortExtension s_extension;
