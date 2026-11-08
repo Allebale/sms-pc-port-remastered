@@ -248,11 +248,16 @@ static void waterShadows(float (*view)[4], const f32 sun[3])
 		if (weapon == 0)
 			back = 0.8f, ahead = 0.3f;
 		else if (weapon == 4)
-			back = 6.0f, ahead = 1.0f, r *= 0.8f;
+			r *= 0.8f; // (its streak's length below)
 		// its flight, flattened across the sun
 		const f32 along = vel.x * sun[0] + vel.y * sun[1] + vel.z * sun[2];
 		f32 dx = vel.x - sun[0] * along, dy = vel.y - sun[1] * along, dz = vel.z - sun[2] * along;
 		f32 dl = sqrtf(dx * dx + dy * dy + dz * dz);
+		if (weapon == 4 && dl > 1e-3f) {
+			// the SMG's shots fly fast: a short streak of a set length, not its whole flight
+			const f32 len = r * 6.0f < 60.0f ? 60.0f : r * 6.0f > 160.0f ? 160.0f : r * 6.0f;
+			back = len * 0.85f / dl, ahead = len * 0.15f / dl;
+		}
 		if (dl * (back + ahead) > 1500.0f) {
 			const f32 k = 1500.0f / (dl * (back + ahead));
 			back *= k, ahead *= k;
