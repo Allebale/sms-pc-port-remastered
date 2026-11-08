@@ -337,6 +337,13 @@ uint32_t pixMetricRead();
 // ---------------------------------------------------------------- textures (gx_texture.cpp)
 struct TexKey;
 unsigned bindTextureMap(int map, float* outW, float* outH);  // returns GL name
+// Goop layers' colours (GXPC_SetGoopTint), by their goop map's data: whether
+// draws sampling `mask` are tinted now (never while GXPC_SetRawTextures is on:
+// the goop's own counting and stamping passes); and, for a draw that is, its
+// tint map bound on texture unit `unit` (a clear one when it is gone), giving
+// 1 over the goop's typical lightness.
+bool goopTinted(const void* mask);
+float bindGoopTint(const void* mask, int unit);
 // HDR output (gx_hdr.cpp). Presenting draws into g_presentFbo: 0 (the window),
 // or, while HDR is on, the texture Direct3D turns into the HDR picture. Direct3D's swap chain is only
 // ever used on the game's thread, the one that runs the window (DXGI may wait for it), so a frame is:
@@ -432,6 +439,7 @@ struct ShaderProgram {
     int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
         uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc, uShell;
+    int uGoopRef;  // a goop layer's colours (GXPC_SetGoopTint): -1 for every other program
     mutable UniformCache uc;
 };
 bool shaderHasEarlyFragmentTests();
@@ -458,6 +466,13 @@ bool characterLookup(const void* list, uint32_t size);  // Round Shadows Under C
 bool ladderLookup(const void* list, uint32_t size, float back[3]);  // 3D Ladders
 // The texture unit the sun's shadow map is bound on (gx_render.cpp), past the game's eight.
 const int kShadowUnit = 10;
+// The texture map whose goop layer the current state's program tints
+// (GXPC_SetGoopTint), as the last shaderForCurrentState saw it; -1 none.
+int goopMapNow();
+// The texture unit a goop layer's tint map is bound on (beside u_tex's eight). Shared with
+// kGrassMaskUnit: each binds its own texture there right before it is used (bindGoopTint
+// directly, the AO trace directly), so the two never meet.
+const int kGoopUnit = 8;
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)
 
 // ---------------------------------------------------------------- overlay panels
@@ -476,6 +491,7 @@ enum OverlaySlot {
     OVERLAY_EXT_BOARD,
     OVERLAY_EXT_SCREEN,  // a colour over the window
     OVERLAY_AUTOSAVE,    // auto save's indicator (gx_autosave_overlay.cpp)
+    OVERLAY_COOP,        // split-screen co-op's card (gx_coop_overlay.cpp)
     OVERLAY_EXT_LABEL,   // names over players: GXPC_MAX_LABELS slots from here
     OVERLAY_EXT_MARKER = OVERLAY_EXT_LABEL + 8,  // a server mod's markers: GXPC_MAX_MARKERS slots
     OVERLAY_SLOTS = OVERLAY_EXT_MARKER + 8

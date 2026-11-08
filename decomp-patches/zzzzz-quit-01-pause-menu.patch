@@ -1,7 +1,7 @@
 Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA (or in its place in Delfino Plaza): a picture made like EXIT AREA's, kept outside TPauseMenu2 (Eclipse's code reads its fields); picking it opens the quit prompt over the menu
 --- a/src/GC2D/PauseMenu2.cpp
 +++ b/src/GC2D/PauseMenu2.cpp
-@@ -20,6 +20,7 @@
+@@ -23,6 +23,7 @@
  #include <JSystem/JUtility/JUTColor.hpp>
  #include <JSystem/JUtility/JUTRect.hpp>
  #include <JSystem/JUtility/JUTResFont.hpp>
@@ -9,7 +9,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  #include <MarioUtil/RumbleMgr.hpp>
  #include <MSound/MSound.hpp>
  #include <System/Application.hpp>
-@@ -35,6 +36,7 @@
+@@ -38,6 +39,7 @@
  extern JPAEmitterManager* gpEmitterManager4D2;
  
  #ifdef TARGET_PC
@@ -17,7 +17,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  #include "port_pause_tracker.h"
  #include "port_savestate.h"
  #include "port_savestate_menu.h"
-@@ -220,6 +222,110 @@
+@@ -223,6 +225,130 @@
  	menu->mSelectionConfirmed = true;
  	menu->setDrawEnd();
  }
@@ -64,14 +64,16 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
 +	s32 artWidth          = 0;
 +	const ResTIMG* art    = PauseQuitArt(&artWidth);
 +	const u8* blo         = (const u8*)JKRGetResource("/game_6/scrn/pause_1.blo");
-+	if (!art || !exitArea || !exitArea->getTexture(0) || !blo || memcmp(blo, "SCRNblo1", 8) != 0)
++	if (!art || !exitArea || !exitArea->getTexture(0)) {
++		OSReport("[pause] QUIT GAME left out: %s\n", !art ? "no picture" : !exitArea ? "no EXIT AREA item" : "EXIT AREA has no picture");
 +		return;
++	}
 +	// tx_3's PIC1 (the layout is big-endian, as J2DScreen reads it)
-+	const u32 size = PauseBE32(blo + 8);
++	const u32 size = blo && memcmp(blo, "SCRNblo1", 8) == 0 ? PauseBE32(blo + 8) : 0;
 +	for (u32 at = 0x20; at + 16 <= size;) {
 +		const u32 n = PauseBE32(blo + at + 4);
 +		if (n < 8 || at + n > size)
-+			return;
++			break;
 +		if (!memcmp(blo + at, "PIC1", 4) && !memcmp(blo + at + 12, "tx_3", 4)) {
 +			JSUMemoryInputStream stream(blo + at, n);
 +			J2DPicture* item = new J2DPicture(menu->mMenuPane, &stream, true);
@@ -92,6 +94,24 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
 +		}
 +		at += n;
 +	}
++	// a layout without EXIT AREA's (a mod's own, such as Super Mario Eclipse's): a picture of its
++	// own on the menu, turned as EXIT AREA is
++	J2DPicture* item = new J2DPicture('tx_4', JUTRect(0, 0, 1, 1), art, nullptr);
++	if (!item->getTexture(0)) {
++		OSReport("[pause] QUIT GAME left out: its picture could not be made\n");
++		return;
++	}
++	item->hide();
++	menu->mMenuPane->getPaneTree()->appendChild(item->getPaneTree());
++	const JUTRect& bounds = exitArea->getBounds();
++	const s32 w           = artWidth * bounds.getWidth() / exitArea->getTexture(0)->getWidth();
++	item->setBounds(JUTRect(0, 0, w, bounds.getHeight()));
++	item->mRotAxis   = exitArea->mRotAxis;
++	item->mRotation  = exitArea->mRotation;
++	item->mCullMode  = exitArea->mCullMode;
++	item->setBasePosition(exitArea->mBasePosition);
++	OSReport("[pause] QUIT GAME made beside the menu's own layout (no EXIT AREA picture in it)\n");
++	sQuitItem = item;
 +}
 +
 +// The items lean 12 degrees, their centres on a slant down and to the right.
@@ -128,7 +148,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  #endif
  
  // rogue includes needed for matching sinit & bss
-@@ -358,6 +464,11 @@
+@@ -361,6 +487,11 @@
  
  	mBackground = mScreen->search('mask');
  	mMenuPane   = mScreen->search('t_0');
@@ -140,7 +160,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  
  	for (s32 i = 0; i < 5; i++) {
  		mPauseLetters[i] = PauseSearchPicture(mScreen, 'pa00' + i);
-@@ -366,7 +477,12 @@
+@@ -369,7 +500,12 @@
  	for (s32 i = 0; i < 3; i++) {
  		mMenuItems[i] = (J2DPicture*)mScreen->search('tx_1' + i);
  
@@ -153,7 +173,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  			mMenuItems[i]->add(
  			    0, VERSION_SELECT(GMSJ01(14), GMSP01(20), GMSE01(20)));
  		}
-@@ -473,8 +589,9 @@
+@@ -484,8 +620,9 @@
  
  	mItemColor = PauseMenuItem(mMenuItems, 0)->getWhite();
  
@@ -165,7 +185,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  	}
  
  	for (s32 i = 0; i < 5; i++) {
-@@ -529,20 +646,20 @@
+@@ -540,20 +677,20 @@
  
  	// Animate in menu items.
  	if (mFadeAnim >= 30.0f) {
@@ -192,7 +212,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  
  				// TODO: This looks a bit fake...
  				f32 alphaF = 26.0f * (mFadeAnim - 30.0f);
-@@ -550,7 +667,7 @@
+@@ -561,7 +698,7 @@
  				if ((s32)alphaF > 0xFF) {
  					alpha = 0xFF;
  				}
@@ -201,7 +221,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  
  				// The first item gets some extra "bounce".
  				if (i == 0) {
-@@ -562,7 +679,7 @@
+@@ -573,7 +710,7 @@
  				s32 hy = 1.5f * (mFadeAnim - 45.0f);
  				rect.reform(hx, hy, -hx, -hy);
  
@@ -210,7 +230,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  			} else if (mFadeAnim >= 46.0f) {
  				// Fade in animation complete; set state to open.
  				if (mState != MENU_OPEN) {
-@@ -587,7 +704,7 @@
+@@ -598,7 +735,7 @@
  	// Delete emitter and reset selected item back to its original size.
  	if (mFadeAnim == 0.0f && mEmitter != 0) {
  		gpEmitterManager4D2->forceDeleteEmitter(mEmitter);
@@ -219,7 +239,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  	}
  
  	if (mFadeAnim <= 10.0f) {
-@@ -619,12 +736,12 @@
+@@ -630,12 +767,12 @@
  		}
  
  		// ... and now shrink the menu items in the same manner.
@@ -235,7 +255,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  		}
  
  		// Rotate menu clockwise.
-@@ -669,6 +786,12 @@
+@@ -680,6 +817,12 @@
  		s32 curSelectedItem = mSelectedItem;
  		if (mGamePad->checkFrameMeaning(0x21)) {
  			// Confirm currently selected item.
@@ -248,7 +268,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  			switch (curSelectedItem) {
  			case 0:
  				mSelectionConfirmed = true;
-@@ -703,22 +826,22 @@
+@@ -714,22 +857,22 @@
  			setDrawEnd();
  		} else if (mGamePad->checkFrameMeaning(0x4)) {
  			// Select the next item.
@@ -278,7 +298,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  
  				mBounceAnim = 0.0f; // reset animation
  
-@@ -730,9 +853,9 @@
+@@ -741,9 +884,9 @@
  			}
  		} else if (mGamePad->checkFrameMeaning(0x2)) {
  			// Select the previous item.
@@ -290,7 +310,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  				                    : curSelectedItem - 1;
  			} else {
  				mSelectedItem = 0;
-@@ -742,10 +865,10 @@
+@@ -753,10 +896,10 @@
  				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CURSOR,
  				                                   0, nullptr, 0);
  
@@ -305,7 +325,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  
  				mBounceAnim = 0.0f;
  
-@@ -756,14 +879,14 @@
+@@ -767,14 +910,14 @@
  			}
  		}
  
@@ -323,7 +343,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  
  			JGeometry::TVec3<f32> pos(
  			    itemBounds.x1 + 0.5f * itemBounds.getWidth(),
-@@ -780,18 +903,18 @@
+@@ -791,18 +934,18 @@
  			s32 hw = mBounceAnim;
  			s32 hh = 0.5f * mBounceAnim;
  			animItemBounds.reform(-hw, -hh, hw, hh);
@@ -346,7 +366,7 @@ Reason: port: QUIT GAME in the pause menu (src/pause_quit.cpp), after EXIT AREA 
  		} else {
  			// Loop animation.
  			mBounceAnim = -0.5f;
-@@ -893,9 +1016,9 @@
+@@ -904,9 +1047,9 @@
  	PauseMenuItem(mMenuItems, 0)->mWhite   = mItemColor;
  	PauseMenuItem(mMenuItems, 0)->mVisible = false;
  
