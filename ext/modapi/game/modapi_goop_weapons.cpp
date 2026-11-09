@@ -1100,6 +1100,9 @@ void drawDrops(int kind)
 	const f32 vx = s_view[2][0], vy = s_view[2][1], vz = s_view[2][2]; // toward the viewer
 	// FLUDD held in view (first person): a thinner stream, thinner still near the view
 	const bool held = gpMarioOriginal && PortFluddHeld(gpMarioOriginal);
+	f32 mv[3] = {0.0f, 0.0f, 0.0f}; // Mario's own moving (the stream's drops set off with it)
+	if (gpMarioOriginal)
+		mv[0] = gpMarioOriginal->mVel.x, mv[1] = gpMarioOriginal->mVel.y, mv[2] = gpMarioOriginal->mVel.z;
 	f32 eye[3];
 	for (int c = 0; c < 3; c++)
 		eye[c] = -(s_view[0][c] * s_view[0][3] + s_view[1][c] * s_view[1][3] + s_view[2][c] * s_view[2][3]);
@@ -1127,7 +1130,9 @@ void drawDrops(int kind)
 				const f32 d  = sqrtf(ex * ex + ey * ey + ez * ez) / 500.0f;
 				r *= 0.6f * (d < 0.5f ? 0.5f : d > 1.0f ? 1.0f : d);
 			}
-			f32 fx = v.x, fy = v.y, fz = v.z;
+			// drawn out along the stream's own line: its flight less Mario's (FLUDD's) own moving, so
+			// moving sideways the stream still runs from the nozzle, not smeared off to the side
+			f32 fx = v.x - mv[0], fy = v.y - mv[1], fz = v.z - mv[2];
 			f32 fl = sqrtf(fx * fx + fy * fy + fz * fz);
 			if (fl < 1e-3f)
 				fx = 0.0f, fy = 1.0f, fz = 0.0f, fl = 1.0f;
