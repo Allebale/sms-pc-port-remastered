@@ -49,6 +49,7 @@
 #include <Enemy/BossPakkun.hpp>
 #include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
+#include <MoveBG/MapObjHide.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <NPC/NpcBase.hpp>
 #include <Enemy/BossWanwan.hpp>
@@ -390,9 +391,12 @@ bool moves(TSmallEnemy* e)
 }
 
 // A heart dropped where the bazooka defeated an enemy (SMS_SPRAY_HEARTS): beside its coin
+// hearts only in first person (FLUDD held in view) with the bazooka chosen: dropped, seen and picked up
+bool heartsHere() { return s_weapon == BAZOOKA && gpMarioOriginal && PortFluddHeld(gpMarioOriginal); }
+
 void dropHeart(TLiveActor* e)
 {
-	if (!s_hearts || !e)
+	if (!s_hearts || !e || !heartsHere())
 		return;
 	Heart* h = &s_heartList[0];
 	for (int i = 0; i < kHearts; i++) { // a free one, or the oldest
@@ -433,7 +437,7 @@ void followHearts()
 			if (h.at.y <= h.ground + 40.0f && h.vy < 0.0f)
 				h.at.y = h.ground + 40.0f, h.landed = true;
 		}
-		if (m && !m->onYoshi()) {
+		if (m && !m->onYoshi() && heartsHere()) {
 			const f32 dx = m->mPosition.x - h.at.x, dz = m->mPosition.z - h.at.z, dy = h.at.y - m->mPosition.y;
 			if (dx * dx + dz * dz < 80.0f * 80.0f && dy > -60.0f && dy < 190.0f) {
 				h.life = 0.0f;
@@ -1287,7 +1291,7 @@ void softenPush(void* object, void* sender)
 }
 
 // a drop reached something: if it is a weapon's and an enemy, shoved (and maybe defeated)
-void objectHitDone(void* object, void* sender, unsigned message, int)
+void objectHitDone(void* object, void* sender, unsigned message, int result)
 {
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender || !gpModelWaterManager)
 		return;
@@ -1298,6 +1302,13 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 		return;
 	const int tag    = w->mParticleAttackSOA[drop->mParticleIndex];
 	const int weapon = (tag >> kTagShift) & 0xf;
+	// a picture washed off to find what it hides (the red X and O graffiti, a blue coin behind):
+	// a weapon's few drops each wash as much as a moment of FLUDD's stream, or the picture grows
+	// back between them and never comes off
+	if (result && (weapon == RIFLE || weapon == SMG || weapon == BAZOOKA))
+		if (TWaterHitPictureHideObj* pic = dynamic_cast<TWaterHitPictureHideObj*>(static_cast<THitActor*>(object)))
+			if (pic->mState != TWaterHitPictureHideObj::STATE_FINISHED)
+				pic->forward(pic->mSprayProgressSpeed * (weapon == RIFLE ? 30.0f : weapon == BAZOOKA ? 40.0f : 5.0f));
 	const int shot   = (tag >> kTagShift) & 0x7f; // weapon and number
 	if (weapon == NORMAL && s_defeatNormal) { // the normal spray, with its defeating on: a short burst
 		TSmallEnemy* ne = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
@@ -2130,6 +2141,8 @@ bool PortBazookaBalloon(float* at, float* way, float* scale)
 // blinking out at the end; how many
 int PortWeaponHearts(float* out, int most)
 {
+	if (!heartsHere())
+		return 0; // (first person with the bazooka only)
 	int n = 0;
 	for (int i = 0; i < kHearts && n < most; i++) {
 		const Heart& h = s_heartList[i];

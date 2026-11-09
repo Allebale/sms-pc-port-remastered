@@ -478,6 +478,16 @@ bool s_haveHeldEmit;
 TWaterGun* s_heldEmitGun;
 
 void PortWeaponModelView(MtxPtr view); // modapi_weapon_models.cpp
+// Mario climbing (a fence, a pole or bar, a rope or wire, hanging from a ledge or a ceiling): his
+// hands busy, the weapons hidden
+static bool climbing(const TMario* m)
+{
+	if (!m || (m->mStatus & MARIO_STATUS_TYPE_MASK) != MARIO_STATUS_TYPE_SPECIAL)
+		return false;
+	const u32 i = m->mStatus & 0x3F;
+	return i <= 0x1C || (i >= 0x28 && i <= 0x2F);
+}
+
 void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
 	s_placed = false;
@@ -490,6 +500,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 	if (g && g->mMario && PortFluddHeld(g->mMario) && g->mMario->checkFlag(MARIO_FLAG_GAME_OVER)) {
 		PortWeaponModelNoFludd(true); // he is dead (or dying): FLUDD held in view and the weapon's model hidden
 		return;
+	}
+	if (g && g->mMario && PortSprayWeaponChosen() && climbing(g->mMario)) {
+		if (PortFluddHeld(g->mMario))
+			PortWeaponModelNoFludd(true); // climbing: the weapon held in view hidden (FLUDD with it)
+		return;                           // (and on his back FLUDD as itself, not the weapon's pack)
 	}
 	if (g && graphics && !PortFluddHeld(g->mMario))
 		onBack(g, graphics);
