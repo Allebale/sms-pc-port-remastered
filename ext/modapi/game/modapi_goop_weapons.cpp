@@ -438,6 +438,24 @@ void glideTo(TMario* m, f32 tx, f32 tz)
 				if (wall.mResultWalls[0]) { // that way out of the glide
 					const JGeometry::TVec3<f32>& n = wall.mResultWalls[0]->getNormal();
 					const f32 into = s_glideX * n.x + s_glideZ * n.z;
+					const f32 fast = sqrtf(s_glideX * s_glideX + s_glideZ * s_glideZ);
+					// head on and faster than he can run: knocked back onto his bottom, as by a
+					// hard crash (the game's own fall back down)
+					if (into < 0.0f && -into > 0.7f * fast && -into > 34.0f * port_frame_scale() && !(m->mStatus & 0x20000)
+					    && m->mStatus != MARIO_STATUS_JUMP_BACK_DOWN) {
+						const f32 hl = sqrtf(n.x * n.x + n.z * n.z);
+						if (hl > 0.3f) {
+							m->mFaceAngle.y = (s16)(atan2f(-n.x / hl, -n.z / hl) * (32768.0f / 3.14159265f)); // facing the wall
+							m->changePlayerStatus(MARIO_STATUS_JUMP_BACK_DOWN, 0, true);
+							m->mForwardVel = -18.0f; // thrown back from it
+							m->mVel.y      = 30.0f;
+							SMSGetMSound()->startSoundActor(MSD_SE_MA_WALL_COL_HARD, &m->mPosition, 0, nullptr, 0, 4);
+							s_glideX = s_glideZ = 0.0f;
+							s_gliding = false;
+							m->mPosition.x = px, m->mPosition.z = pz;
+							return;
+						}
+					}
 					if (into < 0.0f)
 						s_glideX -= n.x * into, s_glideZ -= n.z * into;
 				}
