@@ -1027,6 +1027,26 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	f32 up          = dy * speed;
 	if (up < speed * 0.3f) // a burst beside or above him still lifts him a little
 		up = speed * 0.3f;
+	// up a wall, as in Team Fortress 2: walking into a wall and firing at its foot (or at the wall
+	// below him in the air), the burst at the wall beside his feet throws him straight up it,
+	// a jump on top of the last
+	bool wallJump = false;
+	JGeometry::TVec3<f32> wallOut(0.0f, 0.0f, 0.0f);
+	if (gpMap && at.y < m->mPosition.y + 60.0f) {
+		TBGWallCheckRecord wall(m->mPosition.x, m->mPosition.y + 50.0f, m->mPosition.z, 90.0f, 1,
+		                        TBGWallCheckRecord::DONT_MOVE_XZ | TBGWallCheckRecord::IGNORE_WATER_THROUGH);
+		const f32 hx = at.x - m->mPosition.x, hz = at.z - m->mPosition.z;
+		if (hx * hx + hz * hz < 260.0f * 260.0f && gpMap->isTouchedWallsAndMoveXZ(&wall) && wall.mResultWalls[0]) {
+			const JGeometry::TVec3<f32>& n = wall.mResultWalls[0]->getNormal();
+			const f32 nl = sqrtf(n.x * n.x + n.z * n.z);
+			if (nl > 0.5f && (hx * n.x + hz * n.z) / nl < 40.0f) { // the burst at the wall's side of him
+				wallJump = true;
+				wallOut.set(n.x / nl, 0.0f, n.z / nl);
+				up = speed * 0.95f;
+				dx = wallOut.x * 0.12f, dz = wallOut.z * 0.12f; // only a little away from it: up it
+			}
+		}
+	}
 	// the way he looks (first person: the view's; else the way he faces), across the ground
 	JGeometry::TVec3<f32> eye, look;
 	f32 fx, fz;
@@ -1042,8 +1062,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	const f32 along = (dx * fx + dz * fz) * speed;                        // its push the way he looks
 	const f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz; // and to the side
 	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
-	if (!inAir)
-		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
+	if (!inAir || (wallJump && m->mStatus == MARIO_STATUS_WALL_SLIDE))
+		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false); // (off a wall slide too: up, not sliding down)
 	m->mVel.y = (inAir && m->mVel.y > 0.0f ? m->mVel.y : 0.0f) + up;
 	// across the ground: the way he goes now and the push, as his facing and forward speed (backwards
 	// if it throws him behind him, so he keeps facing the way he looked)
@@ -1074,7 +1094,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 			port_clip_play(set[pick].pcm, set[pick].frames, set[pick].rate, s_voiceVolume);
 		}
 	}
-	fprintf(stderr, "[weapons] rocket jump: %.0f away%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "", up, h,
+	fprintf(stderr, "[weapons] rocket jump: %.0f away%s%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "",
+	        wallJump ? " up a wall" : "", up, h,
 	        s_rocketHurt ? ", 1 health lost" : "");
 }
 
@@ -1094,6 +1115,14 @@ int shakeObjects(const JGeometry::TVec3<f32>& at, f32 r)
 				continue;
 			const f32 x = a->mPosition.x - at.x, y = a->mPosition.y - at.y, z = a->mPosition.z - at.z;
 			const f32 d = sqrtf(x * x + z * z);
+			// a picture hiding something (the red X and O, Shadow Mario's M) in the burst: washed off at once
+			if (TWaterHitPictureHideObj* pic = dynamic_cast<TWaterHitPictureHideObj*>(a)) {
+				if (d <= r * 1.5f && fabsf(y) <= r * 1.5f && pic->mState != TWaterHitPictureHideObj::STATE_FINISHED) {
+					pic->forward(100000.0f);
+					fprintf(stderr, "[weapons] a picture washed off by the bazooka\n");
+				}
+				continue;
+			}
 			if (d > r * 1.3f || fabsf(y) > r)
 				continue;
 			const f32 near1 = 1.0f - d / (r * 1.3f); // 1 at the middle, 0 at the edge
@@ -1135,6 +1164,7 @@ void cleanGoop(const JGeometry::TVec3<f32>& at, f32 r, f32 strength)
 	PortGoopWash(at.x, at.y, at.z, r); // the goop weapons' puddles in it too
 	if (!gpPollution || !gpMap)
 		return;
+	gpPollution->clean(at.x, at.y, at.z, r * 0.6f); // where it burst too: goop on a wall (Shadow Mario's M)
 	const f32 spot = r * 0.35f * (strength > 1.0f ? strength : 1.0f); // each spot bigger the more it cleans
 	int n = 0;
 	for (int ring = 0; ring < 3; ring++) {
@@ -1308,7 +1338,7 @@ void objectHitDone(void* object, void* sender, unsigned message, int result)
 	if (result && (weapon == RIFLE || weapon == SMG || weapon == BAZOOKA))
 		if (TWaterHitPictureHideObj* pic = dynamic_cast<TWaterHitPictureHideObj*>(static_cast<THitActor*>(object)))
 			if (pic->mState != TWaterHitPictureHideObj::STATE_FINISHED)
-				pic->forward(pic->mSprayProgressSpeed * (weapon == RIFLE ? 30.0f : weapon == BAZOOKA ? 40.0f : 5.0f));
+				pic->forward(weapon == BAZOOKA ? 100000.0f : pic->mSprayProgressSpeed * (weapon == RIFLE ? 120.0f : 15.0f)); // the bazooka's: at once
 	const int shot   = (tag >> kTagShift) & 0x7f; // weapon and number
 	if (weapon == NORMAL && s_defeatNormal) { // the normal spray, with its defeating on: a short burst
 		TSmallEnemy* ne = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));

@@ -327,7 +327,9 @@ void launchEnemy(TSmallEnemy* e)
 	e->onLiveFlag(LIVE_FLAG_AIRBORNE);
 }
 
-void burn(TSmallEnemy* e, int kind, bool launch = false)
+// `direct`: hit by the stream itself, hurt at once (a burn or shock counted now, not after its
+// seconds); else touched by the goop (a puddle, the grass on fire): burned or shocked for its seconds
+void burn(TSmallEnemy* e, int kind, bool launch = false, bool direct = false)
 {
 	if (kind == kBlack)
 		return; // (only slippery)
@@ -342,7 +344,11 @@ void burn(TSmallEnemy* e, int kind, bool launch = false)
 	for (int i = 0; i < kZaps; i++) {
 		Zap& z = s_zaps[i];
 		if (z.e == e) {
-			if (!z.resting || s_time < z.until)
+			if (direct && !z.resting) {
+				z.start = s_time - statsOf(z.kind).defeat; // the stream on it: counted at once
+				return;
+			}
+			if (!z.resting || s_time < z.until - (direct ? 0.35f : 0.0f))
 				return; // already, or resting a moment
 			free = &z; // again
 			break;
@@ -361,7 +367,7 @@ void burn(TSmallEnemy* e, int kind, bool launch = false)
 	free->resting = false;
 	free->e     = e;
 	free->kind  = kind;
-	free->start = s_time;
+	free->start = direct ? s_time - statsOf(kind).defeat : s_time;
 	free->bx = e->mPosition.x, free->by = e->mPosition.y, free->bz = e->mPosition.z;
 	free->centre = e->mPosition;
 	if (launch && kind == kFire)
@@ -749,7 +755,7 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 		return;
 	const int kind = dropKind(drop->mParticleIndex);
 	if (kind)
-		burn(dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object)), kind);
+		burn(dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object)), kind, false, true); // the stream: at once
 }
 
 // ---- drawing: the stream's goop and the puddles, a packet of the scene's opaque draw buffer ----
