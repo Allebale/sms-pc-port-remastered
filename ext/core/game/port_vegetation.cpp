@@ -28,7 +28,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <map>
 
 // The renderer's (platform/gx/src/gx_render.cpp).
 extern "C" void GXPC_SwayRegister(const void* list, unsigned size, float minY, float maxY);
@@ -41,7 +40,34 @@ const f32 kWind[3]   = {0.8f, 0.0f, 0.6f};        // the way the breeze blows (u
 
 // Palm fronds are solid only while their tree was touched lately (port_tree_leaf_collides)
 const int kTouchedTicks = 240;                      // about as long as the game's fronds take to settle
-std::map<const TMapObjTree*, int> s_sinceTouch;     // ticks since Mario last touched each tree
+// ticks since Mario last touched each tree: a fixed table, not a std::map (whose nodes, made with
+// the game's new while a stage's heap is the current one, went with that stage: clearing them as
+// the next was set up crashed, as Mario died in Delfino Plaza)
+struct Touch {
+	const TMapObjTree* tree;
+	int since;
+};
+const int kTouches = 64;
+Touch s_touches[kTouches];
+int s_touchCount;
+Touch* touchOf(const TMapObjTree* tree, bool make)
+{
+	for (int i = 0; i < s_touchCount; i++)
+		if (s_touches[i].tree == tree)
+			return &s_touches[i];
+	if (!make)
+		return 0;
+	Touch* t = 0;
+	if (s_touchCount < kTouches)
+		t = &s_touches[s_touchCount++];
+	else // full: the one untouched longest
+		for (int i = 0; i < kTouches; i++)
+			if (!t || s_touches[i].since > t->since)
+				t = &s_touches[i];
+	t->tree  = tree;
+	t->since = kTouchedTicks;
+	return t;
+}
 
 f32 amount()
 {
@@ -149,7 +175,7 @@ void afterMovement()
 }
 
 // A new area: its trees are new (an old tree's place may be a new tree's), none touched yet
-void stageSetup() { s_sinceTouch.clear(); }
+void stageSetup() { s_touchCount = 0; }
 
 PortExtension s_extension;
 
@@ -241,9 +267,9 @@ void port_tree_sway(TMapObjTree* tree)
 		return;
 	tree->mFreezeLeaves = false;  // kept moving
 	{
-		std::map<const TMapObjTree*, int>::iterator it = s_sinceTouch.find(tree);
-		if (it != s_sinceTouch.end() && it->second < kTouchedTicks)
-			it->second++;
+		Touch* t = touchOf(tree, false);
+		if (t && t->since < kTouchedTicks)
+			t->since++;
 	}
 	const f32 t = seconds();
 	for (int i = 0; i < tree->mLeafNum; i++) {
@@ -275,7 +301,7 @@ void port_tree_sway(TMapObjTree* tree)
 void port_tree_touched(TMapObjTree* tree)
 {
 	if (tree && amount() > 0.0f)
-		s_sinceTouch[tree] = 0;
+		touchOf(tree, true)->since = 0;
 }
 
 bool port_tree_leaf_collides(TMapObjTree* tree, int index)
@@ -284,7 +310,7 @@ bool port_tree_leaf_collides(TMapObjTree* tree, int index)
 		return true;  // off: the game as it was
 	const TBGCheckData* ground = gpMarioGroundPlane ? SMS_GetMarioGroundPlane() : 0;
 	if (ground && ground->getActor() == tree)
-		s_sinceTouch[tree] = 0;  // he stands on one of its fronds
-	std::map<const TMapObjTree*, int>::iterator it = s_sinceTouch.find(tree);
-	return it != s_sinceTouch.end() && it->second < kTouchedTicks;
+		touchOf(tree, true)->since = 0;  // he stands on one of its fronds
+	const Touch* t = touchOf(tree, false);
+	return t && t->since < kTouchedTicks;
 }
