@@ -353,8 +353,8 @@ void launchEnemy(TLiveActor* e)
 		if (d < best)
 			best = d, to = &p;
 	}
-	if (!to)
-		to = in;
+	if (in)
+		return; // already in the fire: left to the water's push (thrown again only once out of it)
 	if (!to) { // no fire: a hop a random way
 		f32 g = e->getGravityY();
 		g     = g > 0.05f ? g : 0.5f;
@@ -432,11 +432,10 @@ void burn(TLiveActor* e, int kind, bool launch = false, bool direct = false)
 		return;
 	if (npc)
 		direct = false; // (its whole shock or burn shown each time)
-	if (!s_defeat && !npc) {
-		if (launch && kind == kFire)
-			launchEnemy(e); // (thrown up, not defeated)
-		return;
-	}
+	if (launch && kind == kFire)
+		launchEnemy(e); // thrown into the nearest fire, burning (each spray that reaches it)
+	if (!s_defeat && !npc)
+		return; // (not defeated)
 	Zap* free = 0;
 	for (int i = 0; i < kZaps; i++) {
 		Zap& z = s_zaps[i];
@@ -467,8 +466,6 @@ void burn(TLiveActor* e, int kind, bool launch = false, bool direct = false)
 	free->start = direct ? s_time - statsOf(kind).defeat : s_time;
 	free->bx = e->mPosition.x, free->by = e->mPosition.y, free->bz = e->mPosition.z;
 	free->centre = e->mPosition;
-	if (launch && kind == kFire)
-		launchEnemy(e); // thrown up in the air, burning
 	SMSGetMSound()->startSoundActor(kind == kFire ? MSD_SE_EF_FIRE : MSD_SE_EN_DENNOKO_ELEC_DOWN, &e->mPosition, 0, nullptr, 0, 4);
 	fprintf(stderr, "[goop] %s %s\n", npc ? "a character" : "an enemy", kind == kFire ? "set burning" : "shocked");
 }
@@ -862,8 +859,8 @@ int objectHit(void* object, void* sender, unsigned message)
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return 0;
 	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
-	if (!drop || (dropKind(drop->mParticleIndex) != kElectric && dropKind(drop->mParticleIndex) != kFire))
-		return 0; // (fire too: its throw lands it in the puddle, no push past it)
+	if (!drop || dropKind(drop->mParticleIndex) != kElectric)
+		return 0; // (fire: pushed by the water as ever, or thrown into the fire)
 	if (TLiveActor* e = dynamic_cast<TLiveActor*>(static_cast<THitActor*>(object))) {
 		s_unpushed  = e;
 		s_unpushedV = e->getVelocity();
