@@ -1126,6 +1126,8 @@ int shakeObjects(const JGeometry::TVec3<f32>& at, f32 r)
 // two rings of spots round it (each on the ground there, so slopes and steps are cleaned too).
 void cleanGoop(const JGeometry::TVec3<f32>& at, f32 r, f32 strength)
 {
+	if (s_weapon == BAZOOKA && s_muteMario)
+		return; // the rocket jump keys held: the bazooka cleans no goop (a black goop run kept for a rocket jump)
 	PortGoopWash(at.x, at.y, at.z, r); // the goop weapons' puddles in it too
 	if (!gpPollution || !gpMap)
 		return;
@@ -2075,6 +2077,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 // Every request for water drops (TModelWaterManager::emitRequest, patch
 // zzzzzzz-held-fludd-4-weapons): with a weapon chosen, the player's spray makes none of its own
 // (should R reach the game at all); the weapon's shots are let through.
+// The bazooka with the rocket jump keys held (SMS_SPRAY_MUTE_MARIO): cleaning no goop
+bool PortSprayBazookaNoClean() { return s_weapon == BAZOOKA && s_muteMario; }
+
 bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 {
 	if (PortGoopEmit(asked, made))

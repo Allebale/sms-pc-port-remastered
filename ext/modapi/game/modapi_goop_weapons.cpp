@@ -50,6 +50,7 @@
 
 extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
 bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
+bool PortSprayBazookaNoClean();     // modapi_spray_weapons.cpp
 // a picture shown in place of a texture, by its data (platform/gx/src/gx_texture.cpp)
 extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const unsigned char* rgba, int w, int h)
     __attribute__((weak));
@@ -422,24 +423,29 @@ void blackGoop(f32 dt)
 		return;
 	}
 	const f32 dx = m->mPosition.x - s_prevX, dz = m->mPosition.z - s_prevZ; // the game's step this tick
-	const bool air = m->mPosition.y > m->mFloorPosition.y + 12.0f && !m->checkFlag(MARIO_FLAG_IN_WATER);
-	if (s_havePrev && s_gliding && air && fabsf(dx) < 300.0f && fabsf(dz) < 300.0f) {
-		// jumped off it: its speed carried on through the air, easing back to the game's own only slowly
-		const f32 k = 1.0f - powf(0.5f, dt / 1.5f);
-		s_glideX += (dx - s_glideX) * k;
-		s_glideZ += (dz - s_glideZ) * k;
-		m->mPosition.x = s_prevX + s_glideX;
-		m->mPosition.z = s_prevZ + s_glideZ;
-	} else if (s_havePrev && fabsf(dx) < 300.0f && fabsf(dz) < 300.0f && onBlack(m)) {
+	const bool sane = s_havePrev && fabsf(dx) < 300.0f && fabsf(dz) < 300.0f;
+	const bool air  = m->mPosition.y > m->mFloorPosition.y + 12.0f && !m->checkFlag(MARIO_FLAG_IN_WATER);
+	if (sane && !air && onBlack(m)) {
 		if (!s_gliding)
 			s_glideX = dx, s_glideZ = dz, s_gliding = true;
-		const f32 k = 1.0f - powf(0.5f, dt / 0.45f); // half way toward the game's step in 0.45 s
+		const f32 k = 1.0f - powf(0.5f, dt / 0.45f); // half way toward the game's step (times the speed) in 0.45 s
 		s_glideX += (dx * s_blackSpeed - s_glideX) * k;
 		s_glideZ += (dz * s_blackSpeed - s_glideZ) * k;
-		m->mPosition.x = s_prevX + s_glideX;
-		m->mPosition.z = s_prevZ + s_glideZ;
+	} else if (sane && s_gliding && !m->checkFlag(MARIO_FLAG_IN_WATER)) {
+		// off it, its speed carried on: through the air (a jump, a rocket jump) easing back to the
+		// game's own over seconds; on other ground more quickly
+		const f32 k = 1.0f - powf(0.5f, dt / (air ? 3.0f : 0.6f));
+		s_glideX += (dx - s_glideX) * k;
+		s_glideZ += (dz - s_glideZ) * k;
+		const f32 ex = s_glideX - dx, ez = s_glideZ - dz;
+		if (!air && ex * ex + ez * ez < 0.25f)
+			s_gliding = false; // back to his own
 	} else
 		s_gliding = false;
+	if (s_gliding) {
+		m->mPosition.x = s_prevX + s_glideX;
+		m->mPosition.z = s_prevZ + s_glideZ;
+	}
 	s_prevX = m->mPosition.x, s_prevZ = m->mPosition.z;
 	s_havePrev = true;
 }
@@ -1506,6 +1512,8 @@ bool PortGoopDropLands(int i, const TBGCheckData* ground)
 		return true;
 	}
 	const int weapon = port_spray_tagged_drops ? ((unsigned short)w->mParticleAttackSOA[i] >> kTagShift) & 0xf : 0;
+	if (weapon == 3 && PortSprayBazookaNoClean())
+		return false; // the bazooka's water with the rocket jump keys held: the goop left
 	if (weapon == 4) // the SMG's shot: a good splash of it
 		washAt(p.x, p.y, p.z, 40.0f, 28.0f);
 	else
@@ -1530,6 +1538,8 @@ bool PortGoopDropWall(int i, const TBGCheckData* wall)
 		return true;
 	}
 	const int weapon = port_spray_tagged_drops ? ((unsigned short)w->mParticleAttackSOA[i] >> kTagShift) & 0xf : 0;
+	if (weapon == 3 && PortSprayBazookaNoClean())
+		return false; // (the rocket jump keys held)
 	washWallAt(p.x, p.y, p.z, weapon == 4 ? 40.0f : w->mParticleSizeSOA[i] * 0.7f, weapon == 4 ? 28.0f : kWash);
 	return false;
 }
