@@ -745,17 +745,44 @@ void afterMovement()
 	}
 }
 
-// a goop drop reached something: an enemy burned or shocked by it
+// an electric goop drop about to reach an enemy: its velocity kept, so the game's push of the
+// water is taken back after (objectHitDone): shocked, not pushed
+TSmallEnemy* s_unpushed;
+JGeometry::TVec3<f32> s_unpushedV;
+int objectHit(void* object, void* sender, unsigned message)
+{
+	s_unpushed = 0;
+	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
+		return 0;
+	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+	if (!drop || dropKind(drop->mParticleIndex) != kElectric)
+		return 0;
+	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object))) {
+		s_unpushed  = e;
+		s_unpushedV = e->getVelocity();
+	}
+	return 0;
+}
+
+// a goop drop reached something: an enemy hit by the stream. Electric goop: shocked (held
+// trembling with sparks for its seconds, a shock counted after), never pushed; fire goop: thrown
+// up a random way burning, the burn counted at once
 void objectHitDone(void* object, void* sender, unsigned message, int)
 {
-	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender || !s_defeat)
+	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return;
 	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
 	if (!drop)
 		return;
 	const int kind = dropKind(drop->mParticleIndex);
-	if (kind)
-		burn(dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object)), kind, false, true); // the stream: at once
+	TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
+	if (e && e == s_unpushed)
+		e->setVelocity(s_unpushedV); // (the water's push taken back)
+	s_unpushed = 0;
+	if (kind == kElectric)
+		burn(e, kind); // the shock as from its goop
+	else if (kind == kFire)
+		burn(e, kind, true, true); // thrown up burning, at once
 }
 
 // ---- drawing: the stream's goop and the puddles, a packet of the scene's opaque draw buffer ----
@@ -1540,6 +1567,7 @@ struct Register {
 		s_extension.name          = "goop weapons";
 		s_extension.stageSetup    = stageSetup;
 		s_extension.afterMovement = afterMovement;
+		s_extension.objectHit     = objectHit;
 		s_extension.objectHitDone = objectHitDone;
 		port_ext_register(&s_extension);
 	}
