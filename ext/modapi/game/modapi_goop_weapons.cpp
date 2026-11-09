@@ -311,24 +311,35 @@ void washWallAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
 }
 
 // an enemy in the stream or the goop: shocked or set burning (once), defeated when that is over
-// fire goop stepped in (or the fire stream): launched up two and a half times its own height,
-// jumping into fire: toward the nearest other puddle of fire goop (the one it is in when there is
-// no other), landing in its middle; with none, a random way
+// fire goop stepped in (or the fire stream): thrown up two and a half times its own height, jumping
+// into fire: carried on an arc right into the middle of the nearest other puddle of fire goop
+// (wherever it is; the one it is in when there is no other), there however far; with none, a hop a
+// random way
+struct Flight {
+	TLiveActor* a;
+	f32 sx, sy, sz; // from
+	f32 tx, ty, tz; // to: the puddle's middle
+	f32 length, at; // seconds the flight takes, and so far
+	f32 high;       // its arc's top over the straight way
+};
+const int kFlights = 24;
+Flight s_flights[kFlights];
+
 void launchEnemy(TLiveActor* e)
 {
 	if (e->checkLiveFlag(LIVE_FLAG_AIRBORNE))
 		return; // (already up)
+	for (int i = 0; i < kFlights; i++)
+		if (s_flights[i].a == e)
+			return; // (already flying)
 	f32 tall = e->getDamageHeight() > e->getAttackHeight() ? e->getDamageHeight() : e->getAttackHeight();
 	tall     = tall > 20.0f ? tall : 100.0f;
-	f32 g    = e->getGravityY();
-	g        = g > 0.05f ? g : 0.5f;
-	const f32 vy = sqrtf(2.0f * g * 2.5f * tall);
 	const Puddle* to = 0;
 	const Puddle* in = 0;
-	f32 best = 1500.0f * 1500.0f;
+	f32 best = 1e30f;
 	for (int i = 0; i < kPuddles; i++) {
 		const Puddle& p = s_puddles[i];
-		if (!p.on || p.kind != kFire || fabsf(p.y - e->mPosition.y) > 400.0f)
+		if (!p.on || p.kind != kFire || fabsf(p.y - e->mPosition.y) > 2000.0f)
 			continue;
 		const f32 dx = p.x - e->mPosition.x, dz = p.z - e->mPosition.z, d = dx * dx + dz * dz;
 		const f32 r = sizeNow(p);
@@ -341,19 +352,58 @@ void launchEnemy(TLiveActor* e)
 	}
 	if (!to)
 		to = in;
-	JGeometry::TVec3<f32> v = e->getVelocity();
-	v.y = vy;
-	if (to) { // its flight: up and down again in 2 vy / g frames, across to the puddle's middle
-		const f32 t  = 2.0f * vy / g;
-		const f32 dx = to->x - e->mPosition.x, dz = to->z - e->mPosition.z;
-		v.x = dx / t, v.z = dz / t;
-	} else {
+	if (!to) { // no fire: a hop a random way
+		f32 g = e->getGravityY();
+		g     = g > 0.05f ? g : 0.5f;
 		const f32 a = random01() * 6.2831853f;
+		JGeometry::TVec3<f32> v = e->getVelocity();
+		v.y = sqrtf(2.0f * g * 2.5f * tall);
 		v.x = sinf(a) * 6.0f, v.z = cosf(a) * 6.0f;
+		e->setVelocity(v);
+		e->mPosition.y += 8.0f;
+		e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+		return;
 	}
-	e->setVelocity(v);
-	e->mPosition.y += 8.0f;
+	Flight* f = 0;
+	for (int i = 0; i < kFlights && !f; i++)
+		if (!s_flights[i].a)
+			f = &s_flights[i];
+	if (!f)
+		return;
+	const f32 dx = to->x - e->mPosition.x, dz = to->z - e->mPosition.z, d = sqrtf(dx * dx + dz * dz);
+	f->a  = e;
+	f->sx = e->mPosition.x, f->sy = e->mPosition.y, f->sz = e->mPosition.z;
+	f->tx = to->x, f->ty = to->y, f->tz = to->z;
+	f->length = 0.7f + d / 1500.0f;
+	f->length = f->length < 2.5f ? f->length : 2.5f;
+	f->at     = 0.0f;
+	f->high   = 2.5f * tall + d * 0.1f;
 	e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+}
+
+// each tick: the thrown carried along their arcs, set down in the fire at the end
+void flights(f32 dt)
+{
+	for (int i = 0; i < kFlights; i++) {
+		Flight& f = s_flights[i];
+		if (!f.a)
+			continue;
+		TLiveActor* e = f.a;
+		if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN)) {
+			f.a = 0;
+			continue;
+		}
+		f.at += dt;
+		const f32 k = f.at < f.length ? f.at / f.length : 1.0f;
+		e->mPosition.x = f.sx + (f.tx - f.sx) * k;
+		e->mPosition.z = f.sz + (f.tz - f.sz) * k;
+		e->mPosition.y = f.sy + (f.ty - f.sy) * k + 4.0f * f.high * k * (1.0f - k);
+		e->setVelocity(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+		if (k >= 1.0f) {
+			f.a = 0; // down, in the fire
+			e->offLiveFlag(LIVE_FLAG_AIRBORNE);
+		}
+	}
 }
 
 // `direct`: hit by the stream itself, hurt at once (a burn or shock counted now, not after its
@@ -748,12 +798,14 @@ void stageSetup()
 	memset(s_puddles, 0, sizeof s_puddles);
 	memset(s_wallGoop, 0, sizeof s_wallGoop);
 	memset(s_zaps, 0, sizeof s_zaps);
+	memset(s_flights, 0, sizeof s_flights);
 }
 
 void afterMovement()
 {
 	const f32 dt = port_frame_scale() / 30.0f;
 	s_time += dt;
+	flights(dt);
 	zaps();
 	dressFludd();
 	drain();
@@ -1120,9 +1172,6 @@ void drawDrops(int kind)
 	const f32 vx = s_view[2][0], vy = s_view[2][1], vz = s_view[2][2]; // toward the viewer
 	// FLUDD held in view (first person): a thinner stream, thinner still near the view
 	const bool held = gpMarioOriginal && PortFluddHeld(gpMarioOriginal);
-	f32 mv[3] = {0.0f, 0.0f, 0.0f}; // Mario's own moving (the stream's drops set off with it)
-	if (gpMarioOriginal)
-		mv[0] = gpMarioOriginal->mVel.x, mv[1] = gpMarioOriginal->mVel.y, mv[2] = gpMarioOriginal->mVel.z;
 	f32 eye[3];
 	for (int c = 0; c < 3; c++)
 		eye[c] = -(s_view[0][c] * s_view[0][3] + s_view[1][c] * s_view[1][3] + s_view[2][c] * s_view[2][3]);
@@ -1150,9 +1199,7 @@ void drawDrops(int kind)
 				const f32 d  = sqrtf(ex * ex + ey * ey + ez * ez) / 500.0f;
 				r *= 0.6f * (d < 0.5f ? 0.5f : d > 1.0f ? 1.0f : d);
 			}
-			// drawn out along the stream's own line: its flight less Mario's (FLUDD's) own moving, so
-			// moving sideways the stream still runs from the nozzle, not smeared off to the side
-			f32 fx = v.x - mv[0], fy = v.y - mv[1], fz = v.z - mv[2];
+			f32 fx = v.x, fy = v.y, fz = v.z;
 			f32 fl = sqrtf(fx * fx + fy * fy + fz * fz);
 			if (fl < 1e-3f)
 				fx = 0.0f, fy = 1.0f, fz = 0.0f, fl = 1.0f;
@@ -1170,6 +1217,12 @@ void drawDrops(int kind)
 			if (held) { // thin: drawn out further, so each reaches the next and the stream is unbroken
 				len = fl * 1.4f > len ? fl * 1.4f : len;
 				len = len < 160.0f ? len : 160.0f;
+				// near the view shorter (the drops there close together): no long smear across it
+				// as Mario moves sideways
+				const f32 ex = p.x - eye[0], ey = p.y - eye[1], ez = p.z - eye[2];
+				const f32 nearBy = sqrtf(ex * ex + ey * ey + ez * ez) / 600.0f;
+				len *= nearBy < 0.3f ? 0.3f : nearBy > 1.0f ? 1.0f : nearBy;
+				len = len > r * 2.0f ? len : r * 2.0f;
 			}
 			const f32 u0 = (f32)(i % 7) * 0.13f + fl0 / kTile, v0 = (f32)(i % 5) * 0.17f;
 			f32 pts[kBands + 1][kAround][3];
