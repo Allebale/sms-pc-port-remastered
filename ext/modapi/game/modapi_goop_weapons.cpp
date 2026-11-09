@@ -309,7 +309,9 @@ void washWallAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
 }
 
 // an enemy in the stream or the goop: shocked or set burning (once), defeated when that is over
-// fire goop stepped in: launched up in the air two and a half times its own height, a random way
+// fire goop stepped in (or the fire stream): launched up two and a half times its own height,
+// jumping into fire: toward the nearest other puddle of fire goop (the one it is in when there is
+// no other), landing in its middle; with none, a random way
 void launchEnemy(TSmallEnemy* e)
 {
 	if (e->checkLiveFlag(LIVE_FLAG_AIRBORNE))
@@ -318,10 +320,35 @@ void launchEnemy(TSmallEnemy* e)
 	tall     = tall > 20.0f ? tall : 100.0f;
 	f32 g    = e->getGravityY();
 	g        = g > 0.05f ? g : 0.5f;
-	const f32 a = random01() * 6.2831853f;
+	const f32 vy = sqrtf(2.0f * g * 2.5f * tall);
+	const Puddle* to = 0;
+	const Puddle* in = 0;
+	f32 best = 1500.0f * 1500.0f;
+	for (int i = 0; i < kPuddles; i++) {
+		const Puddle& p = s_puddles[i];
+		if (!p.on || p.kind != kFire || fabsf(p.y - e->mPosition.y) > 400.0f)
+			continue;
+		const f32 dx = p.x - e->mPosition.x, dz = p.z - e->mPosition.z, d = dx * dx + dz * dz;
+		const f32 r = sizeNow(p);
+		if (d < r * r) { // the one it is in
+			in = &p;
+			continue;
+		}
+		if (d < best)
+			best = d, to = &p;
+	}
+	if (!to)
+		to = in;
 	JGeometry::TVec3<f32> v = e->getVelocity();
-	v.y = sqrtf(2.0f * g * 2.5f * tall);
-	v.x = sinf(a) * 6.0f, v.z = cosf(a) * 6.0f;
+	v.y = vy;
+	if (to) { // its flight: up and down again in 2 vy / g frames, across to the puddle's middle
+		const f32 t  = 2.0f * vy / g;
+		const f32 dx = to->x - e->mPosition.x, dz = to->z - e->mPosition.z;
+		v.x = dx / t, v.z = dz / t;
+	} else {
+		const f32 a = random01() * 6.2831853f;
+		v.x = sinf(a) * 6.0f, v.z = cosf(a) * 6.0f;
+	}
 	e->setVelocity(v);
 	e->mPosition.y += 8.0f;
 	e->onLiveFlag(LIVE_FLAG_AIRBORNE);
