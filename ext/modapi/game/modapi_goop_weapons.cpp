@@ -489,13 +489,28 @@ void blackGoop(f32 dt)
 		s_glideX += (dx * s_blackSpeed - s_glideX) * k;
 		s_glideZ += (dz * s_blackSpeed - s_glideZ) * k;
 	} else if (sane && s_gliding && !m->checkFlag(MARIO_FLAG_IN_WATER)) {
-		// off it, its speed carried on: through the air (a jump, a rocket jump) easing back to the
-		// game's own over seconds; on other ground more quickly
-		const f32 k = 1.0f - powf(0.5f, dt / (air ? 3.0f : 0.6f));
-		s_glideX += (dx - s_glideX) * k;
-		s_glideZ += (dz - s_glideZ) * k;
-		const f32 ex = s_glideX - dx, ez = s_glideZ - dz;
-		if (!air && ex * ex + ez * ez < 0.25f)
+		// off it, its speed carried on (through the air after a jump or a rocket jump, over other
+		// ground) and easing back to his own (over 3 seconds in the air, 1.5 on the ground); its way
+		// turned by the stick, readily (pulling back slows it down)
+		f32 speed       = sqrtf(s_glideX * s_glideX + s_glideZ * s_glideZ);
+		const f32 own   = sqrtf(dx * dx + dz * dz);
+		f32 way         = atan2f(s_glideX, s_glideZ);
+		if ((m->mInput & 1) && m->mIntendedMag > 1.0f) {
+			const f32 want = (f32)m->mIntendedYaw * (3.14159265f / 32768.0f);
+			f32 diff       = want - way;
+			while (diff > 3.14159265f)
+				diff -= 6.2831853f;
+			while (diff < -3.14159265f)
+				diff += 6.2831853f;
+			const f32 push = m->mIntendedMag / 32.0f > 1.0f ? 1.0f : m->mIntendedMag / 32.0f;
+			const f32 turn = (air ? 5.0f : 7.0f) * dt * push; // radians this tick
+			way += diff > turn ? turn : diff < -turn ? -turn : diff;
+			if (fabsf(diff) > 2.2f) // pulling back: slowing down
+				speed *= powf(0.5f, dt * push / 0.5f);
+		}
+		speed += (own - speed) * (1.0f - powf(0.5f, dt / (air ? 3.0f : 1.5f)));
+		s_glideX = sinf(way) * speed, s_glideZ = cosf(way) * speed;
+		if (!air && speed <= own * 1.05f + 0.3f)
 			s_gliding = false; // back to his own
 	} else
 		s_gliding = false;
