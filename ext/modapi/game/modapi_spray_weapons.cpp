@@ -749,9 +749,9 @@ void followChomp()
 // bazooka shot every manta in its burst; the submachine gun's hits come a third of a second sooner
 // (20 frames apart).
 const int kMantaHits[6] = {16, 8, 4, 2, 1, 1};
-TBossManta* mantaOf(void* object)
+TBossManta* mantaOf(void* object, bool always = false)
 {
-	if (!s_bosses || !object || !gpConductor)
+	if ((!s_bosses && !always) || !object || !gpConductor)
 		return 0;
 	THitActor* a = static_cast<THitActor*>(object);
 	if (TBossMantaAdditionalCollision* c = dynamic_cast<TBossMantaAdditionalCollision*>(a)) {
@@ -2161,6 +2161,10 @@ bool PortSprayWeaponOnBack(TMario* m, bool* model)
 
 // R held, a spray weapon chosen
 bool PortSprayWeaponTrigger() { return s_trigger; }
+
+// The Phantamanta (TBossManta) a hit on `object` is a hit on (itself or a wing's extra hit area),
+// or null (modapi_goop_weapons.cpp: fire goop hurts it)
+TBossManta* PortSprayManta(void* object) { return mantaOf(object, true); }
 
 // A spray weapon (not the normal spray) is chosen (modapi_held_fludd.cpp keeps the nozzle out).
 // The bazooka's green water balloon now, for drawing (modapi_weapon_models.cpp): where it is, the

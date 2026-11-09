@@ -46,6 +46,7 @@
 #include "port_ext.h"
 #include "port_framerate.h"
 
+#include <Enemy/BossManta.hpp>
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -55,7 +56,9 @@ extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
 bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
 bool PortIsPlayer2(TMario* mario); // co-op's Luigi
 MtxPtr PortFluddHeldEmitMtx(f32* scale); // the held FLUDD's nozzle tip
-bool PortSprayWeaponTrigger();          // modapi_spray_weapons.cpp: the fire button held
+bool PortSprayWeaponTrigger();
+class TBossManta;
+TBossManta* PortSprayManta(void* object); // modapi_spray_weapons.cpp: a hit on a Phantamanta          // modapi_spray_weapons.cpp: the fire button held
 bool PortSprayBazookaNoClean();     // modapi_spray_weapons.cpp
 // a picture shown in place of a texture, by its data (platform/gx/src/gx_texture.cpp)
 extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const unsigned char* rgba, int w, int h)
@@ -860,6 +863,17 @@ int objectHit(void* object, void* sender, unsigned message)
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return 0;
 	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+	if (drop && dropKind(drop->mParticleIndex) == kFire)
+		if (TBossManta* m = PortSprayManta(object)) {
+			// Phantamanta: fire goop hurts it as water does (a hit, then its own wait before the next),
+			// where the game would not count the drop (only drops flagged 0x40 hurt it)
+			if (!(gpModelWaterManager->mParticleFlagSOA[drop->mParticleIndex] & 0x40) && m->isDamageable()) {
+				if (gpMarioParticleManager)
+					gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &m->mPosition, 0, nullptr);
+				m->collidedWithWater();
+			}
+			return 0;
+		}
 	if (!drop || dropKind(drop->mParticleIndex) != kElectric)
 		return 0; // (fire: pushed by the water as ever, or thrown into the fire)
 	if (TLiveActor* e = dynamic_cast<TLiveActor*>(static_cast<THitActor*>(object))) {
