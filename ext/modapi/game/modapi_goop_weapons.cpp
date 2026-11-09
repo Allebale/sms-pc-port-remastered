@@ -28,6 +28,7 @@
 #include <dolphin/mtx.h>
 
 #include <Enemy/SmallEnemy.hpp>
+#include <NPC/NpcBase.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Map/MapCollisionData.hpp>
@@ -67,6 +68,7 @@ bool isKind(int k) { return k == kFire || k == kElectric || k == kBlack; }
 int s_kind;           // the goop weapon chosen: kFire, kElectric, or 0 none
 bool s_defeat;        // it may defeat enemies
 bool s_emitting;      // our own request, let through
+bool s_npcs = true; // friendly characters shocked, and thrown into fire, by the goop (never defeated)
 bool s_grassPress = true, s_grassBurn = true; // (Remastered's 3D Grass) electric goop presses it, fire goop burns it
 // Remastered's 3D Grass (port_grass.cpp), on builds that have it; none here otherwise
 void (*const port_grass_goop)(float x, float y, float z, float r, int kind, int ms) = 0;
@@ -123,7 +125,7 @@ f32 s_wallLife   = 30.0f;
 // enemies touched by the goop: shocked (held still, trembling, sparks on them) or burning (the
 // burning flames of the game's on them) for the kind's seconds, then defeated
 struct Zap {
-	TSmallEnemy* e;
+	TLiveActor* e; // an enemy, or a friendly character (with "Goop shocks and burns characters")
 	int kind;
 	f32 start;
 	f32 bx, by, bz;               // where it was shocked (held there)
@@ -312,7 +314,7 @@ void washWallAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
 // fire goop stepped in (or the fire stream): launched up two and a half times its own height,
 // jumping into fire: toward the nearest other puddle of fire goop (the one it is in when there is
 // no other), landing in its middle; with none, a random way
-void launchEnemy(TSmallEnemy* e)
+void launchEnemy(TLiveActor* e)
 {
 	if (e->checkLiveFlag(LIVE_FLAG_AIRBORNE))
 		return; // (already up)
@@ -356,13 +358,21 @@ void launchEnemy(TSmallEnemy* e)
 
 // `direct`: hit by the stream itself, hurt at once (a burn or shock counted now, not after its
 // seconds); else touched by the goop (a puddle, the grass on fire): burned or shocked for its seconds
-void burn(TSmallEnemy* e, int kind, bool launch = false, bool direct = false)
+// a friendly character (shocked and burnt, thrown into fire, never defeated)
+bool isNpc(TLiveActor* a) { return a && dynamic_cast<TBaseNPC*>(a) != 0; }
+
+void burn(TLiveActor* e, int kind, bool launch = false, bool direct = false)
 {
 	if (kind == kBlack)
 		return; // (only slippery)
 	if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return;
-	if (!s_defeat) {
+	const bool npc = isNpc(e);
+	if (npc && !s_npcs)
+		return;
+	if (npc)
+		direct = false; // (its whole shock or burn shown each time)
+	if (!s_defeat && !npc) {
 		if (launch && kind == kFire)
 			launchEnemy(e); // (thrown up, not defeated)
 		return;
@@ -400,7 +410,7 @@ void burn(TSmallEnemy* e, int kind, bool launch = false, bool direct = false)
 	if (launch && kind == kFire)
 		launchEnemy(e); // thrown up in the air, burning
 	SMSGetMSound()->startSoundActor(kind == kFire ? MSD_SE_EF_FIRE : MSD_SE_EN_DENNOKO_ELEC_DOWN, &e->mPosition, 0, nullptr, 0, 4);
-	fprintf(stderr, "[goop] an enemy %s\n", kind == kFire ? "set burning" : "shocked");
+	fprintf(stderr, "[goop] %s %s\n", npc ? "a character" : "an enemy", kind == kFire ? "set burning" : "shocked");
 }
 
 // each frame: the shocked held still and trembling with sparks, the burning in flames; defeated at the end
@@ -410,7 +420,7 @@ void zaps()
 		Zap& z = s_zaps[i];
 		if (!z.e)
 			continue;
-		TSmallEnemy* e = z.e;
+		TLiveActor* e = z.e;
 		if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN)) {
 			z.e = 0;
 			continue;
@@ -418,6 +428,12 @@ void zaps()
 		const f32 size = e->mScaling.y > 0.1f ? e->mScaling.y : 1.0f;
 		if (z.resting)
 			continue;
+		if (s_time - z.start >= statsOf(z.kind).defeat && isNpc(e)) {
+			z.resting = true; // a character: let go, never defeated (again after a moment in the goop)
+			z.until   = s_time + 1.0f;
+			z.hits    = 0;
+			continue;
+		}
 		if (s_time - z.start >= statsOf(z.kind).defeat && ++z.hits < statsOf(z.kind).hits) {
 			z.resting = true; // let go; shocked or burnt again when it touches the goop again
 			z.until   = s_time + 0.6f;
@@ -427,7 +443,8 @@ void zaps()
 			z.e = 0;
 			if (gpMarioParticleManager)
 				gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &e->mPosition, 0, nullptr); // a puff of smoke
-			e->kill(); // its own defeat, coins and all
+			if (TSmallEnemy* se = dynamic_cast<TSmallEnemy*>(e))
+				se->kill(); // its own defeat, coins and all
 			continue;
 		}
 		if (z.kind == kElectric) { // held where it was shocked, trembling
@@ -654,8 +671,9 @@ void hurtEnemiesIn(TLiveManager* mgr)
 	if (!mgr)
 		return;
 	for (int i = 0; i < mgr->getObjNum(); i++) {
-		TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(mgr->getObj(i));
-		if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+		TLiveActor* e = mgr->getObj(i);
+		if (!e || (!dynamic_cast<TSmallEnemy*>(e) && !(s_npcs && isNpc(e))) || e->checkLiveFlag(LIVE_FLAG_DEAD)
+		    || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 			continue;
 		if (s_grassBurn && port_grass_burning && port_grass_burning(e->mPosition.x, e->mPosition.z)) {
 			burn(e, kFire); // in the grass on fire
@@ -774,7 +792,7 @@ void afterMovement()
 
 // an electric goop drop about to reach an enemy: its velocity kept, so the game's push of the
 // water is taken back after (objectHitDone): shocked, not pushed
-TSmallEnemy* s_unpushed;
+TLiveActor* s_unpushed;
 JGeometry::TVec3<f32> s_unpushedV;
 int objectHit(void* object, void* sender, unsigned message)
 {
@@ -784,7 +802,7 @@ int objectHit(void* object, void* sender, unsigned message)
 	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
 	if (!drop || dropKind(drop->mParticleIndex) != kElectric)
 		return 0;
-	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object))) {
+	if (TLiveActor* e = dynamic_cast<TLiveActor*>(static_cast<THitActor*>(object))) {
 		s_unpushed  = e;
 		s_unpushedV = e->getVelocity();
 	}
@@ -802,7 +820,9 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	if (!drop)
 		return;
 	const int kind = dropKind(drop->mParticleIndex);
-	TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object));
+	TLiveActor* e = dynamic_cast<TLiveActor*>(static_cast<THitActor*>(object));
+	if (e && !dynamic_cast<TSmallEnemy*>(e) && !(s_npcs && isNpc(e)))
+		e = 0; // (an enemy or, with the setting, a character)
 	if (e && e == s_unpushed)
 		e->setVelocity(s_unpushedV); // (the water's push taken back)
 	s_unpushed = 0;
@@ -1614,6 +1634,7 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 	s_grassPress = (flags & (1 << 28)) == 0; // set: not
 	s_grassBurn  = (flags & (1 << 29)) == 0;
 	s_wallsOn    = (flags & (1 << 30)) == 0;
+	s_npcs       = ((unsigned)flags & 0x80000000u) == 0; // set: characters left alone
 	const int now = isKind(kind) ? kind : 0;
 	if (now != s_kind)
 		fprintf(stderr, "[goop] %s\n", now == kFire ? "fire goop" : now == kElectric ? "electric goop" : now == kBlack ? "black goop" : "no goop");
