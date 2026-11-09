@@ -31,6 +31,7 @@
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Map/MapCollisionData.hpp>
+#include <Map/Map.hpp>
 #include <Player/Mario.hpp>
 #include <Player/ModelWaterManager.hpp>
 #include <Player/WaterGun.hpp>
@@ -415,6 +416,44 @@ bool onBlack(TMario* m)
 	return false;
 }
 
+// Mario moved on from where the game left him to (tx, tz), a little at a time, kept out of walls
+// as the game keeps him (its wall check, at his knees and his chest): what stops him takes that
+// way out of the glide, so he slides along a wall instead of through it
+void glideTo(TMario* m, f32 tx, f32 tz)
+{
+	if (!gpMap)
+		return;
+	f32 x = m->mPosition.x, z = m->mPosition.z;
+	const f32 ax = tx - x, az = tz - z, along = sqrtf(ax * ax + az * az);
+	const int steps = along > 18.0f ? (int)(along / 18.0f) + 1 : 1;
+	for (int k = 0; k < steps; k++) {
+		const f32 wx = x + ax / steps, wz = z + az / steps; // where this step would take him
+		f32 px = wx, pz = wz;
+		bool hit = false;
+		static const f32 kHeights[2] = {30.0f, 80.0f};
+		for (int h = 0; h < 2; h++) {
+			TBGWallCheckRecord wall(px, m->mPosition.y + kHeights[h], pz, 50.0f, 4, TBGWallCheckRecord::IGNORE_WATER_THROUGH);
+			if (gpMap->isTouchedWallsAndMoveXZ(&wall)) {
+				px = wall.mCenter.x, pz = wall.mCenter.z;
+				if (wall.mResultWalls[0]) { // that way out of the glide
+					const JGeometry::TVec3<f32>& n = wall.mResultWalls[0]->getNormal();
+					const f32 into = s_glideX * n.x + s_glideZ * n.z;
+					if (into < 0.0f)
+						s_glideX -= n.x * into, s_glideZ -= n.z * into;
+				}
+				hit = true;
+			}
+		}
+		x = px, z = pz;
+		if (hit) {
+			const f32 ox = px - wx, oz = pz - wz;
+			if (ox * ox + oz * oz > 4.0f)
+				break; // stopped by it: no further this tick
+		}
+	}
+	m->mPosition.x = x, m->mPosition.z = z;
+}
+
 void blackGoop(f32 dt)
 {
 	TMario* m = gpMarioOriginal;
@@ -442,10 +481,8 @@ void blackGoop(f32 dt)
 			s_gliding = false; // back to his own
 	} else
 		s_gliding = false;
-	if (s_gliding) {
-		m->mPosition.x = s_prevX + s_glideX;
-		m->mPosition.z = s_prevZ + s_glideZ;
-	}
+	if (s_gliding)
+		glideTo(m, s_prevX + s_glideX, s_prevZ + s_glideZ); // (from where the game put him, walls in the way)
 	s_prevX = m->mPosition.x, s_prevZ = m->mPosition.z;
 	s_havePrev = true;
 }
