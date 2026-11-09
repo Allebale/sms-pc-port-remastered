@@ -779,7 +779,7 @@ void dropRegistrations(SmsMod* m)
 	if (m->armsFludd) { // the normal spray, the game's own numbers, no zoom
 		m->armsFludd = false;
 		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
-		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_BLACK_GOOP; w++) {
+		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_SMG; w++) {
 			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
 			modg_spray_view_distance(w, 0.0f);
 		}

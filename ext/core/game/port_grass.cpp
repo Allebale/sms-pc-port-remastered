@@ -353,27 +353,6 @@ const int kFlat          = 256;
 const f32 kFlatCell      = 12.0f;
 f32 s_flat[kFlat * kFlat];               // how flat: 1 just pressed, 0 standing
 f32 s_flatDir[kFlat * kFlat][2];         // which way it lies (x, z)
-// burnt away (the goop weapons' fire goop): how much of each cell's blades is left (1 all, 0 none;
-// the map's alpha), growing back over a minute and a half once nothing burns it
-f32 s_left[kFlat * kFlat];
-bool s_burnUsed;
-const s32 kBurnMs = 1200, kRegrowMs = 90000;
-// grass on fire (lit by fire goop): each burning cell burns its blades away in about a second, and
-// a moment after it caught, sets the grass cells round it alight; so fire runs on through grass
-// with no goop on it, and stops where the grass does
-struct Fire {
-	int cx, cz;   // its cell in the map
-	f32 y;        // the ground's height there
-	f32 age;      // seconds burning
-	f32 spreadAt; // when it lights its neighbours
-	bool spread;
-};
-const int kFires = 3000;
-Fire s_fires[kFires];
-int s_fireCount;
-u8 s_burning[kFlat * kFlat];
-const f32 kFireLife = 1.1f;
-void fireTick(f32 dt);
 u8 s_flatMap[kFlat * kFlat * 4];
 int s_flatX0, s_flatZ0;                  // the map's first cell, in cells across the world
 bool s_flatUsed, s_flatShown;
@@ -385,11 +364,6 @@ void flatClear()
 {
 	memset(s_flat, 0, sizeof s_flat);
 	s_flatUsed = false;
-	for (int i = 0; i < kFlat * kFlat; i++)
-		s_left[i] = 1.0f;
-	s_burnUsed  = false;
-	s_fireCount = 0;
-	memset(s_burning, 0, sizeof s_burning);
 }
 
 // The map's middle near Mario: moved by whole cells when he is a quarter of it away.
@@ -404,10 +378,7 @@ void flatFollow(f32 mx, f32 mz)
 	} else {
 		static f32 s_tmp[kFlat * kFlat];
 		static f32 s_tmpDir[kFlat * kFlat][2];
-		static f32 s_tmpLeft[kFlat * kFlat];
 		memset(s_tmp, 0, sizeof s_tmp);
-		for (int i = 0; i < kFlat * kFlat; i++)
-			s_tmpLeft[i] = 1.0f;
 		for (int z = 0; z < kFlat; z++)
 			for (int x = 0; x < kFlat; x++) {
 				const int ox = x + dx, oz = z + dz;
@@ -416,20 +387,7 @@ void flatFollow(f32 mx, f32 mz)
 				s_tmp[z * kFlat + x]       = s_flat[oz * kFlat + ox];
 				s_tmpDir[z * kFlat + x][0] = s_flatDir[oz * kFlat + ox][0];
 				s_tmpDir[z * kFlat + x][1] = s_flatDir[oz * kFlat + ox][1];
-				s_tmpLeft[z * kFlat + x]   = s_left[oz * kFlat + ox];
 			}
-		memcpy(s_left, s_tmpLeft, sizeof s_left);
-		memset(s_burning, 0, sizeof s_burning); // the fires moved with it (those off it out)
-		int kept = 0;
-		for (int i = 0; i < s_fireCount; i++) {
-			Fire f = s_fires[i];
-			f.cx -= dx, f.cz -= dz;
-			if (f.cx < 0 || f.cz < 0 || f.cx >= kFlat || f.cz >= kFlat)
-				continue;
-			s_burning[f.cz * kFlat + f.cx] = 1;
-			s_fires[kept++]                = f;
-		}
-		s_fireCount = kept;
 		memcpy(s_flat, s_tmp, sizeof s_flat);
 		memcpy(s_flatDir, s_tmpDir, sizeof s_flatDir);
 	}
@@ -467,25 +425,16 @@ void flatTick()
 	const s32 now = nowMs();
 	const s32 dt  = s_flatAt ? now - s_flatAt : 0;
 	s_flatAt      = now;
-	if (!s_flatUsed && !s_burnUsed) {
+	if (!s_flatUsed) {
 		if (s_flatShown) {
 			GXPC_GrassFlatMap(0, 0, 0.0f, 0.0f, 0.0f);
 			s_flatShown = false;
 		}
 		return;
 	}
-	const f32 fade   = dt > 0 ? (f32)dt / (f32)s_sprayMs : 0.0f;
-	const f32 regrow = dt > 0 ? (f32)dt / (f32)kRegrowMs : 0.0f;
-	if (s_fireCount)
-		fireTick(dt > 0 ? (f32)dt / 1000.0f : 0.0f);
-	bool any = false, burnt = false;
+	const f32 fade = dt > 0 ? (f32)dt / (f32)s_sprayMs : 0.0f;
+	bool any       = false;
 	for (int i = 0; i < kFlat * kFlat; i++) {
-		f32& left = s_left[i];
-		if (left < 1.0f) {
-			left  = left + regrow < 1.0f ? left + regrow : 1.0f;
-			burnt = burnt || left < 1.0f;
-		}
-		s_flatMap[i * 4 + 3] = (u8)(left * 255.0f + 0.5f);
 		f32& f = s_flat[i];
 		if (f <= 0.0f) {
 			s_flatMap[i * 4] = 0;
@@ -499,9 +448,9 @@ void flatTick()
 		s_flatMap[i * 4]     = (u8)(show * 255.0f + 0.5f);
 		s_flatMap[i * 4 + 1] = (u8)((s_flatDir[i][0] * 0.5f + 0.5f) * 255.0f + 0.5f);
 		s_flatMap[i * 4 + 2] = (u8)((s_flatDir[i][1] * 0.5f + 0.5f) * 255.0f + 0.5f);
+		s_flatMap[i * 4 + 3] = 255;
 	}
 	s_flatUsed = any;
-	s_burnUsed = burnt;
 	GXPC_GrassFlatMap(s_flatMap, kFlat, (f32)s_flatX0 * kFlatCell, (f32)s_flatZ0 * kFlatCell, kFlat * kFlatCell);
 	s_flatShown = true;
 }
@@ -770,159 +719,3 @@ void drawGrass(float (*view)[4])
 } // namespace
 
 void port_grass_draw(float (*view)[4]) { drawGrass(view); }
-
-namespace {
-// grass at a cell's middle (a grass triangle of the map there, near `nearY`): its height
-bool grassAt(f32 x, f32 z, f32 nearY, f32* y)
-{
-	const TBGCheckData* found[8];
-	const int n = grassNear(x, z, 1.0f, found, 8);
-	for (int i = 0; i < n; i++) {
-		if (!over(found[i], x, z))
-			continue;
-		const f32 h = heightAt(found[i], x, z);
-		if (fabsf(h - nearY) < 90.0f) {
-			*y = h;
-			return true;
-		}
-	}
-	return false;
-}
-
-f32 fireRandom()
-{
-	static u32 seed = 12345u;
-	seed            = seed * 1664525u + 1013904223u;
-	return (f32)((seed >> 8) & 0xFFFF) / 65535.0f;
-}
-
-// a cell set alight, if there is grass left there
-void ignite(int cx, int cz, f32 nearY, bool check)
-{
-	if (cx < 0 || cz < 0 || cx >= kFlat || cz >= kFlat || s_fireCount >= kFires)
-		return;
-	const int i = cz * kFlat + cx;
-	if (s_burning[i] || s_left[i] < 0.3f)
-		return;
-	f32 y = nearY;
-	if (check && !grassAt(((f32)(s_flatX0 + cx) + 0.5f) * kFlatCell, ((f32)(s_flatZ0 + cz) + 0.5f) * kFlatCell, nearY, &y))
-		return;
-	Fire& f    = s_fires[s_fireCount++];
-	f.cx = cx, f.cz = cz, f.y = y;
-	f.age      = 0.0f;
-	f.spreadAt = 0.18f + 0.25f * fireRandom();
-	f.spread   = false;
-	s_burning[i] = 1;
-	s_burnUsed   = true;
-}
-
-// each tick: the fires burn their grass away and light the grass round them
-void fireTick(f32 dt)
-{
-	static const int kNear[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
-	const int before = s_fireCount;
-	for (int i = 0; i < before; i++) {
-		Fire& f = s_fires[i];
-		f.age += dt;
-		f32& left = s_left[f.cz * kFlat + f.cx];
-		left      = left - dt / kFireLife > 0.0f ? left - dt / kFireLife : 0.0f;
-		if (!f.spread && f.age >= f.spreadAt) {
-			f.spread = true;
-			for (int k = 0; k < 8; k++)
-				if (fireRandom() < (k < 4 ? 0.9f : 0.6f))
-					ignite(f.cx + kNear[k][0], f.cz + kNear[k][1], f.y, true);
-		}
-	}
-	int kept = 0; // the burnt out gone
-	for (int i = 0; i < s_fireCount; i++) {
-		const Fire& f = s_fires[i];
-		if (f.age >= kFireLife && f.spread) {
-			s_burning[f.cz * kFlat + f.cx] = 0;
-			continue;
-		}
-		s_fires[kept++] = f;
-	}
-	s_fireCount = kept;
-	if (s_fireCount)
-		s_burnUsed = true;
-}
-} // namespace
-
-// The goop weapons' goop on the grass (ext/modapi/game/modapi_goop_weapons.cpp), each tick for each
-// puddle: electric goop (kind 0) keeps the blades under it pressed flat; fire goop (kind 1) burns
-// them away (gone in a little over a second, growing back later). `ms` since the last tick.
-void port_grass_goop(float x, float y, float z, float r, int kind, int ms)
-{
-	if (!s_style)
-		return;
-	if (kind == 0) {
-		flatStamp(x, z, r);
-		return;
-	}
-	const f32 fx = x / kFlatCell - (f32)s_flatX0, fz = z / kFlatCell - (f32)s_flatZ0;
-	const f32 rc = r / kFlatCell, burn = (f32)ms / (f32)kBurnMs;
-	const int x0 = (int)floorf(fx - rc), x1 = (int)ceilf(fx + rc);
-	const int z0 = (int)floorf(fz - rc), z1 = (int)ceilf(fz + rc);
-	for (int cz = z0 < 0 ? 0 : z0; cz <= z1 && cz < kFlat; cz++)
-		for (int cx = x0 < 0 ? 0 : x0; cx <= x1 && cx < kFlat; cx++) {
-			const f32 ddx = (f32)cx + 0.5f - fx, ddz = (f32)cz + 0.5f - fz;
-			if (ddx * ddx + ddz * ddz >= rc * rc)
-				continue;
-			f32& left  = s_left[cz * kFlat + cx];
-			left       = left - burn > 0.0f ? left - burn : 0.0f;
-			s_burnUsed = true;
-		}
-	// and the grass at its edge set alight (a few cells a tick): the fire runs on from there
-	for (int k = 0; k < 6; k++) {
-		const f32 a = fireRandom() * 6.2831853f;
-		ignite((int)floorf(fx + cosf(a) * (rc + 0.8f)), (int)floorf(fz + sinf(a) * (rc + 0.8f)), y, true);
-	}
-}
-
-// Grass burning at (x, z) (with fire running through it): 1 (Mario and enemies there are burnt)
-int port_grass_burning(float x, float z)
-{
-	if (!s_style || !s_fireCount)
-		return 0;
-	const int cx = (int)floorf(x / kFlatCell) - s_flatX0, cz = (int)floorf(z / kFlatCell) - s_flatZ0;
-	if (cx < 0 || cz < 0 || cx >= kFlat || cz >= kFlat)
-		return 0;
-	return s_burning[cz * kFlat + cx] && s_left[cz * kFlat + cx] > 0.15f;
-}
-
-// The burning cells' places (x, y, z each), at most `most` (spread over all of them): flames drawn there
-int port_grass_fires(float* out, int most)
-{
-	if (!s_style || !s_fireCount)
-		return 0;
-	if (!out || most <= 0)
-		return s_fireCount; // (only how many)
-	const int step = s_fireCount > most ? (s_fireCount + most - 1) / most : 1;
-	int n = 0;
-	for (int i = 0; i < s_fireCount && n < most; i += step) {
-		const Fire& f = s_fires[i];
-		out[n * 3]     = ((f32)(s_flatX0 + f.cx) + 0.5f) * kFlatCell;
-		out[n * 3 + 1] = f.y;
-		out[n * 3 + 2] = ((f32)(s_flatZ0 + f.cz) + 0.5f) * kFlatCell;
-		n++;
-	}
-	return n;
-}
-
-// FLUDD's water landing on grass on fire (modapi_goop_weapons.cpp): the fire within r put out
-void port_grass_extinguish(float x, float z, float r)
-{
-	if (!s_style || !s_fireCount)
-		return;
-	int kept = 0;
-	for (int i = 0; i < s_fireCount; i++) {
-		const Fire& f = s_fires[i];
-		const f32 dx = ((f32)(s_flatX0 + f.cx) + 0.5f) * kFlatCell - x, dz = ((f32)(s_flatZ0 + f.cz) + 0.5f) * kFlatCell - z;
-		if (dx * dx + dz * dz <= r * r) {
-			s_burning[f.cz * kFlat + f.cx] = 0;
-			continue;
-		}
-		s_fires[kept++] = f;
-	}
-	s_fireCount = kept;
-}
