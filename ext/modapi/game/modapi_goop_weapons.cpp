@@ -1373,6 +1373,7 @@ void GoopPacket::draw()
 	GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetFog(GX_FOG_NONE, 0.0f, 0.0f, 0.0f, 0.0f, (GXColor){0, 0, 0, 0});
+	GXSetColorUpdate(GX_TRUE);
 	for (int kind = kFire; kind <= kBlack; kind++) {
 		bool any = false;
 		for (int i = 0; i < kPuddles && !any; i++)
@@ -1680,10 +1681,30 @@ void PortGoopView(MtxPtr view)
 }
 
 // As FLUDD is entered for drawing: the goop entered too, when there is any
+bool s_entered; // entered with FLUDD this frame (else drawn with the water: PortGoopWaterDraw)
+bool goopToDraw()
+{
+	return (s_kind && port_spray_tagged_drops) || anyPuddle() || goopFlying() || (port_grass_fires && port_grass_fires(0, 0) > 0);
+}
 void PortGoopEntry()
 {
 	if (!s_haveView || !j3dSys.getDrawBuffer(0))
 		return;
-	if ((s_kind && port_spray_tagged_drops) || anyPuddle() || goopFlying() || (port_grass_fires && port_grass_fires(0, 0) > 0))
+	if (goopToDraw()) {
 		j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
+		s_entered = true;
+	}
+}
+
+// As the water drops are drawn (TModelWaterManager::perform's draw, patch zzzzzzzzz-goop-weapons):
+// the goop drawn here when FLUDD was not drawn this frame to enter it (first person with its other
+// nozzles, FLUDD hidden with Mario's body: the goop was gone)
+void PortGoopWaterDraw(MtxPtr view)
+{
+	const bool entered = s_entered;
+	s_entered          = false;
+	if (entered || !view || !goopToDraw())
+		return;
+	PortGoopView(view);
+	s_packet.draw();
 }

@@ -1,6 +1,6 @@
 --- a/src/Player/ModelWaterManager.cpp
 +++ b/src/Player/ModelWaterManager.cpp
-@@ -344,6 +344,11 @@
+@@ -344,6 +344,12 @@
  #ifdef TARGET_PC
  // FLUDD's spray weapons (ext/modapi/game/modapi_spray_weapons.cpp)
  bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made);
@@ -9,10 +9,11 @@
 +bool PortGoopDropHidden(int i);
 +bool PortGoopDropLands(int i, const TBGCheckData* ground);
 +bool PortGoopDropWall(int i, const TBGCheckData* wall); // ...and any drop on a wall
++void PortGoopWaterDraw(MtxPtr view); // ...and drawn here when FLUDD was not (first person, its other nozzles)
  #endif
  
  u8 TModelWaterManager::emitRequest(const TWaterEmitInfo& param_1)
-@@ -624,6 +629,12 @@
+@@ -624,6 +630,12 @@
  				}
  
  				mParticlePositionSOA[i].y = f31 - getWPGravity(i);
@@ -25,7 +26,7 @@
  
  				if (getFlagBottom4Bits(i) == 3) {
  					mParticleLifetimeSOA[i] = 0.0f;
-@@ -708,6 +719,12 @@
+@@ -708,6 +720,12 @@
  					       * (r27->mPlaneDistance
  					          + mParticlePositionSOA[i].dot(r27->getNormal()));
  
@@ -38,7 +39,7 @@
  					if (getFlagBottom4Bits(i) == 1) {
  						JGeometry::TVec3<f32> local_1A4
  						    = mParticlePositionSOA[i]
-@@ -898,6 +915,10 @@
+@@ -898,6 +916,10 @@
  
  		if (getFlagBottom4Bits(i) != 1)
  			continue;
@@ -49,3 +50,13 @@
  
  		f32 fadeTime = unk5D88[7];
  		u8 type      = mParticleTypeSOA[i];
+@@ -2164,6 +2186,9 @@
+ 		MTXCopy(r29, unk5E10);
+ 		if ((unk5D60 & 0x100) && !(unk5D60 & 0x200))
+ 			drawShineShadowVolume(graphics->mViewMtx);
++#ifdef TARGET_PC
++		PortGoopWaterDraw(graphics->mViewMtx);
++#endif
+ 
+ 		if (unk5D60 & 0x80)
+ 			TTimeRec::snapGxTimeEnd();
