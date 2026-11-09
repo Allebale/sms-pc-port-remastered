@@ -53,6 +53,8 @@
 
 extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
 bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
+MtxPtr PortFluddHeldEmitMtx(f32* scale); // the held FLUDD's nozzle tip
+bool PortSprayWeaponTrigger();          // modapi_spray_weapons.cpp: the fire button held
 bool PortSprayBazookaNoClean();     // modapi_spray_weapons.cpp
 // a picture shown in place of a texture, by its data (platform/gx/src/gx_texture.cpp)
 extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const unsigned char* rgba, int w, int h)
@@ -1285,9 +1287,39 @@ void drawTubes(int kind)
 	for (int c = 0; c < 3; c++)
 		eye[c] = -(s_view[0][c] * s_view[0][3] + s_view[1][c] * s_view[1][3] + s_view[2][c] * s_view[2][3]);
 	const f32 vx = s_view[2][0], vy = s_view[2][1], vz = s_view[2][2];
-	static int joins[1024];
+	// each piece of tube: its two ends, how thick there, and a drop for its texture's place
+	struct Piece { f32 p[2][3]; f32 rad[2]; int id; };
+	static Piece pieces[1025];
 	int m = 0;
-	for (int k = 0; k + 1 < n && m < 1024; k++) {
+	struct Thick {
+		static f32 at(f32 size, int kind, bool held, const f32* eye, const f32* o)
+		{
+			f32 r = size * 0.55f * statsOf(kind).drop * 0.85f;
+			if (held) {
+				const f32 ex = o[0] - eye[0], ey = o[1] - eye[1], ez = o[2] - eye[2];
+				const f32 d  = sqrtf(ex * ex + ey * ey + ez * ez) / 500.0f;
+				r *= 0.6f * (d < 0.5f ? 0.5f : d > 1.0f ? 1.0f : d);
+			}
+			return r;
+		}
+	};
+	// FLUDD held in view and firing: the stream starts right at its nozzle (joined to the newest drop)
+	f32 scale = 1.0f;
+	MtxPtr em = held && PortSprayWeaponTrigger() ? PortFluddHeldEmitMtx(&scale) : 0;
+	if (em) {
+		const int a = order[0];
+		const JGeometry::TVec3<f32>& pa = w->mParticlePositionSOA[a];
+		const f32 dx = pa.x - em[0][3], dy = pa.y - em[1][3], dz = pa.z - em[2][3];
+		if (dx * dx + dy * dy + dz * dz < 900.0f * 900.0f) {
+			Piece& pc = pieces[m++];
+			pc.p[0][0] = em[0][3], pc.p[0][1] = em[1][3], pc.p[0][2] = em[2][3];
+			pc.p[1][0] = pa.x, pc.p[1][1] = pa.y, pc.p[1][2] = pa.z;
+			pc.rad[1] = Thick::at(w->mParticleSizeSOA[a], kind, held, eye, pc.p[1]);
+			pc.rad[0] = pc.rad[1] * 0.7f; // (a little thinner out of the nozzle)
+			pc.id = a;
+		}
+	}
+	for (int k = 0; k + 1 < n && m < 1025; k++) {
 		const int a = order[k], b = order[k + 1];
 		if (w->mParticleLifetimeSOA[a] - w->mParticleLifetimeSOA[b] > 3.5f)
 			continue; // not let out one after the other
@@ -1298,7 +1330,12 @@ void drawTubes(int kind)
 		const f32 gap2 = 4.0f * (v.x * v.x + v.y * v.y + v.z * v.z) + 900.0f;
 		if (dx * dx + dy * dy + dz * dz > gap2)
 			continue; // too far apart: not the same stream
-		joins[m++] = k;
+		Piece& pc = pieces[m++];
+		pc.p[0][0] = pa.x, pc.p[0][1] = pa.y, pc.p[0][2] = pa.z;
+		pc.p[1][0] = pb.x, pc.p[1][1] = pb.y, pc.p[1][2] = pb.z;
+		pc.rad[0] = Thick::at(w->mParticleSizeSOA[a], kind, held, eye, pc.p[0]);
+		pc.rad[1] = Thick::at(w->mParticleSizeSOA[b], kind, held, eye, pc.p[1]);
+		pc.id = a;
 	}
 	if (!m)
 		return;
@@ -1310,21 +1347,12 @@ void drawTubes(int kind)
 	const f32 fl0 = flow(kind);
 	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(m * kSides * 6));
 	for (int t = 0; t < m; t++) {
-		const int a = order[joins[t]], b = order[joins[t] + 1];
-		const JGeometry::TVec3<f32>& pa = w->mParticlePositionSOA[a];
-		const JGeometry::TVec3<f32>& pb = w->mParticlePositionSOA[b];
-		f32 rad[2];
+		const Piece& pc = pieces[t];
+		const int a = pc.id;
+		const f32* rad = pc.rad;
+		const JGeometry::TVec3<f32> pa(pc.p[0][0], pc.p[0][1], pc.p[0][2]);
+		const JGeometry::TVec3<f32> pb(pc.p[1][0], pc.p[1][1], pc.p[1][2]);
 		const JGeometry::TVec3<f32>* ends[2] = {&pa, &pb};
-		const int ids[2] = {a, b};
-		for (int e = 0; e < 2; e++) {
-			f32 r = w->mParticleSizeSOA[ids[e]] * 0.55f * statsOf(kind).drop * 0.85f;
-			if (held) {
-				const f32 ex = ends[e]->x - eye[0], ey = ends[e]->y - eye[1], ez = ends[e]->z - eye[2];
-				const f32 d  = sqrtf(ex * ex + ey * ey + ez * ez) / 500.0f;
-				r *= 0.6f * (d < 0.5f ? 0.5f : d > 1.0f ? 1.0f : d);
-			}
-			rad[e] = r;
-		}
 		f32 fx = pb.x - pa.x, fy = pb.y - pa.y, fz = pb.z - pa.z;
 		const f32 fl = sqrtf(fx * fx + fy * fy + fz * fz) + 1e-4f;
 		fx /= fl, fy /= fl, fz /= fl;
