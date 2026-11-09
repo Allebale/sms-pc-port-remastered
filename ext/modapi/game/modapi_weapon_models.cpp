@@ -23,6 +23,8 @@
 bool PortBazookaBalloon(float* at, float* way, float* scale); // modapi_spray_weapons.cpp
 int PortBazookaBalloonPieces(float* out, int most);
 int PortWeaponHearts(float* out, int most); // modapi_spray_weapons.cpp
+void PortGoopView(MtxPtr view);             // modapi_goop_weapons.cpp
+void PortGoopEntry();
 
 namespace {
 
@@ -327,6 +329,7 @@ void PortWeaponModelView(MtxPtr view)
 {
 	MTXCopy(view, s_view);
 	s_haveView = true;
+	PortGoopView(view); // the goop weapons' goop too
 }
 
 // The muzzle's place in a model's own units, forward (0 the rifle, 1 the bazooka, 2 the submachine gun).
@@ -378,6 +381,7 @@ bool PortWeaponModelEntry()
 {
 	float at[3], way[3], scale; // the bazooka's balloon flying: entered too
 	float pieces[8], hearts[4];
+	PortGoopEntry(); // the goop weapons' stream and puddles
 	if (s_haveView && j3dSys.getDrawBuffer(0)
 	    && (PortBazookaBalloon(at, way, &scale) || PortBazookaBalloonPieces(pieces, 1) || PortWeaponHearts(hearts, 1)))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_balloonPacket, 0);
