@@ -1154,7 +1154,7 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 	const f32 lift = 1.5f + 0.04f * (f32)index + (gloss ? 0.3f : 0.0f); // over the ground (and over each other)
 	const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
 	const f32 time   = (f32)s_frame / 60.0f;
-	const bool water = p.kind == kElectric || p.kind == kBlack; // under a thin layer of moving water
+	const bool water = true; // every kind under a thin layer of moving water, bending it a little
 	// fire goop flickers and flows; electric goop lies still, the water over it bending it a little
 	const int shade = p.kind == kFire ? (int)(255.0f * (0.93f + 0.07f * sinf(time * 9.0f + p.seed))) : 255;
 	const f32 fl    = p.kind == kFire ? flow(p.kind) : 0.0f;
