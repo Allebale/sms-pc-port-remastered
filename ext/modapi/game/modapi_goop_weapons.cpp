@@ -84,6 +84,7 @@ struct Stats {
 const Stats kDefaults = {1.0f, 1.0f, 1.0f, 1.0f, 1, 1.0f};
 Stats s_stats[3]      = {kDefaults, kDefaults, kDefaults};
 f32 s_blackSpeed      = 1.0f; // black goop's speed, times its own
+f32 s_airTurn         = 0.5f; // turning in the air after a jump off it: 0 none, 1 at once (the stick's way)
 Stats& statsOf(int kind) { return s_stats[kind == kElectric ? 1 : kind == kBlack ? 2 : 0]; }
 
 // a puddle of goop on the ground
@@ -503,7 +504,8 @@ void blackGoop(f32 dt)
 			while (diff < -3.14159265f)
 				diff += 6.2831853f;
 			const f32 push = m->mIntendedMag / 32.0f > 1.0f ? 1.0f : m->mIntendedMag / 32.0f;
-			const f32 turn = (air ? 5.0f : 7.0f) * dt * push; // radians this tick
+			// radians this tick (in the air the mod's setting: 0 none, 50 percent 5 a second, 100 at once)
+			const f32 turn = air ? (s_airTurn >= 0.999f ? 10.0f : 10.0f * s_airTurn * dt * push) : 7.0f * dt * push;
 			way += diff > turn ? turn : diff < -turn ? -turn : diff;
 			if (fabsf(diff) > 2.2f) // pulling back: slowing down
 				speed *= powf(0.5f, dt * push / 0.5f);
@@ -1521,7 +1523,7 @@ void PortGoopSetWeapon(int kind, bool defeat, int flags)
 // A goop weapon's numbers (set_weapon_stats): `every` seconds of it defeat an enemy, `range` how
 // long its goop lasts (times a minute), `burst` its puddles' size, `drop` its stream's blobs' (each
 // times its own); has 0: its own again. Returns 1 for a goop weapon.
-int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water, float push)
+int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water, float push, float lift)
 {
 	if (!isKind(kind))
 		return 0;
@@ -1536,6 +1538,8 @@ int PortGoopStats(int kind, int has, float every, float range, float burst, floa
 	st.hits   = hits >= 1 ? (hits <= 50 ? hits : 50) : 1;
 	if (kind == kBlack)
 		s_blackSpeed = push >= 0.5f ? (push <= 10.0f ? push : 10.0f) : 1.0f; // (push: its speed)
+	if (kind == kBlack)
+		s_airTurn = has ? (lift < 0.0f ? 0.0f : lift > 1.0f ? 1.0f : lift) : 0.5f; // (lift: turning in the air)
 	st.water  = water > 0 ? (f32)(water <= 1000 ? water : 1000) / 100.0f : 1.0f; // (percent of FLUDD's)
 	s_wallLife = wall > 0.05f ? wall * 60.0f : 30.0f; // (both kinds': minutes)
 	return 1;

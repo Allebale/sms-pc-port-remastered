@@ -75,7 +75,7 @@ bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at);
 extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
 // the goop weapons (modapi_goop_weapons.cpp): FLUDD's own stream as fire or electric goop
 void PortGoopSetWeapon(int kind, bool defeat, int flags);
-int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water, float push);
+int PortGoopStats(int kind, int has, float every, float range, float burst, float drop, int hits, float wall, int water, float push, float lift);
 bool PortGoopEmit(const TWaterEmitInfo& asked, int* made);
 void PortGoopWash(float x, float y, float z, float r);
 
@@ -2243,7 +2243,7 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 		return 1;
 	}
 	if (weapon >= 5 && weapon <= 7) // a goop weapon's: its seconds to defeat, its goop's life and size, its blobs' size
-		return PortGoopStats(weapon, has, every, range, burst, dropSize, toDefeat, hit, water, push); // (hit_size: its goop on walls' minutes)
+		return PortGoopStats(weapon, has, every, range, burst, dropSize, toDefeat, hit, water, push, lift); // (hit_size: its goop on walls' minutes)
 	if (weapon < NORMAL || weapon >= WEAPONS)
 		return 0;
 	Weapon& w       = kWeapons[weapon];
