@@ -47,6 +47,7 @@
 #include "port_framerate.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -400,8 +401,15 @@ void flights(f32 dt)
 		e->mPosition.y = f.sy + (f.ty - f.sy) * k + 4.0f * f.high * k * (1.0f - k);
 		e->setVelocity(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
 		if (k >= 1.0f) {
-			f.a = 0; // down, in the fire
+			// down, in the fire: held right there a little while (no bounce on past it)
+			e->mPosition.x = f.tx, e->mPosition.z = f.tz;
+			if (f.at < f.length + dt)
+				e->mPosition.y = f.ty;
+			else if (e->mPosition.y > f.ty + 5.0f)
+				e->mPosition.y = f.ty;
 			e->offLiveFlag(LIVE_FLAG_AIRBORNE);
+			if (f.at >= f.length + 0.4f)
+				f.a = 0;
 		}
 	}
 }
@@ -852,8 +860,8 @@ int objectHit(void* object, void* sender, unsigned message)
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return 0;
 	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
-	if (!drop || dropKind(drop->mParticleIndex) != kElectric)
-		return 0;
+	if (!drop || (dropKind(drop->mParticleIndex) != kElectric && dropKind(drop->mParticleIndex) != kFire))
+		return 0; // (fire too: its throw lands it in the puddle, no push past it)
 	if (TLiveActor* e = dynamic_cast<TLiveActor*>(static_cast<THitActor*>(object))) {
 		s_unpushed  = e;
 		s_unpushedV = e->getVelocity();
@@ -1210,20 +1218,9 @@ void drawDrops(int kind)
 				ax = 1.0f, az = 0.0f, al = 1.0f;
 			ax /= al, az /= al;
 			const f32 bx = fy * az - fz * ay, by = fz * ax - fx * az, bz = fx * ay - fy * ax;
-			// drawn out to reach the next drop (its flight of a frame and a half), at least twice as long as wide
-			f32 len = fl * 0.75f;
-			len     = len > r * 2.2f ? len : r * 2.2f;
-			len     = len < r * 6.0f ? len : r * 6.0f;
-			if (held) { // thin: drawn out further, so each reaches the next and the stream is unbroken
-				len = fl * 1.4f > len ? fl * 1.4f : len;
-				len = len < 160.0f ? len : 160.0f;
-				// near the view shorter (the drops there close together): no long smear across it
-				// as Mario moves sideways
-				const f32 ex = p.x - eye[0], ey = p.y - eye[1], ez = p.z - eye[2];
-				const f32 nearBy = sqrtf(ex * ex + ey * ey + ez * ez) / 600.0f;
-				len *= nearBy < 0.3f ? 0.3f : nearBy > 1.0f ? 1.0f : nearBy;
-				len = len > r * 2.0f ? len : r * 2.0f;
-			}
+			// a round blob (a little longer along its flight): the tubes between the drops
+			// (drawTubes) make the stream unbroken
+			const f32 len = r * 1.3f;
 			const f32 u0 = (f32)(i % 7) * 0.13f + fl0 / kTile, v0 = (f32)(i % 5) * 0.17f;
 			f32 pts[kBands + 1][kAround][3];
 			int shade[kBands + 1][kAround];
@@ -1259,6 +1256,107 @@ void drawDrops(int kind)
 		}
 		GXEnd();
 	}
+}
+
+// the stream between its drops: each drop joined to the one let out just before it (by their
+// lifetimes, a tick or so apart) with a tube as thick as the drops, so the stream is one unbroken
+// line out of the nozzle however Mario moves
+int lifeOrder(const void* a, const void* b)
+{
+	const f32 la = gpModelWaterManager->mParticleLifetimeSOA[*(const int*)a];
+	const f32 lb = gpModelWaterManager->mParticleLifetimeSOA[*(const int*)b];
+	return la > lb ? -1 : la < lb ? 1 : 0;
+}
+void drawTubes(int kind)
+{
+	TModelWaterManager* w = gpModelWaterManager;
+	if (!w || !port_spray_tagged_drops)
+		return;
+	static int order[1024];
+	int n = 0;
+	for (int i = 0; i < (int)w->mParticleCount && n < 1024; i++)
+		if ((w->mParticleFlagSOA[i] & 0xf) == 1 && w->mParticleLifetimeSOA[i] > 0.0f && dropKind(i) == kind)
+			order[n++] = i;
+	if (n < 2)
+		return;
+	qsort(order, n, sizeof *order, lifeOrder);
+	const bool held = gpMarioOriginal && PortFluddHeld(gpMarioOriginal);
+	f32 eye[3];
+	for (int c = 0; c < 3; c++)
+		eye[c] = -(s_view[0][c] * s_view[0][3] + s_view[1][c] * s_view[1][3] + s_view[2][c] * s_view[2][3]);
+	const f32 vx = s_view[2][0], vy = s_view[2][1], vz = s_view[2][2];
+	static int joins[1024];
+	int m = 0;
+	for (int k = 0; k + 1 < n && m < 1024; k++) {
+		const int a = order[k], b = order[k + 1];
+		if (w->mParticleLifetimeSOA[a] - w->mParticleLifetimeSOA[b] > 3.5f)
+			continue; // not let out one after the other
+		const JGeometry::TVec3<f32>& pa = w->mParticlePositionSOA[a];
+		const JGeometry::TVec3<f32>& pb = w->mParticlePositionSOA[b];
+		const JGeometry::TVec3<f32>& v  = w->mParticleVelocitySOA[a];
+		const f32 dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
+		const f32 gap2 = 4.0f * (v.x * v.x + v.y * v.y + v.z * v.z) + 900.0f;
+		if (dx * dx + dy * dy + dz * dz > gap2)
+			continue; // too far apart: not the same stream
+		joins[m++] = k;
+	}
+	if (!m)
+		return;
+	textured(kind);
+	const int kSides = 8;
+	f32 ca[kSides], sa[kSides];
+	for (int q = 0; q < kSides; q++)
+		ca[q] = cosf(6.2831853f * q / kSides), sa[q] = sinf(6.2831853f * q / kSides);
+	const f32 fl0 = flow(kind);
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(m * kSides * 6));
+	for (int t = 0; t < m; t++) {
+		const int a = order[joins[t]], b = order[joins[t] + 1];
+		const JGeometry::TVec3<f32>& pa = w->mParticlePositionSOA[a];
+		const JGeometry::TVec3<f32>& pb = w->mParticlePositionSOA[b];
+		f32 rad[2];
+		const JGeometry::TVec3<f32>* ends[2] = {&pa, &pb};
+		const int ids[2] = {a, b};
+		for (int e = 0; e < 2; e++) {
+			f32 r = w->mParticleSizeSOA[ids[e]] * 0.55f * statsOf(kind).drop * 0.85f;
+			if (held) {
+				const f32 ex = ends[e]->x - eye[0], ey = ends[e]->y - eye[1], ez = ends[e]->z - eye[2];
+				const f32 d  = sqrtf(ex * ex + ey * ey + ez * ez) / 500.0f;
+				r *= 0.6f * (d < 0.5f ? 0.5f : d > 1.0f ? 1.0f : d);
+			}
+			rad[e] = r;
+		}
+		f32 fx = pb.x - pa.x, fy = pb.y - pa.y, fz = pb.z - pa.z;
+		const f32 fl = sqrtf(fx * fx + fy * fy + fz * fz) + 1e-4f;
+		fx /= fl, fy /= fl, fz /= fl;
+		f32 ax = -fz, ay = 0.0f, az = fx;
+		f32 al = sqrtf(ax * ax + az * az);
+		if (al < 1e-3f)
+			ax = 1.0f, az = 0.0f, al = 1.0f;
+		ax /= al, az /= al;
+		const f32 bx = fy * az - fz * ay, by = fz * ax - fx * az, bz = fx * ay - fy * ax;
+		const f32 u0 = (f32)(a % 7) * 0.13f + fl0 / kTile;
+		for (int q = 0; q < kSides; q++) {
+			const int q2 = (q + 1) % kSides;
+			f32 pt[4][3];
+			int sh[4];
+			const int sides[4] = {q, q2, q2, q};
+			for (int c = 0; c < 4; c++) {
+				const int e     = c < 2 ? 0 : 1;
+				const f32 nx    = ax * ca[sides[c]] + bx * sa[sides[c]], ny = ay * ca[sides[c]] + by * sa[sides[c]],
+				          nz    = az * ca[sides[c]] + bz * sa[sides[c]];
+				const JGeometry::TVec3<f32>& o = *ends[e];
+				pt[c][0] = o.x + nx * rad[e], pt[c][1] = o.y + ny * rad[e], pt[c][2] = o.z + nz * rad[e];
+				const f32 facing = nx * vx + ny * vy + nz * vz;
+				sh[c] = (int)(150.0f + 105.0f * (facing > 0.0f ? facing : 0.0f));
+			}
+			const f32 us[4] = {u0 + (f32)q / kSides * 0.35f, u0 + (f32)(q + 1) / kSides * 0.35f, u0 + (f32)(q + 1) / kSides * 0.35f, u0 + (f32)q / kSides * 0.35f};
+			const f32 vs[4] = {0.0f, 0.0f, 0.2f, 0.2f};
+			const int tri[6] = {0, 1, 2, 0, 2, 3};
+			for (int c = 0; c < 6; c++)
+				tcorner(pt[tri[c]][0], pt[tri[c]][1], pt[tri[c]][2], sh[tri[c]], us[tri[c]], vs[tri[c]]);
+		}
+	}
+	GXEnd();
 }
 
 void basis(const Puddle& p, f32* t, f32* b)
@@ -1535,6 +1633,7 @@ void GoopPacket::draw()
 		}
 		drawWalls(kind);
 		drawDrops(kind);
+		drawTubes(kind);
 	}
 	// the flames last: soft, added to what is behind, not hiding what is behind them
 	bool fire = port_grass_fires && port_grass_fires(0, 0) > 0;
