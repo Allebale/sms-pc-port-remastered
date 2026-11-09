@@ -309,12 +309,35 @@ void washWallAt(f32 x, f32 y, f32 z, f32 reach, f32 amount)
 }
 
 // an enemy in the stream or the goop: shocked or set burning (once), defeated when that is over
-void burn(TSmallEnemy* e, int kind)
+// fire goop stepped in: launched up in the air two and a half times its own height, a random way
+void launchEnemy(TSmallEnemy* e)
+{
+	if (e->checkLiveFlag(LIVE_FLAG_AIRBORNE))
+		return; // (already up)
+	f32 tall = e->getDamageHeight() > e->getAttackHeight() ? e->getDamageHeight() : e->getAttackHeight();
+	tall     = tall > 20.0f ? tall : 100.0f;
+	f32 g    = e->getGravityY();
+	g        = g > 0.05f ? g : 0.5f;
+	const f32 a = random01() * 6.2831853f;
+	JGeometry::TVec3<f32> v = e->getVelocity();
+	v.y = sqrtf(2.0f * g * 2.5f * tall);
+	v.x = sinf(a) * 6.0f, v.z = cosf(a) * 6.0f;
+	e->setVelocity(v);
+	e->mPosition.y += 8.0f;
+	e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+}
+
+void burn(TSmallEnemy* e, int kind, bool launch = false)
 {
 	if (kind == kBlack)
 		return; // (only slippery)
-	if (!s_defeat || !e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
+	if (!e || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return;
+	if (!s_defeat) {
+		if (launch && kind == kFire)
+			launchEnemy(e); // (thrown up, not defeated)
+		return;
+	}
 	Zap* free = 0;
 	for (int i = 0; i < kZaps; i++) {
 		Zap& z = s_zaps[i];
@@ -341,6 +364,8 @@ void burn(TSmallEnemy* e, int kind)
 	free->start = s_time;
 	free->bx = e->mPosition.x, free->by = e->mPosition.y, free->bz = e->mPosition.z;
 	free->centre = e->mPosition;
+	if (launch && kind == kFire)
+		launchEnemy(e); // thrown up in the air, burning
 	SMSGetMSound()->startSoundActor(kind == kFire ? MSD_SE_EF_FIRE : MSD_SE_EN_DENNOKO_ELEC_DOWN, &e->mPosition, 0, nullptr, 0, 4);
 	fprintf(stderr, "[goop] an enemy %s\n", kind == kFire ? "set burning" : "shocked");
 }
@@ -567,7 +592,16 @@ void hurtMario(f32 dt)
 		if (m->isInvincible())
 			continue;
 		if (p.kind == kFire) {
-			m->checkGraffitoFire(); // thrown up burning, a point of health
+			const u32 before = m->mStatus;
+			m->checkGraffitoFire(); // burning, a point of health...
+			if (m->mStatus == MARIO_STATUS_FIRE_DOWN && before != MARIO_STATUS_FIRE_DOWN) {
+				// ...launched up two and a half times his height, a random way
+				f32 g = m->mJumpParams.mGravity.get();
+				g     = g > 0.05f ? g : 2.0f;
+				m->mVel.y       = sqrtf(2.0f * g * 2.5f * 160.0f);
+				m->mFaceAngle.y = (s16)(random01() * 65535.0f);
+				m->mForwardVel  = 12.0f;
+			}
 			return;
 		}
 		const u32 type = m->mStatus & MARIO_STATUS_TYPE_MASK;
@@ -600,7 +634,7 @@ void hurtEnemiesIn(TLiveManager* mgr)
 				continue;
 			const f32 r = sizeNow(p) + 20.0f, dx = e->mPosition.x - p.x, dz = e->mPosition.z - p.z;
 			if (dx * dx + dz * dz <= r * r && fabsf(e->mPosition.y - p.y) < 60.0f) {
-				burn(e, p.kind);
+				burn(e, p.kind, true); // (fire goop: launched up)
 				break;
 			}
 		}
@@ -696,7 +730,7 @@ void afterMovement()
 			if (p.on && (p.kind == kFire ? s_grassBurn : s_grassPress))
 				port_grass_goop(p.x, p.y, p.z, sizeNow(p) * 0.95f, p.kind == kFire ? 1 : 0, (int)(dt * 1000.0f)); // (black: pressed, as electric)
 		}
-	if (s_time - s_enemyCheck >= 0.1f && s_defeat && gpConductor) {
+	if (s_time - s_enemyCheck >= 0.1f && gpConductor) {
 		s_enemyCheck = s_time;
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 			hurtEnemiesIn(*it);
