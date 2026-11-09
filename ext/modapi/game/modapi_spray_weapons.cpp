@@ -69,6 +69,7 @@ extern "C" int port_cheat_infinite_fludd;
 // only the lower ones. Until then (no First Person mod, or no weapon fired) the game's own attack.
 int port_spray_tagged_drops = 0;
 bool PortFluddHeld(TMario* mario);
+bool PortIsPlayer2(TMario* mario); // co-op's Luigi (modapi_held_fludd.cpp)
 bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward);
 void PortFluddHeldKick(f32 amount);
 bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at);
@@ -1646,7 +1647,7 @@ bool armed(TMario* m)
 {
 	if (PortFluddHeld(m))
 		return true;
-	if (!s_third || !m || m != gpMarioOriginal || m->onYoshi())
+	if (!s_third || !m || m != gpMarioOriginal || m->onYoshi() || PortIsPlayer2(m))
 		return false;
 	TWaterGun* g = m->mWaterGun;
 	if (!g || !g->mFluddModel)

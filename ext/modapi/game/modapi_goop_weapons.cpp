@@ -53,6 +53,7 @@
 
 extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
 bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
+bool PortIsPlayer2(TMario* mario); // co-op's Luigi
 MtxPtr PortFluddHeldEmitMtx(f32* scale); // the held FLUDD's nozzle tip
 bool PortSprayWeaponTrigger();          // modapi_spray_weapons.cpp: the fire button held
 bool PortSprayBazookaNoClean();     // modapi_spray_weapons.cpp
@@ -1852,7 +1853,7 @@ bool PortGoopEmit(const TWaterEmitInfo& asked, int* made)
 		return false;
 	TMario* m    = gpMarioOriginal;
 	TWaterGun* g = m ? m->mWaterGun : 0;
-	if (!g || g->mCurrentNozzle != TWaterGun::Spray || m->onYoshi())
+	if (!g || g->mCurrentNozzle != TWaterGun::Spray || m->onYoshi() || PortIsPlayer2(m))
 		return false;
 	const JGeometry::TVec3<f32>& at = asked.mPos.value;
 	const f32 dx = at.x - g->mEmitPos[0].x, dy = at.y - g->mEmitPos[0].y, dz = at.z - g->mEmitPos[0].z;

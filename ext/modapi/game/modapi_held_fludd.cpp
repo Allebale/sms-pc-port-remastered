@@ -300,8 +300,18 @@ bool PortSprayWeaponTrigger();
 const float* PortWeaponPackMuzzle(int which); // modapi_weapon_models.cpp
 void PortWeaponModelShowSecond(int which, MtxPtr viewModel);
 
+// Co-op's player 2 (Luigi, ext/coop): while the game runs as player 2, gpMarioOriginal is Luigi.
+// The First Person mod, FLUDD held in view and the weapons are player 1's only.
+extern "C" THitActor* port_coop_player2_actor(void);
+bool PortIsPlayer2(TMario* mario)
+{
+	return mario && (THitActor*)mario == port_coop_player2_actor();
+}
+
 bool PortFluddHeld(TMario* mario)
 {
+	if (PortIsPlayer2(mario))
+		return false;
 	if (!s_on || !mario || mario != gpMarioOriginal || mario->onYoshi())
 		return false;
 	TWaterGun* g = mario->mWaterGun;
@@ -763,7 +773,7 @@ bool PortFluddHeldWay(TWaterGun* g, const JGeometry::TVec3<f32>& from, JGeometry
 // are a double jump's instead: his body would turn over in front of the view.
 bool PortFluddHeldNoFlip(TMario* mario, int anm_id)
 {
-	if (!s_on || !mario || mario != gpMarioOriginal || mario->onYoshi())
+	if (!s_on || !mario || mario != gpMarioOriginal || mario->onYoshi() || PortIsPlayer2(mario))
 		return false;
 	const u32 status = mario->getStatus();
 	return (status == MARIO_STATUS_BACK_JUMP && anm_id == 0xF7)
