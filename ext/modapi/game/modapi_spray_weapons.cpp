@@ -324,6 +324,14 @@ void afterMovement()
 		gpModelWaterManager->unk5E0C = 6000.0f * s_farScale;
 		s_waterScaled                = s_farScale > 1.0f;
 	}
+	// the rocket jump keys held with the bazooka: no sliding down a wall (he keeps flying as from a
+	// jump, so a burst at the wall below him throws him on up it, as in Team Fortress 2)
+	if (s_weapon == BAZOOKA && s_muteMario && gpMarioOriginal && gpMarioOriginal->mStatus == MARIO_STATUS_WALL_SLIDE) {
+		TMario* m    = gpMarioOriginal;
+		const f32 vy = m->mVel.y;
+		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
+		m->mVel.y = vy; // (the jump's own push up not added)
+	}
 	followStraight();
 	followVisual();
 	followBalloon();
