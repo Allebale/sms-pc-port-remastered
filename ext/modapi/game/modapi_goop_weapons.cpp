@@ -766,7 +766,14 @@ bool zappedNow(TLiveActor* e)
 // the walk into the fire) added up since the stage began; one that never moves on its own (a
 // Piranha Plant, say) is never drawn to the fire
 const int kMovers = 256;
-struct Mover { TLiveActor* e; f32 x, z, moved; };
+struct Mover {
+	TLiveActor* e;
+	f32 x, z, moved;
+	bool held;   // walked to the fire by us last frame: its own moving since (after Mario) undone
+	f32 hx, hz;  // where we left it
+	f32 hitAt;   // when water last hit it (its push kept)
+	f32 heldAt;  // when (held only from just before)
+};
 Mover s_movers[kMovers];
 Mover* moverOf(TLiveActor* e)
 {
@@ -779,6 +786,7 @@ Mover* moverOf(TLiveActor* e)
 	}
 	if (free) {
 		free->e = e, free->x = e->mPosition.x, free->z = e->mPosition.z, free->moved = 0.0f;
+		free->held = false, free->hitAt = -100.0f, free->heldAt = -100.0f;
 	}
 	return free;
 }
@@ -794,7 +802,7 @@ void watchMovers(TLiveManager* mgr)
 		if (!m)
 			continue;
 		const f32 dx = e->mPosition.x - m->x, dz = e->mPosition.z - m->z, d = sqrtf(dx * dx + dz * dz);
-		if (d < 400.0f && !flyingNow(e)) // (not a jump back to where it began, nor a throw)
+		if (d < 400.0f && !flyingNow(e) && !(m->held && s_time - m->heldAt < 0.2f)) // (not a jump back to where it began, nor a throw)
 			m->moved += d;
 		m->x = e->mPosition.x, m->z = e->mPosition.z;
 	}
@@ -815,9 +823,22 @@ void walkToFire(TLiveManager* mgr, f32 dt)
 		return;
 	for (int i = 0; i < mgr->getObjNum(); i++) {
 		TLiveActor* e = mgr->getObj(i);
-		if (!e || !dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN)
-		    || e->checkLiveFlag(LIVE_FLAG_AIRBORNE) || flyingNow(e) || zappedNow(e) || !movesItself(e))
+		if (!e || !dynamic_cast<TSmallEnemy*>(e))
 			continue;
+		Mover* mv = 0;
+		for (int k = 0; k < kMovers && !mv; k++)
+			if (s_movers[k].e == e)
+				mv = &s_movers[k];
+		const bool wasHeld = mv && mv->held && s_time - mv->heldAt < 0.2f;
+		if (mv)
+			mv->held = false;
+		if (e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN) || e->checkLiveFlag(LIVE_FLAG_AIRBORNE)
+		    || flyingNow(e) || zappedNow(e) || !mv || !movesItself(e))
+			continue;
+		// drawn to the fire, Mario ignored: its own moving since last frame (chasing him, say) undone,
+		// unless water has just pushed it
+		if (wasHeld && s_time - mv->hitAt > 0.5f)
+			e->mPosition.x = mv->hx, e->mPosition.z = mv->hz;
 		f32 edge;
 		const Puddle* p = nearFire(e->mPosition.x, e->mPosition.y, e->mPosition.z, 2500.0f, &edge);
 		if (!p)
@@ -825,8 +846,11 @@ void walkToFire(TLiveManager* mgr, f32 dt)
 		f32 dx = p->x - e->mPosition.x, dz = p->z - e->mPosition.z;
 		const f32 d = sqrtf(dx * dx + dz * dz);
 		const f32 r = sizeNow(*p);
-		if (d < r * 0.4f || d < 1.0f)
-			continue; // well in it
+		if (d < r * 0.4f || d < 1.0f) { // well in it: kept there
+			mv->heldAt = s_time, mv->held = true, mv->hx = e->mPosition.x, mv->hz = e->mPosition.z;
+			mv->x = mv->hx, mv->z = mv->hz;
+			continue;
+		}
 		dx /= d, dz /= d;
 		f32 step = 260.0f * dt;
 		if (step > d - r * 0.4f)
@@ -837,9 +861,8 @@ void walkToFire(TLiveManager* mgr, f32 dt)
 			px = wall.mCenter.x, pz = wall.mCenter.z;
 		e->mPosition.x = px, e->mPosition.z = pz;
 		e->mRotation.y = atan2f(dx, dz) * 57.29578f; // facing the fire
-		for (int k = 0; k < kMovers; k++)
-			if (s_movers[k].e == e)
-				s_movers[k].x = px, s_movers[k].z = pz; // (this walk not its own)
+		mv->x = px, mv->z = pz; // (this walk not its own)
+		mv->heldAt = s_time, mv->held = true, mv->hx = px, mv->hz = pz;
 	}
 }
 
@@ -1070,6 +1093,10 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	if (e && e == s_unpushed)
 		e->setVelocity(s_unpushedV); // (the water's push taken back)
 	s_unpushed = 0;
+	if (e)
+		for (int k = 0; k < kMovers; k++)
+			if (s_movers[k].e == e)
+				s_movers[k].hitAt = s_time; // (its push by the water kept)
 	if (!kind && e && dynamic_cast<TSmallEnemy*>(e) && !e->checkLiveFlag(LIVE_FLAG_DEAD)) {
 		// water (FLUDD's or a weapon's) on an enemy near fire goop: thrown into the fire
 		f32 edge;
