@@ -1,0 +1,46 @@
+Reason: split-screen co-op (ext/coop): each FLUDD drop remembers which player sprayed it, and the hit of a drop of player 2's is taken with player 2's globals in force, so an enemy it reaches is pushed away from player 2 (the game's own push reads Mario's place and facing). Alone, nothing changes.
+
+--- a/src/Player/ModelWaterManager.cpp
++++ b/src/Player/ModelWaterManager.cpp
+@@ -37,12 +37,21 @@
+ 
+ // port: extensions hear of each hit this game's player (or its water) lands,
+ // and may stop one (port_ext.h: ext/multiplayer passes them to the other games)
++// Split-screen co-op (ext/coop/game/coop.cpp): whose each drop is, and a drop's hit taken with
++// the game's player globals (Mario's place and facing) its player's, so the push is from them
++extern "C" void port_coop_drop_made(int slot);
++extern "C" void port_coop_drop_moved(int to, int from);
++extern "C" int port_coop_drop_hit_begin(THitActor* drop);
++extern "C" void port_coop_drop_hit_end(int began);
++
+ static inline BOOL portHit(THitActor* to, THitActor* from, u32 message)
+ {
+ 	if (port_ext_object_hit(to, from, message))
+ 		return FALSE;
++	const int sms_coop_b = port_coop_drop_hit_begin(from);
+ 	const BOOL sms_ext_r = to->receiveMessage(from, message);
+ 	port_ext_object_hit_done(to, from, message, sms_ext_r);
++	port_coop_drop_hit_end(sms_coop_b);
+ 	return sms_ext_r;
+ }
+ 
+@@ -301,6 +310,9 @@
+ 
+ void TModelWaterManager::makeEmit(const TWaterEmitInfo& param_1)
+ {
++#ifdef TARGET_PC
++	port_coop_drop_made(mParticleCount); // (co-op: the player spraying it)
++#endif
+ 	mParticleLifetimeSOA[mParticleCount] = param_1.mAlive.get();
+ 	mParticleFlagSOA[mParticleCount]     = param_1.mFlag.get() | 1;
+ 	mParticleAttackSOA[mParticleCount]   = param_1.mAttack.get();
+@@ -487,6 +499,9 @@
+ 			mParticleLifetimeSOA[nextFreeSlot] = mParticleLifetimeSOA[i];
+ 			mParticleFlagSOA[nextFreeSlot]     = mParticleFlagSOA[i];
+ 			mParticleAttackSOA[nextFreeSlot]   = mParticleAttackSOA[i];
++#ifdef TARGET_PC
++			port_coop_drop_moved(nextFreeSlot, i);
++#endif
+ 			mParticlePositionSOA[nextFreeSlot] = mParticlePositionSOA[i];
+ 			mParticleVelocitySOA[nextFreeSlot] = mParticleVelocitySOA[i];
+ 			mParticleSizeSOA[nextFreeSlot]     = mParticleSizeSOA[i];
