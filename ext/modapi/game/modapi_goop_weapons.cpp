@@ -727,6 +727,74 @@ void hurtMario(f32 dt)
 }
 
 // enemies standing in a puddle (every tenth of a second)
+// the fire goop puddle nearest (x, y, z) within `reach` of its edge (level with it), or null; `edge`
+// how far outside its edge (less than 0: inside)
+const Puddle* nearFire(f32 x, f32 y, f32 z, f32 reach, f32* edge)
+{
+	const Puddle* best = 0;
+	f32 bestEdge       = 1e30f;
+	for (int i = 0; i < kPuddles; i++) {
+		const Puddle& p = s_puddles[i];
+		if (!p.on || p.kind != kFire || fabsf(p.y - y) > 300.0f)
+			continue;
+		const f32 dx = p.x - x, dz = p.z - z;
+		const f32 out = sqrtf(dx * dx + dz * dz) - sizeNow(p);
+		if (out < reach && out < bestEdge)
+			bestEdge = out, best = &p;
+	}
+	if (edge)
+		*edge = bestEdge;
+	return best;
+}
+
+bool flyingNow(TLiveActor* e)
+{
+	for (int i = 0; i < kFlights; i++)
+		if (s_flights[i].a == e)
+			return true;
+	return false;
+}
+bool zappedNow(TLiveActor* e)
+{
+	for (int i = 0; i < kZaps; i++)
+		if (s_zaps[i].e == e)
+			return true;
+	return false;
+}
+
+// Enemies drawn to fire goop: each small enemy within 2500 of a fire puddle walks into it (on top of
+// its own moving, turned that way, kept out of walls), and stays in it once there
+void walkToFire(TLiveManager* mgr, f32 dt)
+{
+	if (!mgr || !gpMap)
+		return;
+	for (int i = 0; i < mgr->getObjNum(); i++) {
+		TLiveActor* e = mgr->getObj(i);
+		if (!e || !dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN)
+		    || e->checkLiveFlag(LIVE_FLAG_AIRBORNE) || flyingNow(e) || zappedNow(e))
+			continue;
+		f32 edge;
+		const Puddle* p = nearFire(e->mPosition.x, e->mPosition.y, e->mPosition.z, 2500.0f, &edge);
+		if (!p)
+			continue;
+		f32 dx = p->x - e->mPosition.x, dz = p->z - e->mPosition.z;
+		const f32 d = sqrtf(dx * dx + dz * dz);
+		const f32 r = sizeNow(*p);
+		if (d < r * 0.4f || d < 1.0f)
+			continue; // well in it
+		dx /= d, dz /= d;
+		f32 step = 260.0f * dt;
+		if (step > d - r * 0.4f)
+			step = d - r * 0.4f;
+		f32 px = e->mPosition.x + dx * step, pz = e->mPosition.z + dz * step;
+		TBGWallCheckRecord wall(px, e->mPosition.y + 40.0f, pz, 40.0f, 4, TBGWallCheckRecord::IGNORE_WATER_THROUGH);
+		if (gpMap->isTouchedWallsAndMoveXZ(&wall))
+			px = wall.mCenter.x, pz = wall.mCenter.z;
+		e->mPosition.x = px, e->mPosition.z = pz;
+		e->mRotation.y = atan2f(dx, dz) * 57.29578f; // facing the fire
+	}
+}
+
 // a Phantamanta on fire goop: burnt as by three hits of water (16, 8, 4, 2, 1 by its generation),
 // half a second apart; `game`: the game makes the hit itself after this (a drop it counts)
 void mantaFire(TBossManta* m, bool game)
@@ -875,6 +943,9 @@ void afterMovement()
 	if (!any && !grassFire)
 		return;
 	hurtMario(dt);
+	if (gpConductor)
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			walkToFire(*it, dt);
 	if (port_grass_goop) // the grass under it: pressed flat, or burnt away
 		for (int i = 0; i < kPuddles; i++) {
 			const Puddle& p = s_puddles[i];
@@ -947,6 +1018,13 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 	if (e && e == s_unpushed)
 		e->setVelocity(s_unpushedV); // (the water's push taken back)
 	s_unpushed = 0;
+	if (!kind && e && dynamic_cast<TSmallEnemy*>(e) && !e->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		// water (FLUDD's or a weapon's) on an enemy near fire goop: thrown into the fire
+		f32 edge;
+		if (nearFire(e->mPosition.x, e->mPosition.y, e->mPosition.z, 700.0f, &edge) && edge > 0.0f)
+			launchEnemy(e);
+		return;
+	}
 	if (kind == kElectric)
 		burn(e, kind); // the shock as from its goop
 	else if (kind == kFire)
