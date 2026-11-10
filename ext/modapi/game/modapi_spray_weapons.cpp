@@ -337,6 +337,8 @@ struct Hit {
 	f32 normalLast;  // and last
 	f32 launchUntil; // thrown up by the bazooka with the rocket jump key held: kept going up till then
 	f32 launchUp;    // ...this fast
+	f32 dieAt;       // shot in the air: knocked along, defeated as it lands (or then at the latest)
+	int dieWeapon, dieOwner; // by which weapon, whose (co-op)
 };
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
@@ -381,6 +383,8 @@ void stageSetup()
 // the shoves, each frame: along the ground, stopped by a wall, slowing down
 const f32 kKeyLift = 30.0f; // an enemy thrown up by the bazooka with the rocket jump key, a 30th of a second's (no setting)
 
+void dropHeart(TLiveActor* e);
+
 void afterMovement()
 {
 	const f32 dt = port_frame_scale(); // 30ths of a second this frame
@@ -423,6 +427,25 @@ void afterMovement()
 			h.enemy->setVelocity(v);
 		}
 		h.enemy->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	}
+	for (int i = 0; i < kMostHits; i++) { // knocked out of the air: defeated as it lands, or at its time
+		Hit& h = s_hits[i];
+		if (!h.enemy || h.dieAt <= 0.0f)
+			continue;
+		if (h.enemy->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			h.dieAt = 0.0f;
+			continue;
+		}
+		const bool landed = s_time > h.dieAt - 0.45f && !h.enemy->checkLiveFlag(LIVE_FLAG_AIRBORNE);
+		if (!landed && s_time < h.dieAt)
+			continue;
+		h.dieAt = 0.0f;
+		h.vx = h.vz = 0.0f;
+		SprayFor f(h.dieOwner);
+		fprintf(stderr, "[weapons] an enemy in the air finished by the %s\n", kNames[h.dieWeapon]);
+		h.enemy->kill(); // as a stomp: its own defeat, coins and all
+		if (h.dieWeapon == BAZOOKA)
+			dropHeart(h.enemy);
 	}
 	for (int i = 0; i < kMostHits; i++) {
 		Hit& h = s_hits[i];
@@ -585,13 +608,24 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	// SmsSprayStats.key_launch (a mod's setting): a walking enemy hit in the air is defeated at once
 	// (2), and with the rocket jump key held (1) one the bazooka hits on the ground is thrown up into the air
 	if ((s_keyLaunch & 3) && moves(e)) {
+		if (h->dieAt > 0.0f)
+			return; // already knocked out of the air: on its way down
 		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
 			h->lastShot = shot;
 			h->hits     = 0;
-			fprintf(stderr, "[weapons] an enemy in the air finished by the %s\n", kNames[weapon]);
-			e->kill(); // as a stomp: its own defeat, coins and all
-			if (weapon == BAZOOKA)
-				dropHeart(e);
+			h->last     = s_time;
+			// knocked along the way of the shot (and a little up), defeated as it lands
+			const f32 air = (k.shove > 14.0f ? k.shove : 14.0f) * 1.5f;
+			h->vx = dx * air;
+			h->vz = dz * air;
+			JGeometry::TVec3<f32> v = e->getVelocity();
+			v.y = (v.y > 0.0f ? v.y : 0.0f) + 12.0f;
+			e->setVelocity(v);
+			h->launchUntil = 0.0f;
+			h->dieAt     = s_time + 0.6f;
+			h->dieWeapon = weapon;
+			h->dieOwner  = s_spFor >= 0 ? s_spFor : PortPlayerNow();
+			fprintf(stderr, "[weapons] an enemy in the air knocked out by the %s\n", kNames[weapon]);
 			return;
 		}
 		if ((s_keyLaunch & 1) && weapon == BAZOOKA) { // (the bazooka's only)
