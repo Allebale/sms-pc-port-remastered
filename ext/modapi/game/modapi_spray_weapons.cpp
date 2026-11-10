@@ -410,6 +410,7 @@ void afterMovement()
 	followHearts();
 	followChomp();
 	for (int i = 0; i < kMostHits; i++) { // thrown up with the rocket jump key: off the ground, whatever its own move did
+		// (only up: its own speed across the ground is left as it goes)
 		Hit& h = s_hits[i];
 		if (!h.enemy || s_time >= h.launchUntil || h.enemy->checkLiveFlag(LIVE_FLAG_DEAD))
 			continue;
@@ -594,10 +595,9 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 			if (!fresh || e->checkLiveFlag(LIVE_FLAG_AIRBORNE))
 				return; // the rest of a shot that has done its part: no push
 			h->lastShot = shot;
-			h->vx = h->vz = 0.0f; // straight up: no push along the ground
+			h->vx = h->vz = 0.0f; // up: no push along the ground
 			h->launchUntil = s_time + 0.1f;
-			JGeometry::TVec3<f32> v = e->getVelocity();
-			v.x = v.z = 0.0f;
+			JGeometry::TVec3<f32> v = e->getVelocity(); // its own speed across the ground kept (its momentum)
 			v.y = kKeyLift;
 			e->setVelocity(v);
 			e->mPosition.y += 8.0f;
