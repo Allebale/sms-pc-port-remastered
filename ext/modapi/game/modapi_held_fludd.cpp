@@ -411,19 +411,28 @@ bool PortFluddHeld(TMario* mario)
 // Which of FLUDD's own axes (its base turn on his back) point forward and up, and their signs:
 // learnt while he stands up straight, then kept, so the pack lies down with him in a dive or a
 // belly slide as FLUDD does (Held's packFwd, packUp).
-void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
+// `other`: co-op, the other player's view of a player whose FLUDD is held in their own: their
+// weapon seen as its pack on their back (FLUDD's pose, its water's start and the shots' left as
+// their own view has them)
+void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
 {
 	For f(PortPlayerIndex(g->mMario));
-	s_haveBackMuzzle = false;
 	bool model = false;
-	if (!g->mFluddModel || !PortSprayWeaponOnBack(g->mMario, &model))
-		return;
 	const int weapon  = PortSprayWeaponId();
 	const int which   = weapon == 2 ? 0 : weapon == 3 ? 1 : weapon == 4 ? 2 : -1; // the rifle, bazooka, submachine gun
+	if (other) {
+		if (!g->mFluddModel || which < 0)
+			return;
+		model = true;
+	} else {
+		s_haveBackMuzzle = false;
+		if (!g->mFluddModel || !PortSprayWeaponOnBack(g->mMario, &model))
+			return;
+	}
 	model             = model && which >= 0;
 	const f32 phase   = PortSprayWeaponShotPhase();
 	J3DModel* fm      = g->mFluddModel->getModel();
-	if (model || phase >= 0.0f || PortSprayWeaponTrigger()) {
+	if (!other && (model || phase >= 0.0f || PortSprayWeaponTrigger())) {
 		g->unk1CEC = 0.0f;       // out
 		g->unk1CFA = g->unk1CF8; // and the game's own wait before it puts it away
 		g->mFluddModel->setBck(phase >= 0.0f && !model ? "wg_pump" : "wg_house");
@@ -550,6 +559,8 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics)
 		MTXConcat(graphics->getViewMtx(), gunWorld, gunView);
 		PortWeaponModelShowSecond(6 + which, gunView);
 	}
+	if (other)
+		return;
 	const float* mz = PortWeaponPackMuzzle(which); // the shots from its muzzle, held still
 	s_backMuzzle.set(level[0][0] * mz[0] + level[0][1] * mz[1] + level[0][2] * mz[2] + level[0][3],
 	                 level[1][0] * mz[0] + level[1][1] * mz[1] + level[1][2] * mz[2] + level[1][3],
@@ -589,7 +600,8 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 			PortWeaponModelView(graphics->getViewMtx());
 		PortWeaponModelHide();
 		PortWeaponModelNoFludd(false);
-		if (PortFluddHeld(g->mMario) && g->mFluddModel) {
+		const bool held = PortFluddHeld(g->mMario);
+		if (held && g->mFluddModel) {
 			J3DModel* model = g->mFluddModel->getModel();
 			model->setBaseTRMtx(g->mMario->getM3UModel()->getModel()->getAnmMtx(g->mMario->mJointIdChest));
 			g->mFluddModel->calc();
@@ -598,6 +610,9 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 				nozzle->getModel()->calc();
 			}
 		}
+		// their weapon on their back as its pack, as the other player sees them (alive, not climbing)
+		if (graphics && !g->mMario->checkFlag(MARIO_FLAG_GAME_OVER) && !(PortSprayWeaponChosen() && climbing(g->mMario)))
+			onBack(g, graphics, held);
 		PortWeaponModelFor(-1);
 		PortSprayFor(-1);
 		return;
@@ -626,7 +641,7 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 		return;                           // (and on his back FLUDD as itself, not the weapon's pack)
 	}
 	if (g && graphics && !PortFluddHeld(g->mMario))
-		onBack(g, graphics);
+		onBack(g, graphics, false);
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
 		return;
 	// its nozzle kept out, as the gun: idle, the game puts it away after a moment (the "house"

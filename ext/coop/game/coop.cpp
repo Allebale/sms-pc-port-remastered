@@ -445,6 +445,28 @@ void dressOwn(TMario* m, bool luigi)
 			}
 }
 
+// Player 2's FLUDD (body and nozzles) with textures of its own: they share Mario's, so a look given
+// to one FLUDD's textures (the goop weapons' dressing, port_coop_own_fludd_textures) showed on
+// both. Made when first asked for, once for each player 2.
+TMario* s_ownFluddFor;
+void ownFluddTextures(TMario* m)
+{
+	TWaterGun* g = m ? m->mWaterGun : nullptr;
+	if (!g || s_ownFluddFor == m)
+		return;
+	s_ownFluddFor = m;
+	if (g->mFluddModel && g->mFluddModel->getModel()) {
+		J3DModelData* d = g->mFluddModel->getModel()->getModelData();
+		d->setTexture(ownTextures(d->getTexture(), nullptr));
+	}
+	for (int n = 0; n < 6; n++)
+		if (g->mNozzleList[n] && g->mNozzleList[n]->getMActor() && g->mNozzleList[n]->getMActor()->getModel()) {
+			J3DModelData* d = g->mNozzleList[n]->getMActor()->getModel()->getModelData();
+			d->setTexture(ownTextures(d->getTexture(), nullptr));
+		}
+	fprintf(stderr, "[coop] player 2's FLUDD has textures of its own\n");
+}
+
 // ------------------------------------------------------------ player 2 and camera 2
 
 TMario* p1() { return s_p1.mario; }
@@ -572,6 +594,7 @@ void sceneLoaded()
 	coop_character::stageStart();
 	TCoopMario* m = new TCoopMario;
 	s_p2.mario    = m;
+	s_ownFluddFor = nullptr; // (a new player 2: their FLUDD's textures Mario's until asked)
 	JSUMemoryInputStream body((void*)record, size);
 	m->load(body); // as player 2 (InP2): its parameters, models and FLUDD
 	m->setGamePad(gpMarDirector->getGamePad(1));
@@ -1953,6 +1976,16 @@ extern "C" int port_coop_view_rect(int view, float* r)
 	viewRect(view ? 1 : 0, r);
 	return 1;
 }
+// Player 2's FLUDD given textures of its own (the goop weapons, to dress each FLUDD apart): 1 done
+extern "C" int port_coop_own_fludd_textures(void* mario)
+{
+	TMario* m = (TMario*)mario;
+	if (!m || !s_made || m != s_p2.mario)
+		return 0;
+	ownFluddTextures(m);
+	return 1;
+}
+
 // player 1's Mario, whoever the game runs as now (its globals player 2's while they run)
 extern "C" THitActor* port_coop_player1_actor(void)
 {

@@ -74,6 +74,7 @@ extern "C" void port_coop_leave_player2(void);
 int PortPlayerNow(); // modapi_game.cpp
 int PortPlayers();
 TMario* PortPlayerMario(int i);
+int PortPlayerIndex(const void* m);
 bool PortIsPlayer2(TMario* mario); // co-op's Luigi (modapi_held_fludd.cpp)
 bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward);
 void PortFluddHeldKick(f32 amount);
@@ -365,7 +366,11 @@ void afterMovement()
 		SprayFor f(0);
 		playerTurn();
 	}
-	if (PortPlayers() == 2 && port_coop_enter_player2()) {
+	// (only while player 2 has something of a weapon's going: nothing without a weapons mod)
+	const SprayPlayer& two = s_sp[1];
+	const bool twoBusy = two.weapon != NORMAL || two.rocketAir || two.balloon.on || two.visual.tag || two.bazookaShot
+	                     || s_time < two.soundUntil;
+	if (twoBusy && PortPlayers() == 2 && port_coop_enter_player2()) {
 		{
 			SprayFor f(1);
 			playerTurn();
@@ -1712,7 +1717,7 @@ bool armed(TMario* m)
 {
 	if (PortFluddHeld(m))
 		return true;
-	if (!s_third || !m || m != gpMarioOriginal || m->onYoshi())
+	if (!s_third || !m || m != PortPlayerMario(PortPlayerIndex(m)) || m->onYoshi()) // (a player's: co-op, either)
 		return false;
 	TWaterGun* g = m->mWaterGun;
 	if (!g || !g->mFluddModel)

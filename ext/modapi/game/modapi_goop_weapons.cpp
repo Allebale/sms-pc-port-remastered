@@ -139,7 +139,7 @@ struct Puddle {
 	f32 r;          // its size (radius)
 	f32 born;       // when it was last added to (s_time)
 	f32 seed;       // its own shape and flicker
-	f32 inside;     // Mario standing in it (electric's moment before it shocks)
+	f32 inside[2];  // each player standing in it (electric's moment before it shocks; co-op: each their own)
 };
 const int kPuddles = 64;
 Puddle s_puddles[kPuddles];
@@ -275,7 +275,7 @@ void addGoop(int kind, f32 x, f32 y, f32 z, const TBGCheckData* ground)
 	p->r      = start;
 	p->born   = s_time;
 	p->seed   = random01() * 100.0f;
-	p->inside = 0.0f;
+	p->inside[0] = p->inside[1] = 0.0f;
 }
 
 // washed: every puddle under (x, z) shrinks by `amount`, gone when small
@@ -701,6 +701,7 @@ void blackGoop(f32 dt)
 void hurtMario(f32 dt)
 {
 	TMario* m = gpMarioOriginal;
+	const int who = s_gpFor >= 0 ? s_gpFor : PortPlayerNow();
 	if (!m || m->onYoshi() || m->checkFlag(MARIO_FLAG_GAME_OVER) || m->checkFlag(MARIO_FLAG_IN_WATER))
 		return;
 	for (int i = 0; i < kWalls && !m->isInvincible(); i++) { // goop on a wall he touches
@@ -733,10 +734,10 @@ void hurtMario(f32 dt)
 			continue;
 		const f32 r = sizeNow(p) * 0.85f, dx = m->mPosition.x - p.x, dz = m->mPosition.z - p.z;
 		if (dx * dx + dz * dz > r * r || fabsf(m->mPosition.y - p.y) > 40.0f) {
-			p.inside = 0.0f;
+			p.inside[who] = 0.0f;
 			continue;
 		}
-		p.inside += dt;
+		p.inside[who] += dt;
 		if (p.kind == kBlack)
 			continue; // (slippery: blackGoop)
 		if (m->isInvincible())
@@ -755,7 +756,7 @@ void hurtMario(f32 dt)
 			return;
 		}
 		const u32 type = m->mStatus & MARIO_STATUS_TYPE_MASK;
-		if (p.inside >= 0.15f && m->mStatus != MARIO_STATUS_ELECTRIC_DAMAGE
+		if (p.inside[who] >= 0.15f && m->mStatus != MARIO_STATUS_ELECTRIC_DAMAGE
 		    && (type == MARIO_STATUS_TYPE_WAITING || type == MARIO_STATUS_TYPE_RUNNING)) {
 			m->changePlayerStatus(MARIO_STATUS_ELECTRIC_DAMAGE, 0, false); // shocked, a point of health
 			SMSGetMSound()->startSoundActor(MSD_SE_MA_DAMAGE_ELEC, &m->mPosition, 0, nullptr, 0, 4);
@@ -1070,14 +1071,16 @@ void afterMovement()
 		drain();
 		blackGoop(dt);
 	}
-	if (PortPlayers() == 2 && port_coop_enter_player2()) {
+	// (only with goop about: nothing without a weapons mod)
+	if ((s_gp[1].kind || s_gp[1].gliding || anyPuddle()) && PortPlayers() == 2 && port_coop_enter_player2()) {
 		{
 			GoopFor f(1);
 			drain();
 			blackGoop(dt);
 		}
 		port_coop_leave_player2();
-	}
+	} else
+		s_gp[1].lastWater = -1; // (counted afresh when it comes back)
 	if (gpConductor) // (which enemies move by themselves, known before any fire)
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 			watchMovers(*it);
@@ -2119,21 +2122,33 @@ struct Dressed {
 	u32 bytes;
 };
 const int kDressMost = 48;
-Dressed s_dressed[kDressMost];
-int s_dressedCount;
-f32 s_dressNext;
-u8 s_pulse[kTex * kTex * 4];
+// each player's FLUDD (co-op: player 2's has textures of its own, port_coop_own_fludd_textures)
+struct Dress {
+	Dressed list[kDressMost];
+	int count;
+	f32 next;
+	int kind;
+	u8 pulse[kTex * kTex * 4];
+};
+Dress s_dressOf[2];
 bool s_namesTold;
 
+void undress(int p)
+{
+	Dress& d = s_dressOf[p];
+	if (GXPC_SetTextureOverride)
+		for (int i = 0; i < d.count; i++)
+			GXPC_SetTextureOverride(d.list[i].data, d.list[i].bytes, 0, 0, 0);
+	d.count = 0;
+}
 void undress()
 {
-	if (GXPC_SetTextureOverride)
-		for (int i = 0; i < s_dressedCount; i++)
-			GXPC_SetTextureOverride(s_dressed[i].data, s_dressed[i].bytes, 0, 0, 0);
-	s_dressedCount = 0;
+	undress(0);
+	undress(1);
+	s_dressOf[0].kind = s_dressOf[1].kind = 0;
 }
 
-void dressModel(J3DModel* model)
+void dressModel(J3DModel* model, Dress& d)
 {
 	J3DModelData* data   = model ? model->getModelData() : 0;
 	J3DTexture* textures = data ? data->getTexture() : 0;
@@ -2152,51 +2167,71 @@ void dressModel(J3DModel* model)
 		const void* at  = (const void*)(uintptr_t)(u32)((uintptr_t)t + t->imageDataOffset);
 		const u32 bytes = GXGetTexBufferSize(t->width, t->height, t->format, GX_FALSE, 0);
 		bool known = false;
-		for (int k = 0; k < s_dressedCount && !known; k++)
-			known = s_dressed[k].data == at;
-		if (!known && s_dressedCount < kDressMost) {
-			GXPC_SetTextureOverride(at, bytes, s_pulse, kTex, kTex);
-			s_dressed[s_dressedCount].data  = at;
-			s_dressed[s_dressedCount].bytes = bytes;
-			s_dressedCount++;
+		for (int k = 0; k < d.count && !known; k++)
+			known = d.list[k].data == at;
+		if (!known && d.count < kDressMost) {
+			GXPC_SetTextureOverride(at, bytes, d.pulse, kTex, kTex);
+			d.list[d.count].data  = at;
+			d.list[d.count].bytes = bytes;
+			d.count++;
 		}
 	}
 }
 
-int s_dressedKind;
+extern "C" int port_coop_own_fludd_textures(void* mario); // ext/coop: player 2's FLUDD's own textures
+
+// Each player's FLUDD in their own goop weapon's look (co-op: player 2's given textures of its
+// own first, so each can be dressed apart)
+void dressFluddOf(int p)
+{
+	GoopFor f(p);
+	Dress& d     = s_dressOf[p];
+	TMario* m    = PortPlayerMario(p);
+	TWaterGun* g = m ? m->mWaterGun : 0;
+	if (!s_kind || !g) {
+		if (d.count)
+			undress(p);
+		d.kind = 0;
+		return;
+	}
+	if (d.kind != s_kind) { // the goop's texture, still, in place of FLUDD's own
+		undress(p);
+		d.kind = s_kind;
+		makeTextures();
+		memcpy(d.pulse, s_kind == kFire ? s_rgbaFire : s_kind == kBlack ? s_rgbaBlack : s_rgbaElectric, sizeof d.pulse);
+		d.next = 0.0f;
+	}
+	if (s_time < d.next)
+		return;
+	d.next = s_time + 1.0f; // (a texture of FLUDD's not yet dressed: another nozzle's, a new stage's)
+	const int before = d.count;
+	dressModel(g->mFluddModel ? g->mFluddModel->getModel() : 0, d);
+	for (int n = 0; n < 6; n++) {
+		TNozzleBase* nozzle = g->mNozzleList[n];
+		if (nozzle && nozzle->getMActor())
+			dressModel(nozzle->getMActor()->getModel(), d);
+	}
+	s_namesTold = true;
+	if (d.count != before)
+		fprintf(stderr, "[goop] %sFLUDD dressed in %s goop (%d textures)\n", p ? "player 2's " : "",
+		        s_kind == kFire ? "fire" : s_kind == kBlack ? "black" : "electric", d.count);
+}
+
 void dressFludd()
 {
 	if (!GXPC_SetTextureOverride)
 		return;
-	GoopFor f(0); // (player 1's)
-	TMario* m    = PortPlayerMario(0);
-	TWaterGun* g = m ? m->mWaterGun : 0;
-	if (!s_kind || !g) {
-		if (s_dressedCount)
-			undress();
-		s_dressedKind = 0;
-		return;
+	// with two players and a goop weapon chosen by either, player 2's FLUDD gets textures of its own
+	// (it shared player 1's: dressed as one)
+	if (PortPlayers() == 2 && (s_gp[0].kind || s_gp[1].kind))
+		port_coop_own_fludd_textures(PortPlayerMario(1));
+	dressFluddOf(0);
+	if (PortPlayers() == 2)
+		dressFluddOf(1);
+	else if (s_dressOf[1].count) {
+		undress(1);
+		s_dressOf[1].kind = 0;
 	}
-	if (s_dressedKind != s_kind) { // the goop's texture, still, in place of FLUDD's own
-		undress();
-		s_dressedKind = s_kind;
-		makeTextures();
-		memcpy(s_pulse, s_kind == kFire ? s_rgbaFire : s_kind == kBlack ? s_rgbaBlack : s_rgbaElectric, sizeof s_pulse);
-		s_dressNext = 0.0f;
-	}
-	if (s_time < s_dressNext)
-		return;
-	s_dressNext = s_time + 1.0f; // (a texture of FLUDD's not yet dressed: another nozzle's, a new stage's)
-	const int before = s_dressedCount;
-	dressModel(g->mFluddModel ? g->mFluddModel->getModel() : 0);
-	for (int n = 0; n < 6; n++) {
-		TNozzleBase* nozzle = g->mNozzleList[n];
-		if (nozzle && nozzle->getMActor())
-			dressModel(nozzle->getMActor()->getModel());
-	}
-	s_namesTold = true;
-	if (s_dressedCount != before)
-		fprintf(stderr, "[goop] FLUDD dressed in %s goop (%d textures)\n", s_kind == kFire ? "fire" : s_kind == kBlack ? "black" : "electric", s_dressedCount);
 }
 
 PortExtension s_extension;
