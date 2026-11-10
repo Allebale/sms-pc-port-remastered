@@ -648,22 +648,19 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		return;
 	const Weapon& k = kWeapons[weapon];
 	const bool fresh = h->lastShot != shot; // this shot's first drop to reach it
-	// SmsSprayStats.key_launch (a mod's setting): a walking enemy hit in the air is defeated at once
-	// (2), and with the rocket jump key held (1) one the bazooka hits on the ground is thrown up into the air
+	// SmsSprayStats.key_launch (a mod's setting): a walking enemy the bazooka hits in the air, in first
+	// person, is defeated at once (2), and with the rocket jump key held (1) one the bazooka hits on the ground is thrown up into the air
 	if ((s_keyLaunch & 3) && moves(e)) {
-		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+		// (the bazooka in first person only: FLUDD held in view)
+		TMario* shooter = PortPlayerMario(s_spFor >= 0 ? s_spFor : PortPlayerNow());
+		if ((s_keyLaunch & 2) && fresh && weapon == BAZOOKA && shooter && PortFluddHeld(shooter)
+		    && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
 			h->lastShot = shot;
 			h->hits     = 0;
-			// the bazooka in first person (FLUDD held in view): it bursts; the others' as ever
-			TMario* shooter = PortPlayerMario(s_spFor >= 0 ? s_spFor : PortPlayerNow());
-			if (weapon == BAZOOKA && shooter && PortFluddHeld(shooter)) {
-				fprintf(stderr, "[weapons] an enemy in the air burst by the bazooka\n");
-				shatter(e, dx, dz);
-			} else
-				fprintf(stderr, "[weapons] an enemy in the air defeated by the %s\n", kNames[weapon]);
+			fprintf(stderr, "[weapons] an enemy in the air burst by the bazooka\n");
+			shatter(e, dx, dz);
 			e->kill(); // as a stomp: its own defeat, coins and all
-			if (weapon == BAZOOKA)
-				dropHeart(e);
+			dropHeart(e);
 			return;
 		}
 		if ((s_keyLaunch & 1) && weapon == BAZOOKA) { // (the bazooka's only)
