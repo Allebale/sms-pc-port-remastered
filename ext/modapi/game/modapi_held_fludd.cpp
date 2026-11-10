@@ -938,19 +938,40 @@ bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at)
 	return true;
 }
 
-// Co-op: where a drop (water or goop, at `at`) is seen in the view being made or drawn. A
-// first-person player's stream comes out of the FLUDD held in their own view, in front of their
-// face; the other player sees FLUDD on their back, so the drops near the held one are seen moved
-// that way, less the further they are from it (none 400 away).
-extern "C" int port_coop_second_entry;
-void PortWaterSeenAt(f32* at)
+// Co-op: whose view a view matrix is, told by its eye: the first-person player whose own view's
+// eye it is (FLUDD held in it), or -1 (a third-person camera). The game's globals cannot tell it:
+// the views are worked out and drawn at different times.
+int PortViewOwner(MtxPtr view)
+{
+	if (!view)
+		return -1;
+	f32 eye[3];
+	for (int c = 0; c < 3; c++)
+		eye[c] = -(view[0][c] * view[0][3] + view[1][c] * view[1][3] + view[2][c] * view[2][3]);
+	for (int p = 0; p < PortPlayers(); p++) {
+		const Held& h = s_held[p];
+		TMario* m     = PortPlayerMario(p);
+		if (!m || !PortFluddHeld(m) || !h.haveInView)
+			continue;
+		const f32 dx = eye[0] - h.viewEye.x, dy = eye[1] - h.viewEye.y, dz = eye[2] - h.viewEye.z;
+		if (dx * dx + dy * dy + dz * dz < 60.0f * 60.0f)
+			return p;
+	}
+	return -1;
+}
+
+// Co-op: where a drop (water or goop, at `at`) is seen in the view `view`. A first-person
+// player's stream comes out of the FLUDD held in their own view, in front of their face; anyone
+// else sees FLUDD on their back, so the drops near the held one are seen moved that way, less the
+// further they are from it (none 400 away).
+void PortWaterSeenAt(f32* at, MtxPtr view)
 {
 	if (PortPlayers() != 2)
 		return;
-	const int viewer = port_coop_second_entry ? 1 : PortPlayerNow();
+	const int owner = PortViewOwner(view);
 	for (int p = 0; p < 2; p++) {
 		const Held& h = s_held[p];
-		if (p == viewer || !h.haveHeldEmit || !h.haveBackEmit)
+		if (p == owner || !h.haveHeldEmit || !h.haveBackEmit)
 			continue;
 		TMario* m = PortPlayerMario(p);
 		if (!m || !PortFluddHeld(m))
@@ -965,6 +986,13 @@ void PortWaterSeenAt(f32* at)
 		at[1] += (h.backEmit.y - hy) * w;
 		at[2] += (h.backEmit.z - hz) * w;
 	}
+}
+
+// A player's held FLUDD's emit matrix (the goop's stream from its nozzle), or null
+MtxPtr PortFluddHeldEmitOf(int p, f32* scale)
+{
+	For f(p);
+	return PortFluddHeldEmitMtx(scale);
 }
 
 // The Mario a FLUDD is on (modapi_weapon_models.cpp)

@@ -2254,6 +2254,7 @@ bool PortSprayWeaponOnBack(TMario* m, bool* model)
 
 // R held, a spray weapon chosen
 bool PortSprayWeaponTrigger() { return s_trigger; }
+bool PortSprayWeaponTriggerOf(int p) { return p == 0 || p == 1 ? s_sp[p].trigger : false; } // (a given player's)
 
 // The player whose weapon is meant (modapi_held_fludd.cpp placing a player's FLUDD, the balloons
 // drawn): 0 or 1, -1 the one the game runs as (or a mod picked)

@@ -7,7 +7,7 @@ Reason: split-screen co-op (ext/coop): a first-person player's water and goop, s
  bool PortGoopDropWall(int i, const TBGCheckData* wall); // ...and any drop on a wall
  void PortGoopWaterDraw(MtxPtr view); // ...and drawn here when FLUDD was not (first person, its other nozzles)
 +// split-screen co-op: where a drop is seen in this view (modapi_held_fludd.cpp)
-+void PortWaterSeenAt(f32* at);
++void PortWaterSeenAt(f32* at, MtxPtr view);
  #endif
  
  u8 TModelWaterManager::emitRequest(const TWaterEmitInfo& param_1)
@@ -19,7 +19,7 @@ Reason: split-screen co-op (ext/coop): a first-person player's water and goop, s
 +		// co-op: a first-person player's water seen by the other comes out of the FLUDD on their
 +		// back, not their face (ext/modapi/game/modapi_held_fludd.cpp)
 +		JGeometry::TVec3<f32> seenAt = mParticlePositionSOA[i];
-+		PortWaterSeenAt(&seenAt.x);
++		PortWaterSeenAt(&seenAt.x, viewMtx);
 +		MTXMultVec(viewMtx, &seenAt, &viewPos);
 +#else
  		MTXMultVec(viewMtx, &mParticlePositionSOA[i], &viewPos);
