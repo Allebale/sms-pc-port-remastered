@@ -141,6 +141,20 @@ struct SprayPlayer {
 	bool bazookaSeen;
 	JGeometry::TVec3<f32> bazookaAim; // where this shot is aimed (the map or an enemy along the view), and how far
 	f32 bazookaAimDist;
+	// the mod's set_weapon flags, each player's (they differ: first or third person, the weapon's own)
+	bool defeat;           // weapons may defeat enemies
+	bool defeatNormal;     // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_NORMAL)
+	bool third;            // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
+	bool thirdModel;       // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
+	bool bosses;           // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
+	bool airForward;       // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
+	bool hearts;           // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
+	bool rocketOuch;       // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
+	f32 voiceVolume;       // its volume (SMS_SPRAY_VOICE_SHIFT: in percent)
+	f32 goop;              // how much goop the weapons clean, times the game's own (SMS_SPRAY_GOOP_SHIFT)
+	bool rocketHurt;       // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
+	int shotLook;          // the bazooka's shot seen flying: 0 none, 1 water, 2 a green water balloon, 3 a big one
+	SprayPlayer() { memset(this, 0, sizeof *this); voiceVolume = 1.0f, goop = 1.0f; }
 };
 SprayPlayer s_sp[2];
 int s_spFor = -1;
@@ -168,6 +182,18 @@ struct SprayFor {
 #define s_bazookaSeen SP().bazookaSeen
 #define s_bazookaAim SP().bazookaAim
 #define s_bazookaAimDist SP().bazookaAimDist
+#define s_defeatNormal SP().defeatNormal
+#define s_third SP().third
+#define s_thirdModel SP().thirdModel
+#define s_bosses SP().bosses
+#define s_airForward SP().airForward
+#define s_hearts SP().hearts
+#define s_rocketOuch SP().rocketOuch
+#define s_voiceVolume SP().voiceVolume
+#define s_goop SP().goop
+#define s_rocketHurt SP().rocketHurt
+#define s_shotLook SP().shotLook
+#define s_defeat SP().defeat
 
 // The hearts defeated enemies drop (SMS_SPRAY_HEARTS): beside its coin, popped up and falling to
 // the ground there, floating, turning and bobbing; Mario touching one gets a point of health back.
@@ -247,22 +273,11 @@ const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
 bool s_firing; // our own requests, let through
-bool s_defeatNormal;  // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_NORMAL)
 f32 s_normalTime    = 1.0f;  // seconds of it on one enemy that defeat it (the mod's menu)
 const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
-bool s_third;        // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
 f32 s_rocketJump;     // the bazooka's burst throws Mario too (a rocket jump), times its own; 0 not (the mod's menu)
 void rocketSteer(TMario* m);
-bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
-bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
-bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already in the air forward, not up
-bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
-bool s_rocketOuch;
-f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in percent)
 f32 s_goopArea;     // the bazooka's goop area (SmsSprayStats.goop_area), times 860 out from its middle (its burst at 130 percent); 0 its burst's size's
-f32 s_goop = 1.0f;  // how much goop the weapons clean, times the game's own (set_weapon's flags, SMS_SPRAY_GOOP_SHIFT)
-bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
-int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
 void fire();
 void followBazooka();
 void followStraight();
@@ -273,7 +288,6 @@ void followHearts();
 void followChomp();
 const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
-bool s_defeat;  // weapons may defeat enemies
 f32 s_time;     // seconds played (afterMovement)
 int s_shot;     // the last shot's number (1 to 7)
 int s_burst;    // the last shot (weapon and number) that burst
@@ -1335,6 +1349,13 @@ int dropWeapon(void* sender)
 	return (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0xf;
 }
 
+// The player whose drop a weapon's is (co-op): player 2 when only they have that weapon chosen,
+// else the one now
+int ownerOf(int weapon)
+{
+	return weapon > NORMAL && weapon < WEAPONS && s_sp[1].weapon == weapon && s_sp[0].weapon != weapon ? 1 : s_spFor;
+}
+
 int objectHit(void* object, void* sender, unsigned message)
 {
 	s_softened = 0;
@@ -1342,6 +1363,7 @@ int objectHit(void* object, void* sender, unsigned message)
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return 0;
 	const int weapon = dropWeapon(sender);
+	SprayFor owner(ownerOf(weapon)); // (co-op: the player whose weapon fired it, its settings)
 	if (weapon == kVisual)
 		return 1; // the bazooka's shot seen flying: only to look at
 	if (s_bosses && weapon > NORMAL && weapon < WEAPONS)
@@ -1393,6 +1415,7 @@ void softenPush(void* object, void* sender)
 	if (!e || static_cast<THitActor*>(e) != static_cast<THitActor*>(object))
 		return;
 	const int weapon = dropWeapon(sender);
+	SprayFor owner(ownerOf(weapon)); // (co-op: the player whose weapon fired it, its settings)
 	if (weapon <= NORMAL || weapon >= WEAPONS)
 		return;
 	const f32 k = s_gamePush[weapon];
