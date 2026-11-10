@@ -76,6 +76,7 @@ bool isKind(int k) { return k == kFire || k == kElectric || k == kBlack; }
 int s_kind;           // the goop weapon chosen: kFire, kElectric, or 0 none
 bool s_defeat;        // it may defeat enemies
 bool s_emitting;      // our own request, let through
+bool s_cheap; // the mod's "Goop performance mode": simpler puddles (no water over them), fewer flames
 bool s_npcs = true; // friendly characters shocked, and thrown into fire, by the goop (never defeated)
 bool s_grassPress = true, s_grassBurn = true; // (Remastered's 3D Grass) electric goop presses it, fire goop burns it
 // Remastered's 3D Grass (port_grass.cpp), on builds that have it; none here otherwise
@@ -1703,7 +1704,9 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 	if (vz > r * 1.4f + 20.0f)
 		return; // (the view looks down -z)
 	const f32 away = -vz - r * 1.4f;
-	const int every = away > 6000.0f ? 4 : away > 2500.0f ? 2 : 1;
+	int every = away > 6000.0f ? 4 : away > 2500.0f ? 2 : 1;
+	if (s_cheap)
+		every *= 2; // (performance mode: half the corners)
 	const int slot  = index >= 0 && index < kPuddles ? index : 0;
 	const int kAround = 56, kRings = 7;
 	// what the goop pass works out, kept for its water's shine (drawn just after, the same frame)
@@ -1743,7 +1746,8 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 		f32 rr[kAround];
 		for (int k = 0; k < kAround; k += every)
 			rr[k] = edgeAt(p, 6.2831853f * (f32)k / kAround, r);
-		if (s_joinedBorn[slot] != p.born || fabsf(s_joinedSize[slot] - r) > 6.0f || (s_frame + slot) % 8 == 0) {
+		const int redo = s_cheap ? 16 : 8;
+		if (s_joinedBorn[slot] != p.born || fabsf(s_joinedSize[slot] - r) > 6.0f || (s_frame + slot) % redo == 0) {
 			s_joinedBorn[slot] = p.born, s_joinedSize[slot] = r;
 			for (int k = 0; k < kAround; k++) {
 				const f32 e  = k % every ? edgeAt(p, 6.2831853f * (f32)k / kAround, r) : rr[k];
@@ -1768,12 +1772,16 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 				          z = cz + t[2] * ca + b[2] * sa + p.nz * h;
 				f32* ps = s_pos[slot][j][k];
 				ps[0] = x, ps[1] = y, ps[2] = z;
-				// the water's ripples: the goop under it shifted a little, its shine moving
-				const f32 w1 = x * 0.045f + time * 1.6f, w2 = z * 0.06f - time * 1.2f, w3 = z * 0.05f + time * 1.4f, w4 = x * 0.07f + time * 1.9f;
-				const f32 du = 3.5f * sinf(w1) + 2.5f * sinf(w2);
-				const f32 dv = 3.5f * sinf(w3) + 2.5f * sinf(w4);
-				s_slope[slot][j][k][0] = 0.16f * cosf(w1) + 0.17f * cosf(w4); // its slope across
-				s_slope[slot][j][k][1] = 0.15f * cosf(w2) + 0.17f * cosf(w3);
+				// the water's ripples: the goop under it shifted a little, its shine moving (none in
+				// performance mode)
+				f32 du = 0.0f, dv = 0.0f;
+				if (!s_cheap) {
+					const f32 w1 = x * 0.045f + time * 1.6f, w2 = z * 0.06f - time * 1.2f, w3 = z * 0.05f + time * 1.4f, w4 = x * 0.07f + time * 1.9f;
+					du = 3.5f * sinf(w1) + 2.5f * sinf(w2);
+					dv = 3.5f * sinf(w3) + 2.5f * sinf(w4);
+					s_slope[slot][j][k][0] = 0.16f * cosf(w1) + 0.17f * cosf(w4); // its slope across
+					s_slope[slot][j][k][1] = 0.15f * cosf(w2) + 0.17f * cosf(w3);
+				}
 				s_uv[slot][j][k][0] = (x + fl + du) / kTile, s_uv[slot][j][k][1] = (z + dv) / kTile;
 				s_col[slot][j][k] = (u8)(shade * lt / 255);
 			}
@@ -1933,7 +1941,7 @@ void drawFlames(const Puddle& p, int index)
 		return;
 	f32 t[3], b[3];
 	basis(p, t, b);
-	const int count = 2 + (int)(r / 45.0f);
+	const int count = s_cheap ? 1 + (int)(r / 90.0f) : 2 + (int)(r / 45.0f); // (performance mode: half)
 	const f32 time  = (f32)s_frame / 60.0f;
 	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(count * 18));
 	for (int i = 0; i < count; i++) {
@@ -1994,7 +2002,7 @@ void GoopPacket::draw()
 				GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
 				GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_NOOP);
 				GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
-				for (int i = 0; i < kPuddles; i++)
+				for (int i = 0; i < kPuddles && !s_cheap; i++) // (none in performance mode)
 					if (s_puddles[i].on && s_puddles[i].kind == kind)
 						drawPuddle(s_puddles[i], i, true);
 				GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
@@ -2180,6 +2188,8 @@ int PortGoopStats(int kind, int has, float every, float range, float burst, floa
 	st.size   = burst >= 0.2f ? burst : 0.2f;
 	st.drop   = drop >= 0.2f ? drop : 0.2f;
 	st.hits   = hits >= 1 ? (hits <= 50 ? hits : 50) : 1;
+	if (kind == kFire) // (fire's push, else unused: 2 for the mod's "Goop performance mode")
+		s_cheap = has && push > 1.5f;
 	if (kind == kBlack)
 		s_blackSpeed = push >= 0.5f ? (push <= 10.0f ? push : 10.0f) : 1.0f; // (push: its speed)
 	if (kind == kBlack)
