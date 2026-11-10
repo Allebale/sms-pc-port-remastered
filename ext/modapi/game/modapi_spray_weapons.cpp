@@ -155,6 +155,7 @@ struct SprayPlayer {
 	f32 goop;              // how much goop the weapons clean, times the game's own (SMS_SPRAY_GOOP_SHIFT)
 	bool rocketHurt;       // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 	int keyLaunch;         // SmsSprayStats.key_launch: 1 the rocket jump key held (hits throw enemies up), 2 hits in the air finish them
+	f32 keyLift;           // SmsSprayStats.key_lift: how fast the bazooka throws an enemy up with the key, 0 kKeyLift
 	f32 feetForward;       // SmsSprayStats.feet_forward: a rocket jump off a burst at his feet thrown forward, times its speed
 	int shotLook;          // the bazooka's shot seen flying: 0 none, 1 water, 2 a green water balloon, 3 a big one
 	SprayPlayer() { memset(this, 0, sizeof *this); voiceVolume = 1.0f, goop = 1.0f; }
@@ -197,6 +198,7 @@ struct SprayFor {
 #define s_rocketHurt SP().rocketHurt
 #define s_keyLaunch SP().keyLaunch
 #define s_feetForward SP().feetForward
+#define s_keyLift SP().keyLift
 #define s_shotLook SP().shotLook
 #define s_defeat SP().defeat
 
@@ -334,6 +336,7 @@ struct Hit {
 	f32 normalStart; // the normal spray on it since (its defeating: SMS_SPRAY_DEFEAT_NORMAL)
 	f32 normalLast;  // and last
 	f32 launchUntil; // thrown up by the bazooka with the rocket jump key held: kept going up till then
+	f32 launchUp;    // ...this fast
 };
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
@@ -376,7 +379,7 @@ void stageSetup()
 }
 
 // the shoves, each frame: along the ground, stopped by a wall, slowing down
-const f32 kKeyLift = 70.0f; // an enemy thrown up by the bazooka with the rocket jump key, a 30th of a second's
+const f32 kKeyLift = 30.0f; // an enemy thrown up by the bazooka with the rocket jump key, a 30th of a second's (no setting)
 
 void afterMovement()
 {
@@ -415,8 +418,8 @@ void afterMovement()
 		if (!h.enemy || s_time >= h.launchUntil || h.enemy->checkLiveFlag(LIVE_FLAG_DEAD))
 			continue;
 		JGeometry::TVec3<f32> v = h.enemy->getVelocity();
-		if (v.y < kKeyLift * 0.8f) {
-			v.y = kKeyLift;
+		if (v.y < h.launchUp * 0.8f) {
+			v.y = h.launchUp;
 			h.enemy->setVelocity(v);
 		}
 		h.enemy->onLiveFlag(LIVE_FLAG_AIRBORNE);
@@ -597,8 +600,9 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 			h->lastShot = shot;
 			h->vx = h->vz = 0.0f; // up: no push along the ground
 			h->launchUntil = s_time + 0.1f;
+			h->launchUp    = s_keyLift > 0.0f ? s_keyLift : kKeyLift;
 			JGeometry::TVec3<f32> v = e->getVelocity(); // its own speed across the ground kept (its momentum)
-			v.y = kKeyLift;
+			v.y = h->launchUp;
 			e->setVelocity(v);
 			e->mPosition.y += 8.0f;
 			e->onLiveFlag(LIVE_FLAG_AIRBORNE);
@@ -2467,6 +2471,17 @@ extern "C" int modg_spray_key_launch(int on)
 		fprintf(stderr, "[weapons] shots in the air %s, rocket jump key shots %s\n", (on & 2) ? "defeat enemies" : "as ever",
 		        (on & 1) ? "throw enemies up" : "as ever");
 	s_keyLaunch = on;
+	return 1;
+}
+
+// held_fludd->set_weapon_stats' key_lift (mod_runtime.cpp): how fast the bazooka throws an enemy up
+// with the rocket jump key held, a 30th of a second's; 0 kKeyLift
+extern "C" int modg_spray_key_lift(float up)
+{
+	const f32 v = up > 0.0f ? (up < 200.0f ? up : 200.0f) : 0.0f;
+	if (v != s_keyLift)
+		fprintf(stderr, "[weapons] the bazooka throws enemies up at %.0f with the rocket jump key\n", v > 0.0f ? v : kKeyLift);
+	s_keyLift = v;
 	return 1;
 }
 

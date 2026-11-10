@@ -76,6 +76,7 @@ int modg_spray_shadow_damage(float scale);
 int modg_spray_goop_area(float scale);
 int modg_spray_key_launch(int on);
 int modg_spray_feet_forward(float k);
+int modg_spray_key_lift(float up);
 int modg_held_fludd_view(int on);
 int modg_held_fludd_zoom(float fovy, int flags);
 int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags);
