@@ -1982,6 +1982,8 @@ bool PortGoopDropLands(int i, const TBGCheckData* ground)
 		return false;
 	const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
 	const int kind = dropKind(i);
+	if (kind && ground && ground->mActor && PortSprayManta((void*)(THitActor*)ground->mActor))
+		return false; // landing on a Phantamanta's back: the game's hit on it, no goop there (objectHit)
 	if (kind) {
 		addGoop(kind, p.x, p.y, p.z, ground);
 		return true;
