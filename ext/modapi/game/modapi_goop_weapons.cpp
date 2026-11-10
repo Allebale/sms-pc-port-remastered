@@ -1031,39 +1031,8 @@ void stageSetup()
 	memset(s_flights, 0, sizeof s_flights);
 }
 
-// The goop's own cost, measured: its update and its drawing (microseconds, added up), written to
-// the log every 5 seconds while it takes more than half a millisecond a frame on average
-OSTime s_costTicks[2];
-int s_costFrames;
-f32 s_costSince;
-struct Cost {
-	int which;
-	OSTime start;
-	explicit Cost(int w) : which(w), start(OSGetTime()) {}
-	~Cost() { s_costTicks[which] += OSGetTime() - start; }
-};
-void reportCost()
-{
-	s_costFrames++;
-	if (s_time - s_costSince < 5.0f)
-		return;
-	const f32 upd = (f32)OSTicksToMicroseconds(s_costTicks[0]) / 1000.0f / (f32)s_costFrames;
-	const f32 drw = (f32)OSTicksToMicroseconds(s_costTicks[1]) / 1000.0f / (f32)s_costFrames;
-	if (upd + drw > 0.5f) {
-		int puddles = 0;
-		for (int i = 0; i < kPuddles; i++)
-			puddles += s_puddles[i].on ? 1 : 0;
-		fprintf(stderr, "[goop] cost a frame: update %.2f ms, drawing %.2f ms (%d puddles)\n", upd, drw, puddles);
-	}
-	s_costTicks[0] = s_costTicks[1] = 0;
-	s_costFrames = 0;
-	s_costSince  = s_time;
-}
-
 void afterMovement()
 {
-	reportCost();
-	Cost cost(0);
 	const f32 dt = port_frame_scale() / 30.0f;
 	s_time += dt;
 	flights(dt);
@@ -2033,7 +2002,6 @@ void drawFlames(const Puddle& p, int index)
 
 void GoopPacket::draw()
 {
-	Cost cost(1);
 	if (!s_haveView)
 		return;
 	makeTextures();

@@ -1314,11 +1314,7 @@ int GXPC_InitAuto(float efbScale) {
     return 0;
 }
 
-// the freeze detector's beat (temporary; set by port_runtime.cpp on Windows: windows_crash.cpp)
-extern "C" void (*GXPC_FreezeBeat)(int which);
-void (*GXPC_FreezeBeat)(int which) = nullptr;
 void GXPC_Present(const void* xfb) {
-    if (GXPC_FreezeBeat) GXPC_FreezeBeat(0);
 #ifdef SMS_GX_HAVE_SDL2
     if (s_mode == MODE_WINDOW && s_window) {
         int w = 0, h = 0;
@@ -1340,7 +1336,6 @@ void GXPC_Present(const void* xfb) {
         bool shown = true;
         const double waited0 = glt::waitedSeconds();
         glt::sync([&] {
-            if (GXPC_FreezeBeat) GXPC_FreezeBeat(1);
             t0 = nowSeconds();
             if (hdr && !(hdrReady && hdrFrameBegin())) {  // minimised: nothing to show
                 shown = false;

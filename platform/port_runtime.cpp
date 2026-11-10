@@ -468,16 +468,11 @@ void port_crash_thread_init()
 #endif
 }
 
-#ifdef _WIN32
-extern "C" void (*GXPC_FreezeBeat)(int which); // platform/gx/src/gx_platform.cpp
-extern "C" void port_freeze_beat(int which);    // platform/os/windows_crash.cpp
-#endif
 void port_install_crash_handlers()
 {
 	port_crash_prepare_info();
 #ifdef _WIN32
 	port_install_windows_exception_logger();
-	GXPC_FreezeBeat = port_freeze_beat; // the freeze detector (temporary)
 	// Native hardware exceptions keep their Windows status. Translating them
 	// through a CRT signal handler would replace it with a generic abort code.
 	signal(SIGABRT, crash_handler);
