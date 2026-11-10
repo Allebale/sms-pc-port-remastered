@@ -564,7 +564,7 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	const Weapon& k = kWeapons[weapon];
 	const bool fresh = h->lastShot != shot; // this shot's first drop to reach it
 	// SmsSprayStats.key_launch (a mod's setting): a walking enemy hit in the air is defeated at once
-	// (2), and with the rocket jump key held (1) one hit on the ground is thrown up into the air
+	// (2), and with the rocket jump key held (1) one the bazooka hits on the ground is thrown up into the air
 	if ((s_keyLaunch & 3) && moves(e)) {
 		const f32 kKeyLift = 40.0f; // up, a 30th of a second's (about the bazooka's own throw)
 		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
@@ -576,7 +576,7 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 				dropHeart(e);
 			return;
 		}
-		if ((s_keyLaunch & 1) && !e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+		if ((s_keyLaunch & 1) && weapon == BAZOOKA && !e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) { // (the bazooka's only)
 			if (!fresh)
 				return; // the rest of a shot that has done its part
 			h->lastShot = shot;
@@ -1446,23 +1446,6 @@ int objectHit(void* object, void* sender, unsigned message)
 			s_peteyHit  = p;
 			s_peteyMark = p->mWaterMark;
 		}
-	// the rocket jump key held: a walking enemy on the ground thrown up by the rifle's or submachine
-	// gun's drop alone, without the game's own hit (it would hold it frozen where it stands)
-	if ((s_keyLaunch & 1) && (weapon == RIFLE || weapon == SMG) && gpModelWaterManager)
-		if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object)))
-			if (moves(e) && !e->checkLiveFlag(LIVE_FLAG_AIRBORNE) && !e->checkLiveFlag(LIVE_FLAG_DEAD)) {
-				TModelWaterManager* w = gpModelWaterManager;
-				TWaterHitActor* drop  = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
-				if (drop && drop->mParticleIndex >= 0 && drop->mParticleIndex < (int)w->mParticleCount) {
-					const int shot = (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0x7f;
-					const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[drop->mParticleIndex];
-					const f32 l = sqrtf(v.x * v.x + v.z * v.z);
-					if (gpMarioParticleManager)
-						gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &drop->mPosition, 0, nullptr);
-					hitEnemy(e, weapon, shot, l > 1e-3f ? v.x / l : 0.0f, l > 1e-3f ? v.z / l : 0.0f);
-					return 1;
-				}
-			}
 	if (weapon <= NORMAL || weapon >= WEAPONS || s_gamePush[weapon] >= 1.0f)
 		return 0;
 	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object))) {
