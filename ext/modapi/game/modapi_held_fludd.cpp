@@ -520,6 +520,34 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
 	}
 	MTXConcat(graphics->getViewMtx(), place, viewModel);
 	PortWeaponModelShow(3 + which, viewModel); // all of FLUDD left out, the pack in its place
+	if (other) {
+		// co-op, a first-person player seen by the other: their weapon in their right hand, pointing
+		// where they look (their view's way), the pack (its tank) on their back
+		const TMario* mm = g->mMario;
+		MtxPtr hand      = mm->getM3UModel()->getModel()->getAnmMtx(mm->mJointIdHandR);
+		Vec way          = s_viewWay;
+		if (!unit(way))
+			way = face;
+		Vec right = cross(way, worldUp);
+		if (!unit(right))
+			return;
+		const Vec gunUp   = cross(right, way);
+		const f32 scale   = which == 0 ? 12.5f : 15.0f;
+		const f32 muzzle  = PortWeaponModelMuzzle(which) * scale;
+		const Vec grip    = {hand[0][3], hand[1][3], hand[2][3]};
+		const Vec origin  = along(grip, -muzzle * 0.45f, way); // held about its middle
+		Mtx world, gunView;
+		const f32 gc[3][3] = {{right.x, way.x, gunUp.x}, {right.y, way.y, gunUp.y}, {right.z, way.z, gunUp.z}};
+		const f32 og[3]    = {origin.x, origin.y, origin.z};
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++)
+				world[r][c] = gc[r][c] * scale;
+			world[r][3] = og[r];
+		}
+		MTXConcat(graphics->getViewMtx(), world, gunView);
+		PortWeaponModelShowSecond(which, gunView);
+		return;
+	}
 	// its weapon on top, held level and pointing ahead whatever his body's lean as he walks or runs
 	// (lying in a dive: the way his head points), kicking back and up as it fires, turned about
 	// where it sits on the neck

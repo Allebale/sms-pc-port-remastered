@@ -449,21 +449,35 @@ void dressOwn(TMario* m, bool luigi)
 // to one FLUDD's textures (the goop weapons' dressing, port_coop_own_fludd_textures) showed on
 // both. Made when first asked for, once for each player 2.
 TMario* s_ownFluddFor;
+// a model's textures its own: its data's, its material packets' (each keeps the one it was made
+// with) and its display lists made again with them
+void retexture(J3DModel* md)
+{
+	J3DModelData* d = md->getModelData();
+	J3DTexture* own = ownTextures(d->getTexture(), nullptr);
+	if (!own || own == d->getTexture())
+		return;
+	d->setTexture(own);
+	const bool locked = d->getMaterialNum() && md->getMatPacket(0)->isLocked();
+	for (u16 i = 0; i < d->getMaterialNum(); i++)
+		md->getMatPacket(i)->setTexture(own);
+	if (locked) {
+		md->unlock();
+		SMS_MakeDLAndLock(md);
+	} else
+		md->makeDL();
+}
 void ownFluddTextures(TMario* m)
 {
 	TWaterGun* g = m ? m->mWaterGun : nullptr;
 	if (!g || s_ownFluddFor == m)
 		return;
 	s_ownFluddFor = m;
-	if (g->mFluddModel && g->mFluddModel->getModel()) {
-		J3DModelData* d = g->mFluddModel->getModel()->getModelData();
-		d->setTexture(ownTextures(d->getTexture(), nullptr));
-	}
+	if (g->mFluddModel && g->mFluddModel->getModel())
+		retexture(g->mFluddModel->getModel());
 	for (int n = 0; n < 6; n++)
-		if (g->mNozzleList[n] && g->mNozzleList[n]->getMActor() && g->mNozzleList[n]->getMActor()->getModel()) {
-			J3DModelData* d = g->mNozzleList[n]->getMActor()->getModel()->getModelData();
-			d->setTexture(ownTextures(d->getTexture(), nullptr));
-		}
+		if (g->mNozzleList[n] && g->mNozzleList[n]->getMActor() && g->mNozzleList[n]->getMActor()->getModel())
+			retexture(g->mNozzleList[n]->getMActor()->getModel());
 	fprintf(stderr, "[coop] player 2's FLUDD has textures of its own\n");
 }
 
