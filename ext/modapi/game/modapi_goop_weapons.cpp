@@ -870,7 +870,16 @@ int objectHit(void* object, void* sender, unsigned message)
 			if (!(gpModelWaterManager->mParticleFlagSOA[drop->mParticleIndex] & 0x40) && m->isDamageable()) {
 				if (gpMarioParticleManager)
 					gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &m->mPosition, 0, nullptr);
+				// each fire hit counts three of water's (16, 8, 4, 2, 1 by its generation), and the
+				// next comes half a second later (water's: a second)
+				static const int kHits[6] = {16, 8, 4, 2, 1, 1};
+				const int most = kHits[m->mGeneration >= 0 && m->mGeneration < 6 ? m->mGeneration : 0];
+				m->unk19C += 2;
+				if (m->unk19C > most - 1)
+					m->unk19C = most - 1;
 				m->collidedWithWater();
+				if (m->unk1A0 == 0x1E)
+					m->unk1A0 = 15;
 			}
 			return 0;
 		}
@@ -1411,9 +1420,49 @@ void basis(const Puddle& p, f32* t, f32* b)
 	b[0] = p.ny * tz - p.nz * ty, b[1] = p.nz * tx - p.nx * tz, b[2] = p.nx * ty - p.ny * tx;
 }
 
-// a puddle: a round of the goop's texture with a wavy edge, flat on the ground (a web of rings,
-// so electric goop's thin layer of water can ripple over it). `gloss`: that water's shine instead
-// (untextured, added on top), else the goop (textured() set)
+// a puddle's wavy edge at angle a (its radius r there): broad lobes and small bumps, as the
+// game's own goop's edge
+f32 edgeAt(const Puddle& p, f32 a, f32 r)
+{
+	return r * (1.0f + 0.11f * sinf(3.0f * a + p.seed) + 0.06f * sinf(5.0f * a + p.seed * 1.7f)
+	            + 0.035f * sinf(9.0f * a + p.seed * 2.3f) + 0.022f * sinf(13.0f * a + p.seed * 3.1f)
+	            + 0.014f * sinf(17.0f * a + p.seed * 4.3f));
+}
+// how thick goop lies (its top over the ground), and its rounded edge's width
+f32 thickOf(f32 r) { return r < 60.0f ? r * 0.06f : 3.6f; }
+f32 rimOf(f32 r) { return r < 60.0f ? r * 0.12f : 7.0f; }
+
+// (x, y, z) well inside another puddle of the same kind (inside its edge by more than its rim):
+// this puddle's edge there joins that one's goop, no rim (overlapping puddles look one)
+bool underOther(int self, int kind, f32 x, f32 y, f32 z)
+{
+	for (int i = 0; i < kPuddles; i++) {
+		const Puddle& o = s_puddles[i];
+		if (i == self || !o.on || o.kind != kind)
+			continue;
+		const f32 dx = x - o.x, dy = y - o.y, dz = z - o.z;
+		if (dy > 80.0f || dy < -80.0f)
+			continue;
+		const f32 r = sizeNow(o);
+		if (r < 1.0f)
+			continue;
+		const f32 d2 = dx * dx + dz * dz;
+		if (d2 > r * r * 1.5f)
+			continue;
+		f32 t[3], b[3];
+		basis(o, t, b);
+		const f32 a = atan2f(dx * b[0] + dy * b[1] + dz * b[2], dx * t[0] + dy * t[1] + dz * t[2]);
+		const f32 in = edgeAt(o, a, r) - rimOf(r) * 1.5f;
+		if (in > 0.0f && d2 < in * in)
+			return true;
+	}
+	return false;
+}
+
+// a puddle: a round of the goop's texture with a wavy edge, lying a little thick on the ground with
+// a rounded, darker edge (as the game's goop), joining other puddles of its kind where they overlap
+// (a web of rings, so the thin layer of water over it can ripple). `gloss`: that water's shine
+// instead (untextured, added on top), else the goop (textured() set)
 void drawPuddle(const Puddle& p, int index, bool gloss = false)
 {
 	const f32 r = sizeNow(p);
@@ -1421,7 +1470,7 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 		return;
 	f32 t[3], b[3];
 	basis(p, t, b);
-	const f32 lift = 1.5f + 0.04f * (f32)index + (gloss ? 0.3f : 0.0f); // over the ground (and over each other)
+	const f32 lift = 1.0f + 0.04f * (f32)index + (gloss ? 0.3f : 0.0f); // over the ground (and over each other)
 	const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
 	const f32 time   = (f32)s_frame / 60.0f;
 	const bool water = true; // every kind under a thin layer of moving water, bending it a little
@@ -1433,16 +1482,40 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 	f32 hx = lx + s_view[2][0], hy = ly + s_view[2][1], hz = lz + s_view[2][2];
 	const f32 hl = sqrtf(hx * hx + hy * hy + hz * hz);
 	hx /= hl, hy /= hl, hz /= hl;
-	const int kAround = 28, kRings = 5;
+	// rings out from the middle: the flat top (by the radius less the rim), then its rounded edge
+	// (down to the ground, darker: the goop's side)
+	const int kAround = 56, kRings = 7;
+	const f32 thick = thickOf(r), rim = rimOf(r);
+	// each ring: how far in from the edge (in rims), how high (of its thickness), how lit
+	const f32 inRim[kRings + 1]  = {0, 0, 0, 0, 0, 1.0f, 0.45f, 0.0f};
+	const f32 outF[kRings + 1]   = {0.0f, 0.3f, 0.55f, 0.75f, 0.9f, 1.0f, 1.0f, 1.0f};
+	const f32 high[kRings + 1]   = {1, 1, 1, 1, 1, 1.0f, 0.8f, 0.0f};
+	const f32 lit[kRings + 1]    = {1, 1, 1, 1, 1, 0.97f, 0.78f, 0.5f};
 	static f32 pos[kRings + 1][kAround][3], uv[kRings + 1][kAround][2];
 	static int col[kRings + 1][kAround];
+	static bool joined[kAround];
+	for (int k = 0; k < kAround; k++) {
+		const f32 a  = 6.2831853f * (f32)k / kAround;
+		const f32 rr = edgeAt(p, a, r);
+		const f32 ex = cx + (t[0] * cosf(a) + b[0] * sinf(a)) * rr, ey = cy + (t[1] * cosf(a) + b[1] * sinf(a)) * rr,
+		          ez = cz + (t[2] * cosf(a) + b[2] * sinf(a)) * rr;
+		joined[k] = underOther(index, p.kind, ex, ey, ez);
+	}
 	for (int j = 0; j <= kRings; j++)
 		for (int k = 0; k < kAround; k++) {
-			const f32 a  = 6.2831853f * (f32)k / kAround;
-			const f32 rr = r * (1.0f + 0.12f * sinf(3.0f * a + p.seed) + 0.07f * sinf(5.0f * a + p.seed * 1.7f) + 0.04f * sinf(9.0f * a + p.seed * 2.3f));
-			const f32 f  = (f32)j / kRings;
-			const f32 ca = cosf(a) * rr * f, sa = sinf(a) * rr * f;
-			const f32 x = cx + t[0] * ca + b[0] * sa, y = cy + t[1] * ca + b[1] * sa, z = cz + t[2] * ca + b[2] * sa;
+			const f32 a   = 6.2831853f * (f32)k / kAround;
+			const f32 rr  = edgeAt(p, a, r);
+			const bool jn = joined[k] || joined[(k + 1) % kAround] || joined[(k + kAround - 1) % kAround];
+			// the flat top reaches its edge less the rim; joined, it runs on flat under the other
+			const f32 top = rr - rim > rr * 0.4f ? rr - rim : rr * 0.4f;
+			f32 d         = j <= 4 ? top * outF[j] : top + (rr - top) * (1.0f - inRim[j]);
+			f32 h  = thick * high[j];
+			int lt = (int)(255.0f * lit[j]);
+			if (jn && j > 4)
+				h = thick, lt = 255, d = rr * 1.04f; // (into the other puddle, flat)
+			const f32 ca = cosf(a) * d, sa = sinf(a) * d;
+			const f32 x = cx + t[0] * ca + b[0] * sa + p.nx * h, y = cy + t[1] * ca + b[1] * sa + p.ny * h,
+			          z = cz + t[2] * ca + b[2] * sa + p.nz * h;
 			pos[j][k][0] = x, pos[j][k][1] = y, pos[j][k][2] = z;
 			f32 du = 0.0f, dv = 0.0f, sx = 0.0f, sz = 0.0f;
 			if (water) { // the water's ripples: the goop under it shifted a little, its shine moving
@@ -1458,10 +1531,10 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 				const f32 nl = sqrtf(nx * nx + ny * ny + nz * nz);
 				f32 sp = (nx * hx + ny * hy + nz * hz) / nl;
 				sp = sp > 0.0f ? powf(sp, 24.0f) : 0.0f;
-				const f32 edge = j == kRings ? 0.3f : 1.0f; // fading at its edge
+				const f32 edge = j == kRings && !jn ? 0.3f : 1.0f; // fading at its edge
 				col[j][k] = (int)(sp * 200.0f * edge + 18.0f * edge); // a faint sheen everywhere, bright where it catches the light
 			} else
-				col[j][k] = j == kRings ? shade - 25 : shade;
+				col[j][k] = shade * lt / 255;
 		}
 	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(kAround * 3 + kAround * (kRings - 1) * 6));
 	for (int k = 0; k < kAround; k++) { // the middle: ring 1 round it
@@ -1512,15 +1585,37 @@ void drawWalls(int kind)
 		const f32 tx = -g.nz, tz = g.nx;
 		const f32 lift = 1.2f + 0.03f * (f32)i;
 		const f32 cx = g.x + g.nx * lift, cy = g.y, cz = g.z + g.nz * lift;
-		const int kAround = 20;
-		GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, (u16)(kAround + 2));
-		tcorner(cx, cy, cz, 255, (cx * tx + cz * tz) / kTile, -cy / kTile);
-		for (int k = 0; k <= kAround; k++) {
-			const f32 a  = 6.2831853f * (f32)(k % kAround) / kAround;
-			const f32 rr = r * (1.0f + 0.14f * sinf(3.0f * a + g.seed) + 0.08f * sinf(5.0f * a + g.seed * 1.3f));
-			const f32 ox = cosf(a) * rr, oy = sinf(a) * rr;
-			const f32 x = cx + tx * ox, y = cy + oy, z = cz + tz * ox;
-			tcorner(x, y, z, 235, (x * tx + z * tz) / kTile, -y / kTile);
+		// a wavy edge as the puddles' (broad lobes, small bumps), its last bit darker (its rounded side)
+		const int kAround = 44;
+		const f32 rim = rimOf(r) * 0.8f;
+		GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(kAround * 9));
+		for (int k = 0; k < kAround; k++) {
+			f32 ring[2][2][3]; // [this, next corner][inner, edge]
+			for (int e = 0; e < 2; e++) {
+				const f32 a  = 6.2831853f * (f32)((k + e) % kAround) / kAround;
+				const f32 rr = r * (1.0f + 0.13f * sinf(3.0f * a + g.seed) + 0.07f * sinf(5.0f * a + g.seed * 1.3f)
+				                    + 0.035f * sinf(9.0f * a + g.seed * 2.1f) + 0.02f * sinf(14.0f * a + g.seed * 3.7f));
+				const f32 in = rr - rim > rr * 0.5f ? rr - rim : rr * 0.5f;
+				const f32 dd[2] = {in, rr};
+				for (int q = 0; q < 2; q++) {
+					const f32 ox = cosf(a) * dd[q], oy = sinf(a) * dd[q];
+					const f32 out = q ? 0.0f : 1.5f; // (the inner part standing off the wall a little)
+					ring[e][q][0] = cx + tx * ox + g.nx * out, ring[e][q][1] = cy + oy, ring[e][q][2] = cz + tz * ox + g.nz * out;
+				}
+			}
+			const f32 mx = cx + g.nx * 1.5f, mz = cz + g.nz * 1.5f;
+			tcorner(mx, cy, mz, 255, (mx * tx + mz * tz) / kTile, -cy / kTile);
+			const int tri[2][2] = {{0, 0}, {1, 0}};
+			for (int c = 0; c < 2; c++) {
+				const f32* v = ring[tri[c][0]][0];
+				tcorner(v[0], v[1], v[2], 250, (v[0] * tx + v[2] * tz) / kTile, -v[1] / kTile);
+			}
+			// the rim: inner k, edge k, edge k+1; inner k, edge k+1, inner k+1
+			const int rimTri[6][2] = {{0, 0}, {0, 1}, {1, 1}, {0, 0}, {1, 1}, {1, 0}};
+			for (int c = 0; c < 6; c++) {
+				const f32* v = ring[rimTri[c][0]][rimTri[c][1]];
+				tcorner(v[0], v[1], v[2], rimTri[c][1] ? 140 : 250, (v[0] * tx + v[2] * tz) / kTile, -v[1] / kTile);
+			}
 		}
 		GXEnd();
 		// the drips: running down from its lower half, longer with time, each its own
