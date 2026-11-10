@@ -468,7 +468,25 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
 	MtxPtr base   = fm->getBaseTRMtx();
 	MtxPtr nc     = fm->getAnmMtx(g->unk1CD8);
 	const f32 ang = g->mMario->mFaceAngle.y * (3.14159265f / 32768.0f);
-	const Vec face = {sinf(ang), 0.0f, cosf(ang)}, worldUp = {0.0f, 1.0f, 0.0f};
+	Vec face = {sinf(ang), 0.0f, cosf(ang)};
+	const Vec worldUp = {0.0f, 1.0f, 0.0f};
+	if (other) { // the way his body faces as drawn (strafing in first person it is not his facing):
+		// from FLUDD on his back (posed on his chest) to his chest, across the ground
+		J3DModel* body = g->mMario->getM3UModel() ? g->mMario->getM3UModel()->getModel() : 0;
+		MtxPtr nc0     = g->mFluddModel->getModel()->getAnmMtx(g->unk1CD8);
+		if (body) {
+			MtxPtr ch = body->getAnmMtx(g->mMario->mJointIdChest);
+			Vec z = {ch[0][3] - nc0[0][3], 0.0f, ch[2][3] - nc0[2][3]};
+			if (z.x * z.x + z.z * z.z > 4.0f && unit(z))
+				face = z;
+			else {
+				MtxPtr bm = body->getBaseTRMtx();
+				Vec b = {bm[0][2], 0.0f, bm[2][2]};
+				if (unit(b))
+					face = b;
+			}
+		}
+	}
 	Vec axis[3];
 	for (int c = 0; c < 3; c++) {
 		axis[c].x = base[0][c], axis[c].y = base[1][c], axis[c].z = base[2][c];
