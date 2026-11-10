@@ -727,12 +727,49 @@ void hurtMario(f32 dt)
 }
 
 // enemies standing in a puddle (every tenth of a second)
+// a Phantamanta on fire goop: burnt as by three hits of water (16, 8, 4, 2, 1 by its generation),
+// half a second apart; `game`: the game makes the hit itself after this (a drop it counts)
+void mantaFire(TBossManta* m, bool game)
+{
+	if (!m || m->checkLiveFlag(LIVE_FLAG_DEAD) || !m->isDamageable())
+		return;
+	if (gpMarioParticleManager)
+		gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &m->mPosition, 0, nullptr);
+	static const int kHits[6] = {16, 8, 4, 2, 1, 1};
+	const int most = kHits[m->mGeneration >= 0 && m->mGeneration < 6 ? m->mGeneration : 0];
+	m->unk19C += 2;
+	if (m->unk19C > most - 1)
+		m->unk19C = most - 1;
+	fprintf(stderr, "[goop] fire on a Phantamanta (generation %d): %d of %d hits\n", m->mGeneration, m->unk19C + 1, most);
+	if (game)
+		return;
+	m->collidedWithWater();
+	if (m->unk1A0 > 15)
+		m->unk1A0 = 15;
+}
+
 void hurtEnemiesIn(TLiveManager* mgr)
 {
 	if (!mgr)
 		return;
 	for (int i = 0; i < mgr->getObjNum(); i++) {
 		TLiveActor* e = mgr->getObj(i);
+		if (TBossManta* m = dynamic_cast<TBossManta*>(e)) { // Phantamanta: hurt swimming over fire goop
+			if (m->checkLiveFlag(LIVE_FLAG_DEAD) || m->checkLiveFlag(LIVE_FLAG_HIDDEN))
+				continue;
+			const f32 body = 120.0f * (m->mScaling.x > 0.05f ? m->mScaling.x : 1.0f); // (about half its width)
+			for (int k = 0; k < kPuddles; k++) {
+				const Puddle& p = s_puddles[k];
+				if (!p.on || p.kind != kFire)
+					continue;
+				const f32 r = sizeNow(p) + body, dx = m->mPosition.x - p.x, dz = m->mPosition.z - p.z;
+				if (dx * dx + dz * dz <= r * r && fabsf(m->mPosition.y - p.y) < 200.0f) {
+					mantaFire(m, false);
+					break;
+				}
+			}
+			continue;
+		}
 		if (!e || (!dynamic_cast<TSmallEnemy*>(e) && !(s_npcs && isNpc(e))) || e->checkLiveFlag(LIVE_FLAG_DEAD)
 		    || e->checkLiveFlag(LIVE_FLAG_HIDDEN))
 			continue;
@@ -872,17 +909,10 @@ int objectHit(void* object, void* sender, unsigned message)
 			// comes half a second later (water's: a second). A drop the game counts (flagged 0x40)
 			// gets its own hit after this; else the hit is made here
 			if (m->isDamageable()) {
-				if (gpMarioParticleManager)
-					gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &m->mPosition, 0, nullptr);
-				static const int kHits[6] = {16, 8, 4, 2, 1, 1};
-				const int most = kHits[m->mGeneration >= 0 && m->mGeneration < 6 ? m->mGeneration : 0];
-				m->unk19C += 2;
-				if (m->unk19C > most - 1)
-					m->unk19C = most - 1;
-				if (!(gpModelWaterManager->mParticleFlagSOA[drop->mParticleIndex] & 0x40))
-					m->collidedWithWater();
-				s_fireManta = m; // (its wait shortened after the game's hit: objectHitDone)
-				fprintf(stderr, "[goop] fire on a Phantamanta (generation %d): %d of %d hits\n", m->mGeneration, m->unk19C + 1, most);
+				const bool game = (gpModelWaterManager->mParticleFlagSOA[drop->mParticleIndex] & 0x40) != 0;
+				mantaFire(m, game);
+				if (game)
+					s_fireManta = m; // (its wait shortened after the game's hit: objectHitDone)
 			}
 			return 0;
 		}
