@@ -654,8 +654,13 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
 			h->lastShot = shot;
 			h->hits     = 0;
-			fprintf(stderr, "[weapons] an enemy in the air burst by the %s\n", kNames[weapon]);
-			shatter(e, dx, dz);
+			// the bazooka in first person (FLUDD held in view): it bursts; the others' as ever
+			TMario* shooter = PortPlayerMario(s_spFor >= 0 ? s_spFor : PortPlayerNow());
+			if (weapon == BAZOOKA && shooter && PortFluddHeld(shooter)) {
+				fprintf(stderr, "[weapons] an enemy in the air burst by the bazooka\n");
+				shatter(e, dx, dz);
+			} else
+				fprintf(stderr, "[weapons] an enemy in the air defeated by the %s\n", kNames[weapon]);
 			e->kill(); // as a stomp: its own defeat, coins and all
 			if (weapon == BAZOOKA)
 				dropHeart(e);
