@@ -96,6 +96,7 @@ const int kTagShift = 8; // the weapon in a drop's attack, above the game's own 
 
 const int kShotShift = 12; // and the shot (1 to 7, round again), above the weapon
 const int kVisual    = 15; // a drop's weapon tag: the bazooka's water shot seen flying, only to look at (hits nothing)
+const int kRing      = 14; // ...the bazooka's burst's ring of drops with the rocket jump key held (pushes no enemy)
 struct Visual {
 	int tag; // its drop's tag (kVisual and the shot), 0 none
 	JGeometry::TVec3<f32> from, way;
@@ -332,6 +333,7 @@ struct Hit {
 	f32 last;     // when
 	f32 normalStart; // the normal spray on it since (its defeating: SMS_SPRAY_DEFEAT_NORMAL)
 	f32 normalLast;  // and last
+	f32 launchUntil; // thrown up by the bazooka with the rocket jump key held: kept going up till then
 };
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
@@ -374,6 +376,8 @@ void stageSetup()
 }
 
 // the shoves, each frame: along the ground, stopped by a wall, slowing down
+const f32 kKeyLift = 40.0f; // an enemy thrown up by the bazooka with the rocket jump key, a 30th of a second's
+
 void afterMovement()
 {
 	const f32 dt = port_frame_scale(); // 30ths of a second this frame
@@ -405,6 +409,17 @@ void afterMovement()
 	followStraight();
 	followHearts();
 	followChomp();
+	for (int i = 0; i < kMostHits; i++) { // thrown up with the rocket jump key: off the ground, whatever its own move did
+		Hit& h = s_hits[i];
+		if (!h.enemy || s_time >= h.launchUntil || h.enemy->checkLiveFlag(LIVE_FLAG_DEAD))
+			continue;
+		JGeometry::TVec3<f32> v = h.enemy->getVelocity();
+		if (v.y < kKeyLift * 0.8f) {
+			v.y = kKeyLift;
+			h.enemy->setVelocity(v);
+		}
+		h.enemy->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	}
 	for (int i = 0; i < kMostHits; i++) {
 		Hit& h = s_hits[i];
 		if (!h.enemy || (h.vx * h.vx + h.vz * h.vz) < 0.09f)
@@ -566,7 +581,6 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	// SmsSprayStats.key_launch (a mod's setting): a walking enemy hit in the air is defeated at once
 	// (2), and with the rocket jump key held (1) one the bazooka hits on the ground is thrown up into the air
 	if ((s_keyLaunch & 3) && moves(e)) {
-		const f32 kKeyLift = 40.0f; // up, a 30th of a second's (about the bazooka's own throw)
 		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
 			h->lastShot = shot;
 			h->hits     = 0;
@@ -576,13 +590,14 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 				dropHeart(e);
 			return;
 		}
-		if ((s_keyLaunch & 1) && weapon == BAZOOKA && !e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) { // (the bazooka's only)
-			if (!fresh)
-				return; // the rest of a shot that has done its part
+		if ((s_keyLaunch & 1) && weapon == BAZOOKA) { // (the bazooka's only)
+			if (!fresh || e->checkLiveFlag(LIVE_FLAG_AIRBORNE))
+				return; // the rest of a shot that has done its part: no push
 			h->lastShot = shot;
-			h->vx = dx * k.shove * 0.3f; // a little along the way of the shot, mostly up
-			h->vz = dz * k.shove * 0.3f;
+			h->vx = h->vz = 0.0f; // straight up: no push along the ground
+			h->launchUntil = s_time + 0.1f;
 			JGeometry::TVec3<f32> v = e->getVelocity();
+			v.x = v.z = 0.0f;
 			v.y = kKeyLift;
 			e->setVelocity(v);
 			e->mPosition.y += 8.0f;
@@ -657,7 +672,8 @@ void explode(const JGeometry::TVec3<f32>& at, f32 r)
 	if (g && g->mEmitInfo && gpModelWaterManager) {
 		TWaterEmitInfo info(*g->mEmitInfo);
 		info.mNum.set(1);
-		info.mAttack.set(1);
+		// with the rocket jump key held, tagged: they push no enemy (the burst throws them straight up)
+		info.mAttack.set((s16)((s_keyLaunch & 1) ? 1 | (kRing << kTagShift) : 1));
 		info.mV.value.set(0.0f, 0.0f, 0.0f);
 		info.mDirTremble.set(0.05f);
 		info.mPowTremble.set(0.2f);
@@ -1413,6 +1429,22 @@ int objectHit(void* object, void* sender, unsigned message)
 	SprayFor owner(ownerOf(weapon)); // (co-op: the player whose weapon fired it, its settings)
 	if (weapon == kVisual)
 		return 1; // the bazooka's shot seen flying: only to look at
+	// the rocket jump key held: the bazooka's drop (or its burst's ring) on a walking enemy pushes it
+	// not at all (the game's own hit would, along the ground): its burst throws it straight up
+	if (weapon == kRing || (weapon == BAZOOKA && (s_keyLaunch & 1)))
+		if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object)))
+			if (moves(e)) {
+				TModelWaterManager* w = gpModelWaterManager;
+				TWaterHitActor* drop  = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+				if (weapon == BAZOOKA && w && drop && drop->mParticleIndex >= 0 && drop->mParticleIndex < (int)w->mParticleCount) {
+					const int shot = (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0x7f;
+					if (s_burst != shot) { // where it first hits an enemy, as ever
+						s_burst = shot;
+						burst(weapon, shot, w->mParticlePositionSOA[drop->mParticleIndex]);
+					}
+				}
+				return 1;
+			}
 	if (s_bosses && weapon > NORMAL && weapon < WEAPONS)
 		if (TBossEelTooth* t = dynamic_cast<TBossEelTooth*>(static_cast<THitActor*>(object))) { // Eely-Mouth's tooth
 			TModelWaterManager* w = gpModelWaterManager;
