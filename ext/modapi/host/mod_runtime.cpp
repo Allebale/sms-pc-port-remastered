@@ -1184,7 +1184,9 @@ int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
 	if (st && st->size >= offsetof(SmsSprayStats, shadow_damage) + sizeof(float))
 		modg_spray_shadow_damage(st->shadow_damage);
 	// the rocket jump key's shots (any weapon's stats carry it): only from a mod that sets it
-	modg_spray_key_launch(st && st->size >= offsetof(SmsSprayStats, key_launch) + sizeof(int) ? st->key_launch : 0);
+	// (the spray weapons' stats only: the goop weapons' carry none)
+	if (weapon < SMS_SPRAY_FIRE_GOOP)
+		modg_spray_key_launch(st && st->size >= offsetof(SmsSprayStats, key_launch) + sizeof(int) ? st->key_launch : 0);
 	if (weapon == SMS_SPRAY_BAZOOKA) // its goop area: only from a mod that sets it
 		modg_spray_goop_area(st && st->size >= offsetof(SmsSprayStats, goop_area) + sizeof(float) ? st->goop_area : 0.0f);
 	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump off the feet: only from a mod that sets it

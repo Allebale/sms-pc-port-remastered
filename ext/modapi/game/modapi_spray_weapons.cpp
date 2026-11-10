@@ -376,7 +376,7 @@ void stageSetup()
 }
 
 // the shoves, each frame: along the ground, stopped by a wall, slowing down
-const f32 kKeyLift = 40.0f; // an enemy thrown up by the bazooka with the rocket jump key, a 30th of a second's
+const f32 kKeyLift = 70.0f; // an enemy thrown up by the bazooka with the rocket jump key, a 30th of a second's
 
 void afterMovement()
 {
