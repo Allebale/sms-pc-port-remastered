@@ -47,6 +47,7 @@
 #include "port_framerate.h"
 
 #include <Enemy/BossManta.hpp>
+#include <dolphin/os.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -989,8 +990,39 @@ void stageSetup()
 	memset(s_flights, 0, sizeof s_flights);
 }
 
+// The goop's own cost, measured: its update and its drawing (microseconds, added up), written to
+// the log every 5 seconds while it takes more than half a millisecond a frame on average
+OSTime s_costTicks[2];
+int s_costFrames;
+f32 s_costSince;
+struct Cost {
+	int which;
+	OSTime start;
+	explicit Cost(int w) : which(w), start(OSGetTime()) {}
+	~Cost() { s_costTicks[which] += OSGetTime() - start; }
+};
+void reportCost()
+{
+	s_costFrames++;
+	if (s_time - s_costSince < 5.0f)
+		return;
+	const f32 upd = (f32)OSTicksToMicroseconds(s_costTicks[0]) / 1000.0f / (f32)s_costFrames;
+	const f32 drw = (f32)OSTicksToMicroseconds(s_costTicks[1]) / 1000.0f / (f32)s_costFrames;
+	if (upd + drw > 0.5f) {
+		int puddles = 0;
+		for (int i = 0; i < kPuddles; i++)
+			puddles += s_puddles[i].on ? 1 : 0;
+		fprintf(stderr, "[goop] cost a frame: update %.2f ms, drawing %.2f ms (%d puddles)\n", upd, drw, puddles);
+	}
+	s_costTicks[0] = s_costTicks[1] = 0;
+	s_costFrames = 0;
+	s_costSince  = s_time;
+}
+
 void afterMovement()
 {
+	reportCost();
+	Cost cost(0);
 	const f32 dt = port_frame_scale() / 30.0f;
 	s_time += dt;
 	flights(dt);
@@ -1666,107 +1698,118 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 	const f32 r = sizeNow(p);
 	if (r < 1.0f)
 		return;
+	// behind the view, or too far: not drawn; far off, fewer corners
+	const f32 vz = s_view[2][0] * p.x + s_view[2][1] * p.y + s_view[2][2] * p.z + s_view[2][3];
+	if (vz > r * 1.4f + 20.0f)
+		return; // (the view looks down -z)
+	const f32 away = -vz - r * 1.4f;
+	const int every = away > 6000.0f ? 4 : away > 2500.0f ? 2 : 1;
+	const int slot  = index >= 0 && index < kPuddles ? index : 0;
+	const int kAround = 56, kRings = 7;
+	// what the goop pass works out, kept for its water's shine (drawn just after, the same frame)
+	static f32 s_pos[kPuddles][kRings + 1][kAround][3], s_uv[kPuddles][kRings + 1][kAround][2];
+	static f32 s_slope[kPuddles][kRings + 1][kAround][2];
+	static u8 s_col[kPuddles][kRings + 1][kAround], s_edgeRing[kPuddles][kAround];
+	static int s_madeFrame[kPuddles];
+	static f32 s_cos[kAround], s_sin[kAround];
+	static bool s_trig;
+	if (!s_trig) {
+		for (int k = 0; k < kAround; k++)
+			s_cos[k] = cosf(6.2831853f * k / kAround), s_sin[k] = sinf(6.2831853f * k / kAround);
+		s_trig = true;
+	}
 	f32 t[3], b[3];
 	basis(p, t, b);
-	const f32 lift = 1.0f + 0.04f * (f32)index + (gloss ? 0.3f : 0.0f); // over the ground (and over each other)
-	const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
-	const f32 time   = (f32)s_frame / 60.0f;
-	const bool water = true; // every kind under a thin layer of moving water, bending it a little
-	// fire goop flickers and flows; electric goop lies still, the water over it bending it a little
-	const int shade = p.kind == kFire ? (int)(255.0f * (0.93f + 0.07f * sinf(time * 9.0f + p.seed))) : 255;
-	const f32 fl    = p.kind == kFire ? flow(p.kind) : 0.0f;
+	if (!gloss || s_madeFrame[slot] != s_frame) {
+		s_madeFrame[slot] = s_frame;
+		const f32 lift = 1.0f + 0.04f * (f32)index; // over the ground (and over each other)
+		const f32 cx = p.x + p.nx * lift, cy = p.y + p.ny * lift, cz = p.z + p.nz * lift;
+		const f32 time = (f32)s_frame / 60.0f;
+		// fire goop flickers and flows; electric goop lies still, the water over it bending it a little
+		const int shade = p.kind == kFire ? (int)(255.0f * (0.93f + 0.07f * sinf(time * 9.0f + p.seed))) : 255;
+		const f32 fl    = p.kind == kFire ? flow(p.kind) : 0.0f;
+		// rings out from the middle: the flat top (by the radius less the rim), then its rounded edge
+		// (down to the ground, darker: the goop's side)
+		const f32 thick = thickOf(r), rim = rimOf(r);
+		// each ring: how far in from the edge (in rims), how high (of its thickness), how lit
+		static const f32 inRim[kRings + 1] = {0, 0, 0, 0, 0, 1.0f, 0.45f, 0.0f};
+		static const f32 outF[kRings + 1]  = {0.0f, 0.3f, 0.55f, 0.75f, 0.9f, 1.0f, 1.0f, 1.0f};
+		static const f32 high[kRings + 1]  = {1, 1, 1, 1, 1, 1.0f, 0.8f, 0.0f};
+		static const f32 lit[kRings + 1]   = {1, 1, 1, 1, 1, 0.97f, 0.78f, 0.5f};
+		// where its edge runs under another puddle: worked out every 8th frame for each puddle (in
+		// turn), or when it is new or has grown, and kept (the check against every other puddle is costly)
+		static bool s_joined[kPuddles][kAround];
+		static f32 s_joinedBorn[kPuddles], s_joinedSize[kPuddles];
+		f32 rr[kAround];
+		for (int k = 0; k < kAround; k += every)
+			rr[k] = edgeAt(p, 6.2831853f * (f32)k / kAround, r);
+		if (s_joinedBorn[slot] != p.born || fabsf(s_joinedSize[slot] - r) > 6.0f || (s_frame + slot) % 8 == 0) {
+			s_joinedBorn[slot] = p.born, s_joinedSize[slot] = r;
+			for (int k = 0; k < kAround; k++) {
+				const f32 e  = k % every ? edgeAt(p, 6.2831853f * (f32)k / kAround, r) : rr[k];
+				const f32 ox = s_cos[k] * e, oz = s_sin[k] * e;
+				s_joined[slot][k] = underOther(index, p.kind, cx + t[0] * ox + b[0] * oz, cy + t[1] * ox + b[1] * oz, cz + t[2] * ox + b[2] * oz);
+			}
+		}
+		const bool* joined = s_joined[slot];
+		for (int k = 0; k < kAround; k += every) {
+			const bool jn = joined[k] || joined[(k + every) % kAround] || joined[(k + kAround - every) % kAround];
+			s_edgeRing[slot][k] = jn ? 1 : 0;
+			// the flat top reaches its edge less the rim; joined, it runs on flat under the other
+			const f32 top = rr[k] - rim > rr[k] * 0.4f ? rr[k] - rim : rr[k] * 0.4f;
+			for (int j = 0; j <= kRings; j++) {
+				f32 d  = j <= 4 ? top * outF[j] : top + (rr[k] - top) * (1.0f - inRim[j]);
+				f32 h  = thick * high[j];
+				int lt = (int)(255.0f * lit[j]);
+				if (jn && j > 4)
+					h = thick, lt = 255, d = rr[k] * 1.04f; // (into the other puddle, flat)
+				const f32 ca = s_cos[k] * d, sa = s_sin[k] * d;
+				const f32 x = cx + t[0] * ca + b[0] * sa + p.nx * h, y = cy + t[1] * ca + b[1] * sa + p.ny * h,
+				          z = cz + t[2] * ca + b[2] * sa + p.nz * h;
+				f32* ps = s_pos[slot][j][k];
+				ps[0] = x, ps[1] = y, ps[2] = z;
+				// the water's ripples: the goop under it shifted a little, its shine moving
+				const f32 w1 = x * 0.045f + time * 1.6f, w2 = z * 0.06f - time * 1.2f, w3 = z * 0.05f + time * 1.4f, w4 = x * 0.07f + time * 1.9f;
+				const f32 du = 3.5f * sinf(w1) + 2.5f * sinf(w2);
+				const f32 dv = 3.5f * sinf(w3) + 2.5f * sinf(w4);
+				s_slope[slot][j][k][0] = 0.16f * cosf(w1) + 0.17f * cosf(w4); // its slope across
+				s_slope[slot][j][k][1] = 0.15f * cosf(w2) + 0.17f * cosf(w3);
+				s_uv[slot][j][k][0] = (x + fl + du) / kTile, s_uv[slot][j][k][1] = (z + dv) / kTile;
+				s_col[slot][j][k] = (u8)(shade * lt / 255);
+			}
+		}
+	}
 	// the light the water shines with, and the way to the viewer
-	const f32 lx = 0.35f, ly = 0.8f, lz = 0.45f;
-	f32 hx = lx + s_view[2][0], hy = ly + s_view[2][1], hz = lz + s_view[2][2];
+	f32 hx = 0.35f + s_view[2][0], hy = 0.8f + s_view[2][1], hz = 0.45f + s_view[2][2];
 	const f32 hl = sqrtf(hx * hx + hy * hy + hz * hz);
 	hx /= hl, hy /= hl, hz /= hl;
-	// rings out from the middle: the flat top (by the radius less the rim), then its rounded edge
-	// (down to the ground, darker: the goop's side)
-	const int kAround = 56, kRings = 7;
-	const f32 thick = thickOf(r), rim = rimOf(r);
-	// each ring: how far in from the edge (in rims), how high (of its thickness), how lit
-	const f32 inRim[kRings + 1]  = {0, 0, 0, 0, 0, 1.0f, 0.45f, 0.0f};
-	const f32 outF[kRings + 1]   = {0.0f, 0.3f, 0.55f, 0.75f, 0.9f, 1.0f, 1.0f, 1.0f};
-	const f32 high[kRings + 1]   = {1, 1, 1, 1, 1, 1.0f, 0.8f, 0.0f};
-	const f32 lit[kRings + 1]    = {1, 1, 1, 1, 1, 0.97f, 0.78f, 0.5f};
-	static f32 pos[kRings + 1][kAround][3], uv[kRings + 1][kAround][2];
-	static int col[kRings + 1][kAround];
-	// where its edge runs under another puddle: worked out every 8th frame for each puddle (in turn),
-	// or when it is new or has grown, and kept (the check against every other puddle is costly: it
-	// slowed the game with many puddles together)
-	static bool s_joined[kPuddles][kAround];
-	static f32 s_joinedBorn[kPuddles], s_joinedSize[kPuddles];
-	const int slot = index >= 0 && index < kPuddles ? index : 0;
-	if (!gloss && (s_joinedBorn[slot] != p.born || fabsf(s_joinedSize[slot] - r) > 6.0f || (s_frame + slot) % 8 == 0)) {
-		s_joinedBorn[slot] = p.born, s_joinedSize[slot] = r;
-		for (int k = 0; k < kAround; k++) {
-			const f32 a  = 6.2831853f * (f32)k / kAround;
-			const f32 rr = edgeAt(p, a, r);
-			const f32 ex = cx + (t[0] * cosf(a) + b[0] * sinf(a)) * rr, ey = cy + (t[1] * cosf(a) + b[1] * sinf(a)) * rr,
-			          ez = cz + (t[2] * cosf(a) + b[2] * sinf(a)) * rr;
-			s_joined[slot][k] = underOther(index, p.kind, ex, ey, ez);
-		}
-	}
-	const bool* joined = s_joined[slot];
-	for (int j = 0; j <= kRings; j++)
-		for (int k = 0; k < kAround; k++) {
-			const f32 a   = 6.2831853f * (f32)k / kAround;
-			const f32 rr  = edgeAt(p, a, r);
-			const bool jn = joined[k] || joined[(k + 1) % kAround] || joined[(k + kAround - 1) % kAround];
-			// the flat top reaches its edge less the rim; joined, it runs on flat under the other
-			const f32 top = rr - rim > rr * 0.4f ? rr - rim : rr * 0.4f;
-			f32 d         = j <= 4 ? top * outF[j] : top + (rr - top) * (1.0f - inRim[j]);
-			f32 h  = thick * high[j];
-			int lt = (int)(255.0f * lit[j]);
-			if (jn && j > 4)
-				h = thick, lt = 255, d = rr * 1.04f; // (into the other puddle, flat)
-			const f32 ca = cosf(a) * d, sa = sinf(a) * d;
-			const f32 x = cx + t[0] * ca + b[0] * sa + p.nx * h, y = cy + t[1] * ca + b[1] * sa + p.ny * h,
-			          z = cz + t[2] * ca + b[2] * sa + p.nz * h;
-			pos[j][k][0] = x, pos[j][k][1] = y, pos[j][k][2] = z;
-			f32 du = 0.0f, dv = 0.0f, sx = 0.0f, sz = 0.0f;
-			if (water) { // the water's ripples: the goop under it shifted a little, its shine moving
-				const f32 w1 = x * 0.045f + time * 1.6f, w2 = z * 0.06f - time * 1.2f, w3 = z * 0.05f + time * 1.4f, w4 = x * 0.07f + time * 1.9f;
-				du = 3.5f * sinf(w1) + 2.5f * sinf(w2);
-				dv = 3.5f * sinf(w3) + 2.5f * sinf(w4);
-				sx = 0.16f * cosf(w1) + 0.17f * cosf(w4); // its slope across
-				sz = 0.15f * cosf(w2) + 0.17f * cosf(w3);
-			}
-			uv[j][k][0] = (x + fl + du) / kTile, uv[j][k][1] = (z + dv) / kTile;
+	const f32 up = gloss ? 0.3f : 0.0f; // (the shine just over the goop)
+	const int n = kAround / every;
+	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(n * 3 + n * (kRings - 1) * 6));
+	for (int t2 = 0; t2 < (kRings) * n; t2++) {
+		const int j = t2 / n, k = (t2 % n) * every, m = (k + every) % kAround;
+		const int c6[6][2] = {{j, k}, {j + 1, k}, {j + 1, m}, {j, k}, {j + 1, m}, {j, m}};
+		const int corners = j == 0 ? 3 : 6; // (the middle: a fan round it)
+		for (int v = 0; v < corners; v++) {
+			const int jj = c6[v][0], q = c6[v][1];
+			const f32* ps = s_pos[slot][jj][q];
 			if (gloss) {
-				f32 nx = p.nx - sx, ny = p.ny, nz = p.nz - sz;
+				const f32* sl = s_slope[slot][jj][q];
+				f32 nx = p.nx - sl[0], ny = p.ny, nz = p.nz - sl[1];
 				const f32 nl = sqrtf(nx * nx + ny * ny + nz * nz);
 				f32 sp = (nx * hx + ny * hy + nz * hz) / nl;
-				sp = sp > 0.0f ? powf(sp, 24.0f) : 0.0f;
-				const f32 edge = j == kRings && !jn ? 0.3f : 1.0f; // fading at its edge
-				col[j][k] = (int)(sp * 200.0f * edge + 18.0f * edge); // a faint sheen everywhere, bright where it catches the light
+				if (sp > 0.0f) { // (to the 24th)
+					sp *= sp, sp *= sp, sp *= sp; // 8
+					sp = sp * sp * sp;            // 24
+				} else
+					sp = 0.0f;
+				const f32 edge = jj == kRings && !s_edgeRing[slot][q] ? 0.3f : 1.0f; // fading at its edge
+				acorner(ps[0] + p.nx * up, ps[1] + p.ny * up, ps[2] + p.nz * up, 255, 255, 255,
+				        (int)(sp * 200.0f * edge + 18.0f * edge)); // a faint sheen everywhere, bright where it catches the light
 			} else
-				col[j][k] = shade * lt / 255;
-		}
-	GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(kAround * 3 + kAround * (kRings - 1) * 6));
-	for (int k = 0; k < kAround; k++) { // the middle: ring 1 round it
-		const int m = (k + 1) % kAround;
-		const int c[3][2] = {{0, k}, {1, k}, {1, m}};
-		for (int v = 0; v < 3; v++) {
-			const int j = c[v][0], q = c[v][1];
-			if (gloss)
-				acorner(pos[j][q][0], pos[j][q][1], pos[j][q][2], 255, 255, 255, col[j][q]);
-			else
-				tcorner(pos[j][q][0], pos[j][q][1], pos[j][q][2], col[j][q], uv[j][q][0], uv[j][q][1]);
+				tcorner(ps[0], ps[1], ps[2], s_col[slot][jj][q], s_uv[slot][jj][q][0], s_uv[slot][jj][q][1]);
 		}
 	}
-	for (int j = 1; j < kRings; j++)
-		for (int k = 0; k < kAround; k++) {
-			const int m = (k + 1) % kAround;
-			const int c[6][2] = {{j, k}, {j + 1, k}, {j + 1, m}, {j, k}, {j + 1, m}, {j, m}};
-			for (int v = 0; v < 6; v++) {
-				const int jj = c[v][0], q = c[v][1];
-				if (gloss)
-					acorner(pos[jj][q][0], pos[jj][q][1], pos[jj][q][2], 255, 255, 255, col[jj][q]);
-				else
-					tcorner(pos[jj][q][0], pos[jj][q][1], pos[jj][q][2], col[jj][q], uv[jj][q][0], uv[jj][q][1]);
-			}
-		}
 	GXEnd();
 }
 
@@ -1910,6 +1953,7 @@ void drawFlames(const Puddle& p, int index)
 
 void GoopPacket::draw()
 {
+	Cost cost(1);
 	if (!s_haveView)
 		return;
 	makeTextures();
