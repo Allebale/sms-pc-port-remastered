@@ -56,6 +56,7 @@
 extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
 bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
 bool PortIsPlayer2(TMario* mario); // co-op's Luigi
+void PortWaterSeenAt(f32* at); // modapi_held_fludd.cpp: where a drop is seen in this view (co-op)
 int PortPlayerNow(); // modapi_game.cpp: the players (split-screen co-op)
 int PortPlayers();
 TMario* PortPlayerMario(int i);
@@ -1510,7 +1511,8 @@ void drawDrops(int kind)
 		for (; i < j; i++) {
 			if ((w->mParticleFlagSOA[i] & 0xf) != 1 || w->mParticleLifetimeSOA[i] <= 0.0f || dropKind(i) != kind)
 				continue;
-			const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+			JGeometry::TVec3<f32> p = w->mParticlePositionSOA[i];
+			PortWaterSeenAt(&p.x); // (co-op: as this view sees it)
 			const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[i];
 			f32 r = w->mParticleSizeSOA[i] * 0.55f * statsOf(kind).drop;
 			if (held) {
@@ -1617,7 +1619,8 @@ void drawTubes(int kind)
 	MtxPtr em = held && PortSprayWeaponTrigger() ? PortFluddHeldEmitMtx(&scale) : 0;
 	if (em) {
 		const int a = order[0];
-		const JGeometry::TVec3<f32>& pa = w->mParticlePositionSOA[a];
+		JGeometry::TVec3<f32> pa = w->mParticlePositionSOA[a];
+		PortWaterSeenAt(&pa.x); // (co-op: as this view sees it)
 		const f32 dx = pa.x - em[0][3], dy = pa.y - em[1][3], dz = pa.z - em[2][3];
 		if (dx * dx + dy * dy + dz * dz < 900.0f * 900.0f) {
 			Piece& pc = pieces[m++];
@@ -1632,8 +1635,10 @@ void drawTubes(int kind)
 		const int a = order[k], b = order[k + 1];
 		if (w->mParticleLifetimeSOA[a] - w->mParticleLifetimeSOA[b] > 3.5f)
 			continue; // not let out one after the other
-		const JGeometry::TVec3<f32>& pa = w->mParticlePositionSOA[a];
-		const JGeometry::TVec3<f32>& pb = w->mParticlePositionSOA[b];
+		JGeometry::TVec3<f32> pa = w->mParticlePositionSOA[a];
+		PortWaterSeenAt(&pa.x); // (co-op: as this view sees it)
+		JGeometry::TVec3<f32> pb = w->mParticlePositionSOA[b];
+		PortWaterSeenAt(&pb.x); // (co-op: as this view sees it)
 		const JGeometry::TVec3<f32>& v  = w->mParticleVelocitySOA[a];
 		const f32 dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
 		const f32 gap2 = 4.0f * (v.x * v.x + v.y * v.y + v.z * v.z) + 900.0f;

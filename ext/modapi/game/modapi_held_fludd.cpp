@@ -62,6 +62,8 @@ struct Held {
 	f32 heldEmitScale;
 	bool haveHeldEmit;
 	TWaterGun* heldEmitGun;
+	Vec backEmit;         // co-op: where its nozzle is as the other player sees it (on his back)
+	bool haveBackEmit;
 	Held()
 	{
 		memset(this, 0, sizeof *this);
@@ -609,6 +611,11 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 				nozzle->getModel()->setBaseTRMtx(model->getAnmMtx(g->unk1CD8));
 				nozzle->getModel()->calc();
 			}
+			if (MtxPtr em = g->getEmitMtx(0)) { // its water seen coming from there (PortWaterSeenAt)
+				Held& h = s_held[who];
+				h.backEmit.x = em[0][3], h.backEmit.y = em[1][3], h.backEmit.z = em[2][3];
+				h.haveBackEmit = true;
+			}
 		}
 		// their weapon on their back as its pack, as the other player sees them (alive, not climbing)
 		if (graphics && !g->mMario->checkFlag(MARIO_FLAG_GAME_OVER) && !(PortSprayWeaponChosen() && climbing(g->mMario)))
@@ -929,6 +936,35 @@ bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at)
 	at->set(s_backMuzzle.x + m->mPosition.x - s_backMario.x, s_backMuzzle.y + m->mPosition.y - s_backMario.y,
 	        s_backMuzzle.z + m->mPosition.z - s_backMario.z);
 	return true;
+}
+
+// Co-op: where a drop (water or goop, at `at`) is seen in the view being made or drawn. A
+// first-person player's stream comes out of the FLUDD held in their own view, in front of their
+// face; the other player sees FLUDD on their back, so the drops near the held one are seen moved
+// that way, less the further they are from it (none 400 away).
+extern "C" int port_coop_second_entry;
+void PortWaterSeenAt(f32* at)
+{
+	if (PortPlayers() != 2)
+		return;
+	const int viewer = port_coop_second_entry ? 1 : PortPlayerNow();
+	for (int p = 0; p < 2; p++) {
+		const Held& h = s_held[p];
+		if (p == viewer || !h.haveHeldEmit || !h.haveBackEmit)
+			continue;
+		TMario* m = PortPlayerMario(p);
+		if (!m || !PortFluddHeld(m))
+			continue;
+		const f32 hx = h.heldEmit[0][3], hy = h.heldEmit[1][3], hz = h.heldEmit[2][3];
+		const f32 dx = at[0] - hx, dy = at[1] - hy, dz = at[2] - hz;
+		const f32 d2 = dx * dx + dy * dy + dz * dz, kReach = 400.0f;
+		if (d2 >= kReach * kReach)
+			continue;
+		const f32 w = 1.0f - sqrtf(d2) / kReach;
+		at[0] += (h.backEmit.x - hx) * w;
+		at[1] += (h.backEmit.y - hy) * w;
+		at[2] += (h.backEmit.z - hz) * w;
+	}
 }
 
 // The Mario a FLUDD is on (modapi_weapon_models.cpp)
