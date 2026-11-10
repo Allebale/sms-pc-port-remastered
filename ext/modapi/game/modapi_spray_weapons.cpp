@@ -153,7 +153,8 @@ struct SprayPlayer {
 	f32 voiceVolume;       // its volume (SMS_SPRAY_VOICE_SHIFT: in percent)
 	f32 goop;              // how much goop the weapons clean, times the game's own (SMS_SPRAY_GOOP_SHIFT)
 	bool rocketHurt;       // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
-	bool keyLaunch;        // SmsSprayStats.key_launch: the rocket jump key held, hits throw enemies up and finish those in the air
+	int keyLaunch;         // SmsSprayStats.key_launch: 1 the rocket jump key held (hits throw enemies up), 2 hits in the air finish them
+	f32 feetForward;       // SmsSprayStats.feet_forward: a rocket jump off a burst at his feet thrown forward, times its speed
 	int shotLook;          // the bazooka's shot seen flying: 0 none, 1 water, 2 a green water balloon, 3 a big one
 	SprayPlayer() { memset(this, 0, sizeof *this); voiceVolume = 1.0f, goop = 1.0f; }
 };
@@ -194,6 +195,7 @@ struct SprayFor {
 #define s_goop SP().goop
 #define s_rocketHurt SP().rocketHurt
 #define s_keyLaunch SP().keyLaunch
+#define s_feetForward SP().feetForward
 #define s_shotLook SP().shotLook
 #define s_defeat SP().defeat
 
@@ -561,21 +563,22 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		return;
 	const Weapon& k = kWeapons[weapon];
 	const bool fresh = h->lastShot != shot; // this shot's first drop to reach it
-	// the rocket jump key held (SmsSprayStats.key_launch, a mod's setting): a walking enemy hit on the
-	// ground is thrown up into the air, and one hit in the air is defeated at once
-	if (s_keyLaunch && moves(e)) {
+	// SmsSprayStats.key_launch (a mod's setting): a walking enemy hit in the air is defeated at once
+	// (2), and with the rocket jump key held (1) one hit on the ground is thrown up into the air
+	if ((s_keyLaunch & 3) && moves(e)) {
 		const f32 kKeyLift = 40.0f; // up, a 30th of a second's (about the bazooka's own throw)
-		if (!fresh) {
-			return; // the rest of a shot that has done its part
-		} else if (e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
 			h->lastShot = shot;
 			h->hits     = 0;
-			fprintf(stderr, "[weapons] an enemy in the air finished by the %s (rocket jump key held)\n", kNames[weapon]);
+			fprintf(stderr, "[weapons] an enemy in the air finished by the %s\n", kNames[weapon]);
 			e->kill(); // as a stomp: its own defeat, coins and all
 			if (weapon == BAZOOKA)
 				dropHeart(e);
 			return;
-		} else {
+		}
+		if ((s_keyLaunch & 1) && !e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+			if (!fresh)
+				return; // the rest of a shot that has done its part
 			h->lastShot = shot;
 			h->vx = dx * k.shove * 0.3f; // a little along the way of the shot, mostly up
 			h->vz = dz * k.shove * 0.3f;
@@ -1188,6 +1191,21 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	// forward, one in front back (aim a little behind to fly forward)
 	const f32 along = (dx * fx + dz * fz) * speed;                        // its push the way he looks
 	const f32 sx = dx * speed - along * fx, sz = dz * speed - along * fz; // and to the side
+	// a burst at his feet (below his middle, near, not in front of him), as in Team Fortress 2's
+	// rocket jump off the feet: thrown forward faster, the way he goes (or faces when still)
+	f32 feetX = 0.0f, feetZ = 0.0f;
+	if (s_feetForward > 0.0f && !wallJump && at.y < m->mPosition.y + 60.0f) {
+		const f32 face0 = m->mFaceAngle.y * (3.14159265f / 32768.0f);
+		f32 gx = sinf(face0), gz = cosf(face0);
+		if (m->mForwardVel < -1.0f) // going backwards: that way
+			gx = -gx, gz = -gz;
+		const f32 bx = at.x - m->mPosition.x, bz = at.z - m->mPosition.z;
+		const f32 hd = sqrtf(bx * bx + bz * bz), kFeet = 220.0f;
+		if (hd < kFeet && bx * gx + bz * gz < 40.0f) { // under him or behind, not in front
+			const f32 k = speed * s_feetForward * (1.0f - 0.6f * hd / kFeet);
+			feetX = gx * k, feetZ = gz * k;
+		}
+	}
 	const bool inAir = (m->mStatus & MARIO_STATUS_FLAG_JUMPING) != 0;
 	if (!inAir || (wallJump && m->mStatus == MARIO_STATUS_WALL_SLIDE))
 		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false); // (off a wall slide too: up, not sliding down)
@@ -1195,7 +1213,7 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 	// across the ground: the way he goes now and the push, as his facing and forward speed (backwards
 	// if it throws him behind him, so he keeps facing the way he looked)
 	const f32 face = m->mFaceAngle.y * (3.14159265f / 32768.0f);
-	const f32 hx = sinf(face) * m->mForwardVel + along * fx + sx, hz = cosf(face) * m->mForwardVel + along * fz + sz;
+	const f32 hx = sinf(face) * m->mForwardVel + along * fx + sx + feetX, hz = cosf(face) * m->mForwardVel + along * fz + sz + feetZ;
 	const f32 h  = sqrtf(hx * hx + hz * hz);
 	if (h > 0.5f) {
 		f32 way = atan2f(hx, hz);
@@ -1221,8 +1239,8 @@ void rocketJump(const JGeometry::TVec3<f32>& at, f32 r)
 			port_clip_play(set[pick].pcm, set[pick].frames, set[pick].rate, s_voiceVolume);
 		}
 	}
-	fprintf(stderr, "[weapons] rocket jump: %.0f away%s%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "",
-	        wallJump ? " up a wall" : "", up, h,
+	fprintf(stderr, "[weapons] rocket jump: %.0f away%s%s%s, up %.1f, across %.1f%s\n", dist, inAir ? " (in the air)" : "",
+	        wallJump ? " up a wall" : "", feetX != 0.0f || feetZ != 0.0f ? " off the feet" : "", up, h,
 	        s_rocketHurt ? ", 1 health lost" : "");
 }
 
@@ -1428,6 +1446,23 @@ int objectHit(void* object, void* sender, unsigned message)
 			s_peteyHit  = p;
 			s_peteyMark = p->mWaterMark;
 		}
+	// the rocket jump key held: a walking enemy on the ground thrown up by the rifle's or submachine
+	// gun's drop alone, without the game's own hit (it would hold it frozen where it stands)
+	if ((s_keyLaunch & 1) && (weapon == RIFLE || weapon == SMG) && gpModelWaterManager)
+		if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object)))
+			if (moves(e) && !e->checkLiveFlag(LIVE_FLAG_AIRBORNE) && !e->checkLiveFlag(LIVE_FLAG_DEAD)) {
+				TModelWaterManager* w = gpModelWaterManager;
+				TWaterHitActor* drop  = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
+				if (drop && drop->mParticleIndex >= 0 && drop->mParticleIndex < (int)w->mParticleCount) {
+					const int shot = (w->mParticleAttackSOA[drop->mParticleIndex] >> kTagShift) & 0x7f;
+					const JGeometry::TVec3<f32>& v = w->mParticleVelocitySOA[drop->mParticleIndex];
+					const f32 l = sqrtf(v.x * v.x + v.z * v.z);
+					if (gpMarioParticleManager)
+						gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &drop->mPosition, 0, nullptr);
+					hitEnemy(e, weapon, shot, l > 1e-3f ? v.x / l : 0.0f, l > 1e-3f ? v.z / l : 0.0f);
+					return 1;
+				}
+			}
 	if (weapon <= NORMAL || weapon >= WEAPONS || s_gamePush[weapon] >= 1.0f)
 		return 0;
 	if (TSmallEnemy* e = dynamic_cast<TSmallEnemy*>(static_cast<THitActor*>(object))) {
@@ -1468,6 +1503,7 @@ void objectHitDone(void* object, void* sender, unsigned message, int result)
 		return;
 	const int tag    = w->mParticleAttackSOA[drop->mParticleIndex];
 	const int weapon = (tag >> kTagShift) & 0xf;
+	SprayFor owner(ownerOf(weapon)); // (co-op: the player whose weapon fired it, its settings)
 	// a picture washed off to find what it hides (the red X and O graffiti, a blue coin behind):
 	// a weapon's few drops each wash as much as a moment of FLUDD's stream, or the picture grows
 	// back between them and never comes off
@@ -2407,13 +2443,26 @@ f32 PortSprayWeaponFarScale(TLiveManager* manager)
 	return s_farScale;
 }
 
-// held_fludd->set_weapon_stats' key_launch (mod_runtime.cpp): the rocket jump key held now, so a hit
-// throws an enemy up and one in the air is defeated at once (the player's: co-op, each player's own)
+// held_fludd->set_weapon_stats' key_launch (mod_runtime.cpp): 1 the rocket jump key held now (a hit
+// throws an enemy up), 2 a hit in the air defeats it at once (the player's: co-op, each player's own)
 extern "C" int modg_spray_key_launch(int on)
 {
-	if ((on != 0) != s_keyLaunch)
-		fprintf(stderr, "[weapons] rocket jump key shots %s\n", on ? "throw enemies up" : "as ever");
-	s_keyLaunch = on != 0;
+	on &= 3;
+	if (on != s_keyLaunch)
+		fprintf(stderr, "[weapons] shots in the air %s, rocket jump key shots %s\n", (on & 2) ? "defeat enemies" : "as ever",
+		        (on & 1) ? "throw enemies up" : "as ever");
+	s_keyLaunch = on;
+	return 1;
+}
+
+// held_fludd->set_weapon_stats' feet_forward (mod_runtime.cpp): a rocket jump off a burst at his feet
+// (below him, not in front) throws him forward, the way he goes, this many times its speed more; 0 not
+extern "C" int modg_spray_feet_forward(float k)
+{
+	const f32 v = k > 0.0f ? (k < 4.0f ? k : 4.0f) : 0.0f;
+	if (v != s_feetForward)
+		fprintf(stderr, "[weapons] rocket jumps off the feet thrown forward: %.2f\n", v);
+	s_feetForward = v;
 	return 1;
 }
 
