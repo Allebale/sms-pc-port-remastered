@@ -1608,7 +1608,8 @@ void drawWalls(int kind)
 		const int drips   = 3 + (int)(r / 25.0f);
 		const f32 running = (s_time - g.since) / 5.0f; // reaching their length in five seconds
 		const f32 most    = (r * 1.4f + 40.0f) * (running < 1.0f ? running : 1.0f);
-		GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(drips * 9));
+		const int kBulb = 12; // (the round drop at its end)
+		GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(drips * (6 + kBulb * 3)));
 		for (int d = 0; d < drips; d++) {
 			const u32 key  = (u32)i * 131u + (u32)d * 977u + (u32)(g.seed * 10.0f);
 			const f32 off  = (hash01(key) * 2.0f - 1.0f) * r * 0.65f;
@@ -1623,10 +1624,15 @@ void drawWalls(int kind)
 			tcorner(bx - tx * wide, top, bz - tz * wide, 245, u0, -top / kTile);
 			tcorner(bx + tx * wide, bottom, bz + tz * wide, 225, u1, -bottom / kTile);
 			tcorner(bx - tx * wide, bottom, bz - tz * wide, 225, u0, -bottom / kTile);
-			// its rounded end: a drop hanging
-			tcorner(bx - tx * wide * 1.3f, bottom, bz - tz * wide * 1.3f, 225, u0, -bottom / kTile);
-			tcorner(bx + tx * wide * 1.3f, bottom, bz + tz * wide * 1.3f, 225, u1, -bottom / kTile);
-			tcorner(bx, bottom - wide * 1.8f, bz, 210, (u0 + u1) * 0.5f, -(bottom - wide * 1.8f) / kTile);
+			// its end: a round drop hanging, a little wider than the drip (a circle, a bit taller than wide)
+			const f32 br = wide * 1.25f, by = bottom - br * 0.35f;
+			for (int k = 0; k < kBulb; k++) {
+				const f32 a0 = 6.2831853f * (f32)k / kBulb, a1 = 6.2831853f * (f32)(k + 1) / kBulb;
+				const f32 x0 = cosf(a0) * br, y0 = sinf(a0) * br * 1.15f, x1 = cosf(a1) * br, y1 = sinf(a1) * br * 1.15f;
+				tcorner(bx, by, bz, 225, ((bx) * tx + (bz) * tz) / kTile, -by / kTile);
+				tcorner(bx + tx * x0, by + y0, bz + tz * x0, 215, ((bx + tx * x0) * tx + (bz + tz * x0) * tz) / kTile, -(by + y0) / kTile);
+				tcorner(bx + tx * x1, by + y1, bz + tz * x1, 215, ((bx + tx * x1) * tx + (bz + tz * x1) * tz) / kTile, -(by + y1) / kTile);
+			}
 		}
 		GXEnd();
 	}
