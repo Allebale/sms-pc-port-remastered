@@ -762,7 +762,52 @@ bool zappedNow(TLiveActor* e)
 	return false;
 }
 
-// Enemies drawn to fire goop: each small enemy within 2500 of a fire puddle walks into it (on top of
+// Which enemies move by themselves: each small enemy's own movement across the ground (not counting
+// the walk into the fire) added up since the stage began; one that never moves on its own (a
+// Piranha Plant, say) is never drawn to the fire
+const int kMovers = 256;
+struct Mover { TLiveActor* e; f32 x, z, moved; };
+Mover s_movers[kMovers];
+Mover* moverOf(TLiveActor* e)
+{
+	Mover* free = 0;
+	for (int i = 0; i < kMovers; i++) {
+		if (s_movers[i].e == e)
+			return &s_movers[i];
+		if (!free && !s_movers[i].e)
+			free = &s_movers[i];
+	}
+	if (free) {
+		free->e = e, free->x = e->mPosition.x, free->z = e->mPosition.z, free->moved = 0.0f;
+	}
+	return free;
+}
+void watchMovers(TLiveManager* mgr)
+{
+	if (!mgr)
+		return;
+	for (int i = 0; i < mgr->getObjNum(); i++) {
+		TLiveActor* e = mgr->getObj(i);
+		if (!e || !dynamic_cast<TSmallEnemy*>(e))
+			continue;
+		Mover* m = moverOf(e);
+		if (!m)
+			continue;
+		const f32 dx = e->mPosition.x - m->x, dz = e->mPosition.z - m->z, d = sqrtf(dx * dx + dz * dz);
+		if (d < 400.0f && !flyingNow(e)) // (not a jump back to where it began, nor a throw)
+			m->moved += d;
+		m->x = e->mPosition.x, m->z = e->mPosition.z;
+	}
+}
+bool movesItself(TLiveActor* e)
+{
+	for (int i = 0; i < kMovers; i++)
+		if (s_movers[i].e == e)
+			return s_movers[i].moved > 60.0f;
+	return false;
+}
+
+// Enemies drawn to fire goop (the ones that move by themselves): each small enemy within 2500 of a fire puddle walks into it (on top of
 // its own moving, turned that way, kept out of walls), and stays in it once there
 void walkToFire(TLiveManager* mgr, f32 dt)
 {
@@ -771,7 +816,7 @@ void walkToFire(TLiveManager* mgr, f32 dt)
 	for (int i = 0; i < mgr->getObjNum(); i++) {
 		TLiveActor* e = mgr->getObj(i);
 		if (!e || !dynamic_cast<TSmallEnemy*>(e) || e->checkLiveFlag(LIVE_FLAG_DEAD) || e->checkLiveFlag(LIVE_FLAG_HIDDEN)
-		    || e->checkLiveFlag(LIVE_FLAG_AIRBORNE) || flyingNow(e) || zappedNow(e))
+		    || e->checkLiveFlag(LIVE_FLAG_AIRBORNE) || flyingNow(e) || zappedNow(e) || !movesItself(e))
 			continue;
 		f32 edge;
 		const Puddle* p = nearFire(e->mPosition.x, e->mPosition.y, e->mPosition.z, 2500.0f, &edge);
@@ -792,6 +837,9 @@ void walkToFire(TLiveManager* mgr, f32 dt)
 			px = wall.mCenter.x, pz = wall.mCenter.z;
 		e->mPosition.x = px, e->mPosition.z = pz;
 		e->mRotation.y = atan2f(dx, dz) * 57.29578f; // facing the fire
+		for (int k = 0; k < kMovers; k++)
+			if (s_movers[k].e == e)
+				s_movers[k].x = px, s_movers[k].z = pz; // (this walk not its own)
 	}
 }
 
@@ -912,6 +960,7 @@ void stageSetup()
 {
 	undress(); // (its textures' memory goes with the stage)
 	memset(s_puddles, 0, sizeof s_puddles);
+	memset(s_movers, 0, sizeof s_movers);
 	memset(s_wallGoop, 0, sizeof s_wallGoop);
 	memset(s_zaps, 0, sizeof s_zaps);
 	memset(s_flights, 0, sizeof s_flights);
@@ -926,6 +975,9 @@ void afterMovement()
 	dressFludd();
 	drain();
 	blackGoop(dt);
+	if (gpConductor) // (which enemies move by themselves, known before any fire)
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			watchMovers(*it);
 	bool any = false;
 	for (int i = 0; i < kPuddles; i++) {
 		Puddle& p = s_puddles[i];
