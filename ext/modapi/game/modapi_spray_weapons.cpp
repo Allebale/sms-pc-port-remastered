@@ -58,6 +58,8 @@
 #include <System/MarDirector.hpp>
 #include <MoveBG/MapObjTree.hpp>
 #include "port_framerate.h"
+#include <M3DUtil/MActor.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 
 #include <math.h>
 #include <stdio.h>
@@ -337,8 +339,6 @@ struct Hit {
 	f32 normalLast;  // and last
 	f32 launchUntil; // thrown up by the bazooka with the rocket jump key held: kept going up till then
 	f32 launchUp;    // ...this fast
-	f32 dieAt;       // shot in the air: knocked along, defeated as it lands (or then at the latest)
-	int dieWeapon, dieOwner; // by which weapon, whose (co-op)
 };
 const int kMostHits = 32;
 Hit s_hits[kMostHits];
@@ -359,10 +359,25 @@ Hit* hitOf(TSmallEnemy* e)
 	return slot;
 }
 
+// An enemy shot in the air (key_launch's 2) blown to pieces: each joint of its model (its head,
+// feet, body...) flies off on its own, spinning and falling, as its defeat plays out. Its joints are
+// moved as its model is posed each frame (port_live_actor_posed, patch zzzzzzzzzz-live-actor-posed).
+struct Shatter {
+	TLiveActor* actor;
+	f32 start;       // when (s_time)
+	f32 dx, dz;      // the shot's way across the ground (the pieces mostly go that way)
+	unsigned seed;
+};
+const int kMostShatters = 8;
+Shatter s_shatters[kMostShatters];
+int s_shatterCount; // in use, the slots below it (0: nothing to do as models are posed)
+
 void clearStraights();
 void stageSetup()
 {
 	s_rocketAir = false;
+	memset(s_shatters, 0, sizeof s_shatters); // (their actors were the last stage's)
+	s_shatterCount = 0;
 	clearStraights(); // (their enemies were the last stage's)
 	memset(&s_visual, 0, sizeof s_visual);
 	memset(&s_balloon, 0, sizeof s_balloon);
@@ -384,6 +399,27 @@ void stageSetup()
 const f32 kKeyLift = 30.0f; // an enemy thrown up by the bazooka with the rocket jump key, a 30th of a second's (no setting)
 
 void dropHeart(TLiveActor* e);
+
+
+void shatter(TLiveActor* a, f32 dx, f32 dz)
+{
+	int slot = -1;
+	for (int i = 0; i < kMostShatters; i++)
+		if (s_shatters[i].actor == a || (slot < 0 && (!s_shatters[i].actor || s_time - s_shatters[i].start > 4.0f)))
+			slot = i;
+	if (slot < 0)
+		slot = 0;
+	Shatter& sh = s_shatters[slot];
+	sh.actor    = a;
+	sh.start    = s_time;
+	sh.dx       = dx, sh.dz = dz;
+	sh.seed     = (unsigned)(size_t)a * 2654435761u + (unsigned)(s_time * 1000.0f);
+	if (slot + 1 > s_shatterCount)
+		s_shatterCount = slot + 1;
+	if (gpMarioParticleManager) // a burst of water where it was
+		for (int i = 0; i < 3; i++)
+			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &a->mPosition, 0, nullptr);
+}
 
 void afterMovement()
 {
@@ -427,25 +463,6 @@ void afterMovement()
 			h.enemy->setVelocity(v);
 		}
 		h.enemy->onLiveFlag(LIVE_FLAG_AIRBORNE);
-	}
-	for (int i = 0; i < kMostHits; i++) { // knocked out of the air: defeated as it lands, or at its time
-		Hit& h = s_hits[i];
-		if (!h.enemy || h.dieAt <= 0.0f)
-			continue;
-		if (h.enemy->checkLiveFlag(LIVE_FLAG_DEAD)) {
-			h.dieAt = 0.0f;
-			continue;
-		}
-		const bool landed = s_time > h.dieAt - 0.45f && !h.enemy->checkLiveFlag(LIVE_FLAG_AIRBORNE);
-		if (!landed && s_time < h.dieAt)
-			continue;
-		h.dieAt = 0.0f;
-		h.vx = h.vz = 0.0f;
-		SprayFor f(h.dieOwner);
-		fprintf(stderr, "[weapons] an enemy in the air finished by the %s\n", kNames[h.dieWeapon]);
-		h.enemy->kill(); // as a stomp: its own defeat, coins and all
-		if (h.dieWeapon == BAZOOKA)
-			dropHeart(h.enemy);
 	}
 	for (int i = 0; i < kMostHits; i++) {
 		Hit& h = s_hits[i];
@@ -608,24 +625,14 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 	// SmsSprayStats.key_launch (a mod's setting): a walking enemy hit in the air is defeated at once
 	// (2), and with the rocket jump key held (1) one the bazooka hits on the ground is thrown up into the air
 	if ((s_keyLaunch & 3) && moves(e)) {
-		if (h->dieAt > 0.0f)
-			return; // already knocked out of the air: on its way down
 		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
 			h->lastShot = shot;
 			h->hits     = 0;
-			h->last     = s_time;
-			// knocked along the way of the shot (and a little up), defeated as it lands
-			const f32 air = (k.shove > 14.0f ? k.shove : 14.0f) * 1.5f;
-			h->vx = dx * air;
-			h->vz = dz * air;
-			JGeometry::TVec3<f32> v = e->getVelocity();
-			v.y = (v.y > 0.0f ? v.y : 0.0f) + 12.0f;
-			e->setVelocity(v);
-			h->launchUntil = 0.0f;
-			h->dieAt     = s_time + 0.6f;
-			h->dieWeapon = weapon;
-			h->dieOwner  = s_spFor >= 0 ? s_spFor : PortPlayerNow();
-			fprintf(stderr, "[weapons] an enemy in the air knocked out by the %s\n", kNames[weapon]);
+			fprintf(stderr, "[weapons] an enemy in the air blown to pieces by the %s\n", kNames[weapon]);
+			shatter(e, dx, dz);
+			e->kill(); // as a stomp: its own defeat, coins and all
+			if (weapon == BAZOOKA)
+				dropHeart(e);
 			return;
 		}
 		if ((s_keyLaunch & 1) && weapon == BAZOOKA) { // (the bazooka's only)
@@ -2572,4 +2579,73 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 	if (weapon == RIFLE || weapon == SMG)
 		s_hitScale[weapon] = hit >= 0.0f ? hit : 0.0f;
 	return 1;
+}
+
+namespace {
+// a number from 0 to 1 for joint j of a shatter (the same each frame)
+f32 shatterRand(unsigned seed, int j, int k)
+{
+	unsigned x = seed ^ (unsigned)(j * 73856093) ^ (unsigned)(k * 19349663);
+	x ^= x >> 13;
+	x *= 0x5bd1e995u;
+	x ^= x >> 15;
+	return (f32)(x & 0xffff) / 65535.0f;
+}
+} // namespace
+
+// Every live actor's model, posed for this frame (TLiveActor::perform, patch
+// zzzzzzzzzz-live-actor-posed): one blown to pieces (shatter) has each joint moved off on its own,
+// and its skin's matrices made again from them. Nothing to do without a shatter going.
+extern "C" void port_live_actor_posed(TLiveActor* a)
+{
+	if (s_shatterCount <= 0 || !a || !a->mMActor)
+		return;
+	const Shatter* sh = 0;
+	for (int i = 0; i < s_shatterCount; i++)
+		if (s_shatters[i].actor == a)
+			sh = &s_shatters[i];
+	if (!sh)
+		return;
+	J3DModel* md = a->mMActor->getModel();
+	J3DModelData* data = md ? md->getModelData() : 0;
+	if (!data)
+		return;
+	const f32 t = (s_time - sh->start) * 30.0f; // 30ths of a second since
+	if (t < 0.0f || t > 150.0f)
+		return;
+	const f32 kGravity = 1.4f;
+	const int n = data->getJointNum();
+	const f32 cx = a->mPosition.x, cy = a->mPosition.y, cz = a->mPosition.z;
+	for (int j = 0; j < n; j++) {
+		Mtx m;
+		MTXCopy(md->getAnmMtx(j), m);
+		const f32 px = m[0][3], py = m[1][3], pz = m[2][3];
+		// out from its middle, mostly the way of the shot and up, each piece its own way
+		f32 ox = px - cx, oy = py - cy - 40.0f, oz = pz - cz;
+		const f32 ol = sqrtf(ox * ox + oy * oy + oz * oz);
+		if (ol > 1.0f)
+			ox /= ol, oy /= ol, oz /= ol;
+		else
+			ox = oy = oz = 0.0f;
+		const f32 rx = shatterRand(sh->seed, j, 0) * 2.0f - 1.0f, rz = shatterRand(sh->seed, j, 2) * 2.0f - 1.0f;
+		const f32 speed = 6.0f + 8.0f * shatterRand(sh->seed, j, 3);
+		const f32 vx = (ox * 0.8f + rx * 0.6f + sh->dx * 0.7f) * speed;
+		const f32 vz = (oz * 0.8f + rz * 0.6f + sh->dz * 0.7f) * speed;
+		const f32 vy = (oy * 0.5f + 0.9f + 0.6f * shatterRand(sh->seed, j, 1)) * speed;
+		const f32 mx = vx * t, my = vy * t - 0.5f * kGravity * t * t, mz = vz * t;
+		// and spinning about itself
+		Vec axis = {shatterRand(sh->seed, j, 4) - 0.5f, shatterRand(sh->seed, j, 5) - 0.5f, shatterRand(sh->seed, j, 6) - 0.5f};
+		if (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z < 1e-4f)
+			axis.y = 1.0f;
+		Mtx spin, toOrigin, back, tmp, out;
+		MTXRotAxisRad(spin, &axis, (0.15f + 0.25f * shatterRand(sh->seed, j, 7)) * t);
+		MTXTrans(toOrigin, -px, -py, -pz);
+		MTXTrans(back, px + mx, py + my, pz + mz);
+		MTXConcat(spin, toOrigin, tmp);
+		MTXConcat(back, tmp, tmp);
+		MTXConcat(tmp, m, out);
+		md->setAnmMtx(j, out);
+	}
+	if (data->getWEvlpMtxNum() > 0)
+		md->calcWeightEnvelopeMtx();
 }
