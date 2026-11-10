@@ -1617,6 +1617,9 @@ bool underOther(int self, int kind, f32 x, f32 y, f32 z)
 		const f32 d2 = dx * dx + dz * dz;
 		if (d2 > r * r * 1.5f)
 			continue;
+		const f32 sure = r * 0.7f - rimOf(r) * 1.5f; // (its wavy edge never comes in further than this)
+		if (sure > 0.0f && d2 < sure * sure)
+			return true;
 		f32 t[3], b[3];
 		basis(o, t, b);
 		const f32 a = atan2f(dx * b[0] + dy * b[1] + dz * b[2], dx * t[0] + dy * t[1] + dz * t[2]);
@@ -1661,14 +1664,23 @@ void drawPuddle(const Puddle& p, int index, bool gloss = false)
 	const f32 lit[kRings + 1]    = {1, 1, 1, 1, 1, 0.97f, 0.78f, 0.5f};
 	static f32 pos[kRings + 1][kAround][3], uv[kRings + 1][kAround][2];
 	static int col[kRings + 1][kAround];
-	static bool joined[kAround];
-	for (int k = 0; k < kAround; k++) {
-		const f32 a  = 6.2831853f * (f32)k / kAround;
-		const f32 rr = edgeAt(p, a, r);
-		const f32 ex = cx + (t[0] * cosf(a) + b[0] * sinf(a)) * rr, ey = cy + (t[1] * cosf(a) + b[1] * sinf(a)) * rr,
-		          ez = cz + (t[2] * cosf(a) + b[2] * sinf(a)) * rr;
-		joined[k] = underOther(index, p.kind, ex, ey, ez);
+	// where its edge runs under another puddle: worked out every 8th frame for each puddle (in turn),
+	// or when it is new or has grown, and kept (the check against every other puddle is costly: it
+	// slowed the game with many puddles together)
+	static bool s_joined[kPuddles][kAround];
+	static f32 s_joinedBorn[kPuddles], s_joinedSize[kPuddles];
+	const int slot = index >= 0 && index < kPuddles ? index : 0;
+	if (!gloss && (s_joinedBorn[slot] != p.born || fabsf(s_joinedSize[slot] - r) > 6.0f || (s_frame + slot) % 8 == 0)) {
+		s_joinedBorn[slot] = p.born, s_joinedSize[slot] = r;
+		for (int k = 0; k < kAround; k++) {
+			const f32 a  = 6.2831853f * (f32)k / kAround;
+			const f32 rr = edgeAt(p, a, r);
+			const f32 ex = cx + (t[0] * cosf(a) + b[0] * sinf(a)) * rr, ey = cy + (t[1] * cosf(a) + b[1] * sinf(a)) * rr,
+			          ez = cz + (t[2] * cosf(a) + b[2] * sinf(a)) * rr;
+			s_joined[slot][k] = underOther(index, p.kind, ex, ey, ez);
+		}
 	}
+	const bool* joined = s_joined[slot];
 	for (int j = 0; j <= kRings; j++)
 		for (int k = 0; k < kAround; k++) {
 			const f32 a   = 6.2831853f * (f32)k / kAround;
