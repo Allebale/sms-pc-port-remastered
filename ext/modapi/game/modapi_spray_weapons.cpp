@@ -359,14 +359,13 @@ Hit* hitOf(TSmallEnemy* e)
 	return slot;
 }
 
-// An enemy shot in the air (key_launch's 2) blown to pieces: each joint of its model (its head,
-// feet, body...) flies off on its own, spinning and falling, as its defeat plays out. Its joints are
-// moved as its model is posed each frame (port_live_actor_posed, patch zzzzzzzzzz-live-actor-posed).
+// An enemy shot in the air (key_launch's 2) bursts: its model swells for a moment and pops (shrunk
+// to nothing about its middle, all of it alike, so nothing stretches), and big blobs of water fly
+// out of it like pieces, mostly the way of the shot, with a splash. Its model is scaled as it is
+// posed each frame (port_live_actor_posed, patch zzzzzzzzzz-live-actor-posed).
 struct Shatter {
 	TLiveActor* actor;
 	f32 start;       // when (s_time)
-	f32 dx, dz;      // the shot's way across the ground (the pieces mostly go that way)
-	unsigned seed;
 };
 const int kMostShatters = 8;
 Shatter s_shatters[kMostShatters];
@@ -412,13 +411,40 @@ void shatter(TLiveActor* a, f32 dx, f32 dz)
 	Shatter& sh = s_shatters[slot];
 	sh.actor    = a;
 	sh.start    = s_time;
-	sh.dx       = dx, sh.dz = dz;
-	sh.seed     = (unsigned)(size_t)a * 2654435761u + (unsigned)(s_time * 1000.0f);
 	if (slot + 1 > s_shatterCount)
 		s_shatterCount = slot + 1;
+	JGeometry::TVec3<f32> mid(a->mPosition.x, a->mPosition.y + 50.0f, a->mPosition.z);
 	if (gpMarioParticleManager) // a burst of water where it was
 		for (int i = 0; i < 3; i++)
-			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &a->mPosition, 0, nullptr);
+			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &mid, 0, nullptr);
+	if (gpSplashManager)
+		gpSplashManager->newSplash(mid, 18.0f);
+	if (SMSGetMSound())
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_COMMON_W_HIT_OK, &mid, 0, nullptr, 0, 4);
+	// its pieces: big blobs of water thrown out, mostly the shot's way and up
+	TMario* m    = gpMarioOriginal;
+	TWaterGun* g = m ? m->mWaterGun : 0;
+	if (g && g->mEmitInfo && gpModelWaterManager) {
+		TWaterEmitInfo info(*g->mEmitInfo);
+		const f32 base = g->mEmitInfo->mSize.get();
+		info.mNum.set(1);
+		info.mAttack.set((s16)(1 | (kRing << kTagShift))); // (they push no enemy)
+		info.mV.value.set(0.0f, 0.0f, 0.0f);
+		info.mDirTremble.set(0.1f);
+		info.mPowTremble.set(0.3f);
+		info.mFlag.set(0x40);
+		s_firing = true;
+		for (int i = 0; i < 14; i++) {
+			const f32 ang = random01() * 6.2831853f, up = 0.35f + 0.55f * random01();
+			f32 x = sinf(ang) * (1.0f - up * 0.5f) + dx * 0.8f, z = cosf(ang) * (1.0f - up * 0.5f) + dz * 0.8f;
+			info.mSize.set(base * (2.5f + 4.0f * random01()));
+			info.mPos.value.set(mid.x, mid.y, mid.z);
+			info.mDir.value.set(x, up + 0.3f, z);
+			info.mPow.set(14.0f + 16.0f * random01());
+			gpModelWaterManager->emitRequest(info);
+		}
+		s_firing = false;
+	}
 }
 
 void afterMovement()
@@ -628,7 +654,7 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		if ((s_keyLaunch & 2) && fresh && e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
 			h->lastShot = shot;
 			h->hits     = 0;
-			fprintf(stderr, "[weapons] an enemy in the air blown to pieces by the %s\n", kNames[weapon]);
+			fprintf(stderr, "[weapons] an enemy in the air burst by the %s\n", kNames[weapon]);
 			shatter(e, dx, dz);
 			e->kill(); // as a stomp: its own defeat, coins and all
 			if (weapon == BAZOOKA)
@@ -2581,21 +2607,10 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 	return 1;
 }
 
-namespace {
-// a number from 0 to 1 for joint j of a shatter (the same each frame)
-f32 shatterRand(unsigned seed, int j, int k)
-{
-	unsigned x = seed ^ (unsigned)(j * 73856093) ^ (unsigned)(k * 19349663);
-	x ^= x >> 13;
-	x *= 0x5bd1e995u;
-	x ^= x >> 15;
-	return (f32)(x & 0xffff) / 65535.0f;
-}
-} // namespace
 
 // Every live actor's model, posed for this frame (TLiveActor::perform, patch
-// zzzzzzzzzz-live-actor-posed): one blown to pieces (shatter) has each joint moved off on its own,
-// and its skin's matrices made again from them. Nothing to do without a shatter going.
+// zzzzzzzzzz-live-actor-posed): one bursting (shatter) swells and pops, all of it scaled alike about
+// its middle, and its skin's matrices made again. Nothing to do without one going.
 extern "C" void port_live_actor_posed(TLiveActor* a)
 {
 	if (s_shatterCount <= 0 || !a || !a->mMActor)
@@ -2613,37 +2628,27 @@ extern "C" void port_live_actor_posed(TLiveActor* a)
 	const f32 t = (s_time - sh->start) * 30.0f; // 30ths of a second since
 	if (t < 0.0f || t > 150.0f)
 		return;
-	const f32 kGravity = 1.4f;
+	// swells (1 to 1.35 in 4 30ths of a second), then pops to nothing in 2 more, and stays so
+	const f32 k = t < 4.0f ? 1.0f + 0.35f * t / 4.0f : t < 6.0f ? 1.35f * (1.0f - (t - 4.0f) / 2.0f) : 0.0f;
+	const f32 sc = k > 0.001f ? k : 0.001f;
 	const int n = data->getJointNum();
-	const f32 cx = a->mPosition.x, cy = a->mPosition.y, cz = a->mPosition.z;
+	if (n <= 0)
+		return;
+	f32 cx = 0.0f, cy = 0.0f, cz = 0.0f; // about its middle: its joints' middle
 	for (int j = 0; j < n; j++) {
-		Mtx m;
-		MTXCopy(md->getAnmMtx(j), m);
-		const f32 px = m[0][3], py = m[1][3], pz = m[2][3];
-		// out from its middle, mostly the way of the shot and up, each piece its own way
-		f32 ox = px - cx, oy = py - cy - 40.0f, oz = pz - cz;
-		const f32 ol = sqrtf(ox * ox + oy * oy + oz * oz);
-		if (ol > 1.0f)
-			ox /= ol, oy /= ol, oz /= ol;
-		else
-			ox = oy = oz = 0.0f;
-		const f32 rx = shatterRand(sh->seed, j, 0) * 2.0f - 1.0f, rz = shatterRand(sh->seed, j, 2) * 2.0f - 1.0f;
-		const f32 speed = 6.0f + 8.0f * shatterRand(sh->seed, j, 3);
-		const f32 vx = (ox * 0.8f + rx * 0.6f + sh->dx * 0.7f) * speed;
-		const f32 vz = (oz * 0.8f + rz * 0.6f + sh->dz * 0.7f) * speed;
-		const f32 vy = (oy * 0.5f + 0.9f + 0.6f * shatterRand(sh->seed, j, 1)) * speed;
-		const f32 mx = vx * t, my = vy * t - 0.5f * kGravity * t * t, mz = vz * t;
-		// and spinning about itself
-		Vec axis = {shatterRand(sh->seed, j, 4) - 0.5f, shatterRand(sh->seed, j, 5) - 0.5f, shatterRand(sh->seed, j, 6) - 0.5f};
-		if (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z < 1e-4f)
-			axis.y = 1.0f;
-		Mtx spin, toOrigin, back, tmp, out;
-		MTXRotAxisRad(spin, &axis, (0.15f + 0.25f * shatterRand(sh->seed, j, 7)) * t);
-		MTXTrans(toOrigin, -px, -py, -pz);
-		MTXTrans(back, px + mx, py + my, pz + mz);
-		MTXConcat(spin, toOrigin, tmp);
-		MTXConcat(back, tmp, tmp);
-		MTXConcat(tmp, m, out);
+		MtxPtr m = md->getAnmMtx(j);
+		cx += m[0][3], cy += m[1][3], cz += m[2][3];
+	}
+	cx /= (f32)n, cy /= (f32)n, cz /= (f32)n;
+	Mtx toOrigin, scale, back, about, tmp;
+	MTXTrans(toOrigin, -cx, -cy, -cz);
+	MTXScale(scale, sc, sc, sc);
+	MTXTrans(back, cx, cy, cz);
+	MTXConcat(scale, toOrigin, tmp);
+	MTXConcat(back, tmp, about);
+	for (int j = 0; j < n; j++) {
+		Mtx out;
+		MTXConcat(about, md->getAnmMtx(j), out);
 		md->setAnmMtx(j, out);
 	}
 	if (data->getWEvlpMtxNum() > 0)
