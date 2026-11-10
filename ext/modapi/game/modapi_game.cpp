@@ -1633,7 +1633,7 @@ extern "C" int modg_player_set_hidden_parts_of(int player, uint32_t parts)
 
 // A player's head left out (player->set_hidden_parts) is shrunk to a point as his pose is made
 // (MarioHeadCtrl, patch zzzzz-ext-30), alone; with two players (co-op) each one's head is left out
-// only in their own view, so it is shrunk as each view is worked out instead (port_player_view_head)
+// only in their own view, so it is shrunk as each view is worked out instead (port_player_view_parts)
 extern "C" int port_player_head_in_calc(void* m)
 {
 	if (PortPlayers() == 2)
@@ -1666,7 +1666,44 @@ void collectHead(J3DNode* n, bool first)
 }
 } // namespace
 
-extern "C" void port_player_view_head(void* m, void* model, int headJoint, int after)
+bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
+
+// Alone (one player): FLUDD held in view shrinks his right arm as his pose is made (patch
+// zzzzzzz-held-fludd-2-arm); with two, in his own view only (port_player_view_parts)
+extern "C" int port_player_alone(void) { return PortPlayers() == 1 ? 1 : 0; }
+
+namespace {
+// the joints from `root` down, added to the saved list
+void collectFrom(J3DModel* md, int root)
+{
+	J3DModelData* data = md->getModelData();
+	const int first    = s_headCount;
+	collectHead(data->getJointNodePointer((u16)root), true);
+	// the shrink about the root's joint: root * scale * root^-1
+	Mtx at, inv, scale, shrink, tmp;
+	MTXCopy(md->getAnmMtx(root), at);
+	if (!MTXInverse(at, inv)) {
+		s_headCount = first;
+		return;
+	}
+	MTXScale(scale, 0.001f, 0.001f, 0.001f);
+	MTXConcat(at, scale, tmp);
+	MTXConcat(tmp, inv, shrink);
+	for (int i = first; i < s_headCount; i++) {
+		MTXCopy(md->getAnmMtx(s_headJoint[i]), s_headSaved[i]);
+		Mtx moved;
+		MTXConcat(shrink, md->getAnmMtx(s_headJoint[i]), moved);
+		md->setAnmMtx(s_headJoint[i], moved);
+	}
+}
+} // namespace
+
+// Co-op, as a player's model is worked out for a view (TMario::calcView, patch
+// zzzzzzzzzz-coop-heads): before (after 0), in the player's own view, his head left out (and all
+// that hangs from it: face, hair, the cap's joints) and, with FLUDD held in view, his right arm,
+// each shrunk to a point about its joint as MarioHeadCtrl would, the skin's matrices made again
+// from them; after (1), put back. The other player sees all of him.
+extern "C" void port_player_view_parts(void* m, void* model, int headJoint, int armJoint, int after)
 {
 	J3DModel* md = (J3DModel*)model;
 	if (after) {
@@ -1680,33 +1717,23 @@ extern "C" void port_player_view_head(void* m, void* model, int headJoint, int a
 		return;
 	}
 	s_headCount = -1;
-	if (!md || PortPlayers() != 2 || !(hiddenPlayerParts(m) & PORT_PLAYER_PART_HEAD))
+	if (!md || PortPlayers() != 2)
 		return;
+	const int who   = PortPlayerIndex(m);
+	const bool head = (hiddenPlayerParts(m) & PORT_PLAYER_PART_HEAD) != 0;
+	const bool arm  = who == PortViewer() && m == (void*)PortPlayerMario(who) && PortFluddHeld((TMario*)m);
 	J3DModelData* data = md->getModelData();
-	if (!data || headJoint < 0 || headJoint >= data->getJointNum() || data->getWEvlpMtxNum() > kMostEnvelopes)
+	if ((!head && !arm) || !data || data->getWEvlpMtxNum() > kMostEnvelopes)
 		return;
 	s_headCount = 0;
-	collectHead(data->getJointNodePointer((u16)headJoint), true);
 	s_headModel = md;
 	s_envCount  = data->getWEvlpMtxNum();
 	for (int i = 0; i < s_envCount; i++)
 		MTXCopy(md->getWeightAnmMtx(i), s_envSaved[i]);
-	// the shrink about the head's joint: head * scale * head^-1
-	Mtx head, inv, scale, shrink, tmp;
-	MTXCopy(md->getAnmMtx(headJoint), head);
-	if (!MTXInverse(head, inv)) {
-		s_headCount = -1;
-		return;
-	}
-	MTXScale(scale, 0.001f, 0.001f, 0.001f);
-	MTXConcat(head, scale, tmp);
-	MTXConcat(tmp, inv, shrink);
-	for (int i = 0; i < s_headCount; i++) {
-		MTXCopy(md->getAnmMtx(s_headJoint[i]), s_headSaved[i]);
-		Mtx moved;
-		MTXConcat(shrink, md->getAnmMtx(s_headJoint[i]), moved);
-		md->setAnmMtx(s_headJoint[i], moved);
-	}
+	if (head && headJoint >= 0 && headJoint < data->getJointNum())
+		collectFrom(md, headJoint);
+	if (arm && armJoint >= 0 && armJoint < data->getJointNum())
+		collectFrom(md, armJoint);
 	md->calcWeightEnvelopeMtx();
 }
 

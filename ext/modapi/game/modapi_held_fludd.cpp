@@ -251,21 +251,22 @@ void scopeRing(f32 cx, f32 cy, f32 in, f32 out, f32 sx, u8 r, u8 g, u8 b, u8 a)
 extern "C" int port_coop_view_rect(int view, float* r); // ext/coop: a player's part of the screen
 void drawScopeOf(JDrama::TGraphics* graphics, int player, OSTime since);
 OSTime s_scopeSinceOf[2]; // each player's (co-op)
+// Drawn with each view (co-op: once for each player's half, the game running as that player):
+// the scope of the player whose view it is
 void PortHeldFluddDrawScope(JDrama::TGraphics* graphics)
 {
-	for (int p = 0; p < PortPlayers(); p++) {
-		if (!(s_held[p].zoomFlags & 2) || !graphics) { // SMS_ZOOM_SCOPE
-			s_scopeSinceOf[p] = 0;
-			continue;
-		}
-		if (!s_scopeSinceOf[p])
-			s_scopeSinceOf[p] = OSGetTime();
-		drawScopeOf(graphics, p, s_scopeSinceOf[p]);
+	const int p = PortPlayerNow();
+	if (!(s_held[p].zoomFlags & 2) || !graphics) { // SMS_ZOOM_SCOPE
+		s_scopeSinceOf[p] = 0;
+		return;
 	}
+	if (!s_scopeSinceOf[p])
+		s_scopeSinceOf[p] = OSGetTime();
+	drawScopeOf(graphics, p, s_scopeSinceOf[p]);
 }
 
-// a player's scope: over the whole picture, or (co-op, the screen split) over their part of it,
-// its sight, cross hairs and dot only (the black round it would cover the other player's)
+// a player's scope over their view (co-op: their half, the picture squeezed into it, so the
+// sight is made as much wider or taller to look round)
 void drawScopeOf(JDrama::TGraphics* graphics, int player, OSTime s_scopeSince)
 {
 	const OSTime now = OSGetTime();
@@ -287,7 +288,7 @@ void drawScopeOf(JDrama::TGraphics* graphics, int player, OSTime s_scopeSince)
 	GXPC_ModLayerCanvas(&cw, &ch);
 	const f32 wide = GXPC_GetWidescreen() > 0.0f ? GXPC_GetWidescreen() : 1.0f;
 	const f32 seen = (cw / ch) * h / (w * wide); // one x unit's width over one y unit's height
-	const f32 sx   = seen > 0.1f ? 1.0f / seen : 1.0f;
+	f32 sx         = seen > 0.1f ? 1.0f / seen : 1.0f;
 	GXPC_SetWide2D(1);
 	GXSetNumChans(1);
 	GXSetNumTevStages(1);
@@ -306,13 +307,12 @@ void drawScopeOf(JDrama::TGraphics* graphics, int player, OSTime s_scopeSince)
 	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
 
 	float part[4];
-	const bool split = port_coop_view_rect(player, part) != 0;
-	const f32 x = w * (part[0] + part[2] * 0.5f), y = h * (part[1] + part[3] * 0.5f);
-	const f32 rad = split ? (part[2] * w * wide < part[3] * h ? part[2] * w * wide : part[3] * h) * 0.46f : h * 0.46f;
+	if (port_coop_view_rect(player, part) && part[2] > 0.01f && part[3] > 0.01f)
+		sx *= part[3] / part[2]; // (side by side: half as wide a picture, its x units twice as wide)
+	const f32 x = w * 0.5f, y = h * 0.5f, rad = h * 0.46f;
 	const u8 a    = (u8)(255.0f * in);
 	const f32 outer = (w * wide + h) * 2.0f; // past every edge, widescreen's too
-	if (!split)
-		scopeRing(x, y, rad, outer, sx, 0, 0, 0, a);             // all round the sight
+	scopeRing(x, y, rad, outer, sx, 0, 0, 0, a);             // all round the sight
 	scopeRing(x, y, rad - h * 0.006f, rad + h * 0.006f, sx, 20, 20, 20, a); // its rim
 	const u8 ha  = (u8)(230.0f * in);
 	const f32 t  = h * 0.00125f, gap = h * 0.02f, rx = rad * sx;
@@ -412,8 +412,8 @@ bool PortFluddHeld(TMario* mario)
 // learnt while he stands up straight, then kept, so the pack lies down with him in a dive or a
 // belly slide as FLUDD does (Held's packFwd, packUp).
 // `other`: co-op, the other player's view of a player whose FLUDD is held in their own: their
-// weapon seen as its pack on their back (FLUDD's pose, its water's start and the shots' left as
-// their own view has them)
+// weapon seen as in third person, its pack on their back with the gun on it (FLUDD's pose, its
+// water's start and the shots' left as their own view has them)
 void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
 {
 	For f(PortPlayerIndex(g->mMario));
@@ -520,34 +520,6 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
 	}
 	MTXConcat(graphics->getViewMtx(), place, viewModel);
 	PortWeaponModelShow(3 + which, viewModel); // all of FLUDD left out, the pack in its place
-	if (other) {
-		// co-op, a first-person player seen by the other: their weapon in their right hand, pointing
-		// where they look (their view's way), the pack (its tank) on their back
-		const TMario* mm = g->mMario;
-		MtxPtr hand      = mm->getM3UModel()->getModel()->getAnmMtx(mm->mJointIdHandR);
-		Vec way          = s_viewWay;
-		if (!unit(way))
-			way = face;
-		Vec right = cross(way, worldUp);
-		if (!unit(right))
-			return;
-		const Vec gunUp   = cross(right, way);
-		const f32 scale   = which == 0 ? 12.5f : 15.0f;
-		const f32 muzzle  = PortWeaponModelMuzzle(which) * scale;
-		const Vec grip    = {hand[0][3], hand[1][3], hand[2][3]};
-		const Vec origin  = along(grip, -muzzle * 0.45f, way); // held about its middle
-		Mtx world, gunView;
-		const f32 gc[3][3] = {{right.x, way.x, gunUp.x}, {right.y, way.y, gunUp.y}, {right.z, way.z, gunUp.z}};
-		const f32 og[3]    = {origin.x, origin.y, origin.z};
-		for (int r = 0; r < 3; r++) {
-			for (int c = 0; c < 3; c++)
-				world[r][c] = gc[r][c] * scale;
-			world[r][3] = og[r];
-		}
-		MTXConcat(graphics->getViewMtx(), world, gunView);
-		PortWeaponModelShowSecond(which, gunView);
-		return;
-	}
 	// its weapon on top, held level and pointing ahead whatever his body's lean as he walks or runs
 	// (lying in a dive: the way his head points), kicking back and up as it fires, turned about
 	// where it sits on the neck
