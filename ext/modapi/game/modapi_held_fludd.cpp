@@ -57,6 +57,8 @@ struct Held {
 	JGeometry::TVec3<f32> backMuzzle, backMario; // on his back: where a shot starts, and where he was then
 	int packFwd, packUp;  // the pack's axes (onBack)
 	f32 packFwdSign, packUpSign;
+	int packFwdO, packUpO; // ...seen by the other player while FLUDD is held (co-op: posed on the chest,
+	f32 packFwdSignO, packUpSignO; // other axes than on his back: learnt apart)
 	bool haveBackMuzzle;
 	Mtx heldEmit;         // held in view: its emit matrix and scale (the roller coaster's rocket)
 	f32 heldEmitScale;
@@ -67,7 +69,7 @@ struct Held {
 	Held()
 	{
 		memset(this, 0, sizeof *this);
-		scale = 1.0f, aim = 1200.0f, packFwd = -1, heldEmitScale = 1.0f;
+		scale = 1.0f, aim = 1200.0f, packFwd = -1, packFwdO = -1, heldEmitScale = 1.0f;
 	}
 };
 Held s_held[2];
@@ -488,23 +490,32 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
 		if (d > best)
 			best = d, ui = c;
 	}
+	Held& hp = H();
+	int& packFwd = other ? hp.packFwdO : hp.packFwd; // (the other player's view: its own, learnt apart)
+	int& packUp  = other ? hp.packUpO : hp.packUp;
+	f32& fwdSign = other ? hp.packFwdSignO : hp.packFwdSign;
+	f32& upSign  = other ? hp.packUpSignO : hp.packUpSign;
 	const u32 st = g->mMario->mStatus;
 	if (bestF > 0.9f && best > 0.9f && (st == MARIO_STATUS_WAIT || st == MARIO_STATUS_RUN)) { // standing or running (not lying)
-		s_packFwd     = fi, s_packUp = ui;
-		s_packFwdSign = axis[fi].x * face.x + axis[fi].z * face.z < 0.0f ? -1.0f : 1.0f;
-		s_packUpSign  = axis[ui].y < 0.0f ? -1.0f : 1.0f;
+		packFwd     = fi, packUp = ui;
+		fwdSign = axis[fi].x * face.x + axis[fi].z * face.z < 0.0f ? -1.0f : 1.0f;
+		upSign  = axis[ui].y < 0.0f ? -1.0f : 1.0f;
 	}
-	if (s_packFwd >= 0) { // as learnt: FLUDD's own axes, however he lies
-		fi = s_packFwd, ui = s_packUp;
-		axis[fi].x *= s_packFwdSign, axis[fi].y *= s_packFwdSign, axis[fi].z *= s_packFwdSign;
-		axis[ui].x *= s_packUpSign, axis[ui].y *= s_packUpSign, axis[ui].z *= s_packUpSign;
+	if (packFwd >= 0) { // as learnt: FLUDD's own axes, however he lies
+		fi = packFwd, ui = packUp;
+		axis[fi].x *= fwdSign, axis[fi].y *= fwdSign, axis[fi].z *= fwdSign;
+		axis[ui].x *= upSign, axis[ui].y *= upSign, axis[ui].z *= upSign;
 	}
 	Vec fwd = axis[fi], up = axis[ui];
-	if (s_packFwd < 0) { // not learnt yet: the nearest
+	if (packFwd < 0) { // not learnt yet: the nearest
 		if (fwd.x * face.x + fwd.z * face.z < 0.0f)
 			fwd.x = -fwd.x, fwd.y = -fwd.y, fwd.z = -fwd.z;
 		if (up.y < 0.0f)
 			up.x = -up.x, up.y = -up.y, up.z = -up.z;
+	}
+	if (other) { // the other player's view (FLUDD posed on the chest, not his back): upright, the way he faces
+		fwd = face;
+		up  = worldUp;
 	}
 	Vec right = cross(fwd, up);
 	if (!unit(right))
