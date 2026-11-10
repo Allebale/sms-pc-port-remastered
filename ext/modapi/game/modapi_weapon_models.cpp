@@ -24,6 +24,7 @@ bool PortBazookaBalloon(float* at, float* way, float* scale); // modapi_spray_we
 int PortBazookaBalloonPieces(float* out, int most);
 int PortWeaponHearts(float* out, int most); // modapi_spray_weapons.cpp
 void PortGoopView(MtxPtr view);             // modapi_goop_weapons.cpp
+int PortViewer();                           // modapi_game.cpp: the view being worked out (co-op: 1 the second)
 void PortGoopEntry();
 void PortSprayFor(int player); // modapi_spray_weapons.cpp: the player whose weapon is meant (-1: the one now)
 int PortPlayerNow(); // modapi_game.cpp: the players (split-screen co-op)
@@ -69,7 +70,6 @@ struct Shown {
 // player's weapon off them as the other view's camera moved)
 Shown s_shownOf[2][2];
 int s_wmFor = -1; // the player whose FLUDD is placed now (PortWeaponModelFor)
-int PortViewer(); // modapi_game.cpp: the view being worked out (co-op: 1 the second)
 Shown& W() { return s_shownOf[s_wmFor >= 0 ? s_wmFor : PortPlayerNow()][PortViewer() ? 1 : 0]; }
 
 class WeaponPacket : public J3DPacket {
