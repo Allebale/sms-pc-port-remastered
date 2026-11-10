@@ -77,6 +77,12 @@ int modg_spray_goop_area(float scale);
 int modg_held_fludd_view(int on);
 int modg_held_fludd_zoom(float fovy, int flags);
 int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags);
+// split-screen co-op: the players (ext/modapi/game/modapi_game.cpp)
+int modg_players(void);       // 2 while a second player plays, else 1
+int modg_player_now(void);    // the player the game runs as now (or the one selected): 0 or 1
+void modg_select_player(int player); // api->player and held_fludd act on this player (-1: the one the game runs as)
+int modg_player_set_hidden_parts_of(int player, uint32_t parts);
+int modg_player_view(int player, float* rect); // its part of the screen (x, y, w, h, 0 to 1): 1 while split
 int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water, float hit,
                            float burst, float lift, float dropSize);
 

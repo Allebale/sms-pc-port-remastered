@@ -1,0 +1,39 @@
+Reason: split-screen co-op (ext/coop): each player's head (player->set_hidden_parts, a first-person camera) is left out in their own view only. With two players the head is no longer shrunk as his pose is made (MarioHeadCtrl) but as each view is worked out (TMario::calcView, port_player_view_head in ext/modapi/game/modapi_game.cpp), and put back after. Alone, nothing changes.
+
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -1,6 +1,9 @@
+ #include <Player/Mario.hpp>
+ #ifdef TARGET_PC
+ #include "port_ext.h"
++// split-screen co-op: each player's head left out in their own view only (ext/modapi/game/modapi_game.cpp)
++extern "C" int port_player_head_in_calc(void* mario);
++extern "C" void port_player_view_head(void* mario, void* model, int headJoint, int after);
+ #endif
+ #include <Player/MarioCap.hpp>
+ #include <Player/WaterGun.hpp>
+@@ -470,7 +473,9 @@
+ 	// an extension may leave his head out (port_ext.h): the head joint, and
+ 	// the face, hair and cap hung from it, shrunk to a point (not to nothing,
+ 	// which the normals' matrices could not invert)
+-	if (param_2 == 0 && (port_ext_hidden_player_parts(gpMarioForCallBack) & PORT_PLAYER_PART_HEAD)) {
++	// (with two players, co-op, it is shrunk as each view is worked out instead:
++	// left out only in its own player's view, port_player_view_head)
++	if (param_2 == 0 && port_player_head_in_calc(gpMarioForCallBack)) {
+ 		MTXScale(transform, 0.001f, 0.001f, 0.001f);
+ 		MTXConcat(J3DSys::mCurrentMtx, transform, J3DSys::mCurrentMtx);
+ 		return 1;
+@@ -2415,8 +2420,13 @@
+ {
+ 	// volatile u32 padding[4];
+ 	MTXCopy(graphics->mViewMtx, j3dSys.mViewMtx);
++#ifdef TARGET_PC
++	// co-op: his head left out in his own view only (ext/modapi/game/modapi_game.cpp)
++	port_player_view_head(this, MarioDrawGetM3UModel(this)->unk8, mJointIdHead, 0);
++#endif
+ 	MarioDrawGetM3UModel(this)->unk8->viewCalc();
+ #ifdef TARGET_PC
++	port_player_view_head(this, MarioDrawGetM3UModel(this)->unk8, mJointIdHead, 1);
+ 	PortCharacterLookView(this);
+ #endif
+ 	if (mHandModels[0][0] != nullptr) {

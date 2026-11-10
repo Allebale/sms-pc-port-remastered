@@ -69,6 +69,11 @@ extern "C" int port_cheat_infinite_fludd;
 // only the lower ones. Until then (no First Person mod, or no weapon fired) the game's own attack.
 int port_spray_tagged_drops = 0;
 bool PortFluddHeld(TMario* mario);
+extern "C" int port_coop_enter_player2(void); // ext/coop: the game running as player 2 for a while
+extern "C" void port_coop_leave_player2(void);
+int PortPlayerNow(); // modapi_game.cpp
+int PortPlayers();
+TMario* PortPlayerMario(int i);
 bool PortIsPlayer2(TMario* mario); // co-op's Luigi (modapi_held_fludd.cpp)
 bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward);
 void PortFluddHeldKick(f32 amount);
@@ -95,7 +100,6 @@ struct Visual {
 	JGeometry::TVec3<f32> from, way;
 	f32 aim; // how far it flies
 };
-Visual s_visual;
 // the bazooka's green water balloon (s_shotLook 2): flown straight to where it bursts in as many
 // frames as its own drop, then it bursts there (its rubber in pieces, a splash). Drawn by
 // modapi_weapon_models.cpp (PortBazookaBalloon).
@@ -105,7 +109,6 @@ struct Balloon {
 	JGeometry::TVec3<f32> from, way;
 	f32 aim, along, frames;
 };
-Balloon s_balloon;
 // its rubber, burst into pieces where it pops: thrown out from there, falling and tumbling, gone
 // after about half a second
 struct Piece {
@@ -115,6 +118,55 @@ struct Piece {
 };
 const int kPieces = 12;
 Piece s_pieces[kPieces];
+
+// Split-screen co-op (ext/coop): each player chooses and fires a weapon of their own. All that is a
+// player's is here, each player's (s_sp[player]); the rest (the settings, the world's hits) is
+// shared. The player is the one the game runs as now (their move: their FLUDD fires), or the one
+// being worked on (s_spFor: a mod's select_player, each player's turn in afterMovement).
+struct SprayPlayer {
+	int weapon;            // the one chosen
+	bool trigger;          // R held (the mod keeps it from the game while a weapon is chosen)
+	f32 ready;             // when the next shot may go
+	f32 lastShotAt;        // when the last shot went (the gun's pump)
+	int lastShotWeapon;
+	bool rocketAir;        // he is in the air from a rocket jump (his fall then hurts him no more than a jump's)
+	f32 rocketVX, rocketVZ, rocketTop; // his speed across the ground in the air from one, and its most
+	bool muteMario;        // SMS_SPRAY_MUTE_MARIO: Mario's own voice left out (a mod's: its rocket jump key held)
+	f32 soundUntil;        // the spray's sound, for a moment after a shot
+	Visual visual;         // the bazooka's shot seen flying
+	Balloon balloon;       // ...as a green water balloon
+	int bazookaShot;       // the bazooka's drop in flight (its shot), to burst where it lands
+	JGeometry::TVec3<f32> bazookaAt;
+	bool bazookaSeen;
+	JGeometry::TVec3<f32> bazookaAim; // where this shot is aimed (the map or an enemy along the view), and how far
+	f32 bazookaAimDist;
+};
+SprayPlayer s_sp[2];
+int s_spFor = -1;
+SprayPlayer& SP() { return s_sp[s_spFor >= 0 ? s_spFor : PortPlayerNow()]; }
+struct SprayFor {
+	int saved;
+	explicit SprayFor(int i) : saved(s_spFor) { s_spFor = i; }
+	~SprayFor() { s_spFor = saved; }
+};
+#define s_weapon SP().weapon
+#define s_trigger SP().trigger
+#define s_ready SP().ready
+#define s_lastShotAt SP().lastShotAt
+#define s_lastShotWeapon SP().lastShotWeapon
+#define s_rocketAir SP().rocketAir
+#define s_rocketVX SP().rocketVX
+#define s_rocketVZ SP().rocketVZ
+#define s_rocketTop SP().rocketTop
+#define s_muteMario SP().muteMario
+#define s_soundUntil SP().soundUntil
+#define s_visual SP().visual
+#define s_balloon SP().balloon
+#define s_bazookaShot SP().bazookaShot
+#define s_bazookaAt SP().bazookaAt
+#define s_bazookaSeen SP().bazookaSeen
+#define s_bazookaAim SP().bazookaAim
+#define s_bazookaAimDist SP().bazookaAimDist
 
 // The hearts defeated enemies drop (SMS_SPRAY_HEARTS): beside its coin, popped up and falling to
 // the ground there, floating, turning and bobbing; Mario touching one gets a point of health back.
@@ -194,15 +246,11 @@ const f32 kHitWindow = 4.0f; // seconds: shots counted together towards a defeat
 const f32 kSlow      = 0.82f; // a shove kept each 30th of a second
 
 bool s_firing; // our own requests, let through
-f32 s_lastShotAt;     // when the last shot went (the gun's pump)
-int s_lastShotWeapon;
 bool s_defeatNormal;  // the normal spray may defeat enemies (SMS_SPRAY_DEFEAT_NORMAL)
 f32 s_normalTime    = 1.0f;  // seconds of it on one enemy that defeat it (the mod's menu)
 const f32 kNormalGap = 0.5f; // a pause longer than this starts it over
 bool s_third;        // the weapons fire in third person too (SMS_SPRAY_THIRD_PERSON), FLUDD on his back
 f32 s_rocketJump;     // the bazooka's burst throws Mario too (a rocket jump), times its own; 0 not (the mod's menu)
-bool s_rocketAir;     // he is in the air from one (his fall then hurts him no more than a jump's)
-f32 s_rocketVX, s_rocketVZ, s_rocketTop; // his speed across the ground in the air from one, and its most
 void rocketSteer(TMario* m);
 bool s_thirdModel;   // and in third person their models in FLUDD's nozzle's place (SMS_SPRAY_THIRD_PERSON_MODEL)
 bool s_bosses;       // the weapons made for bosses (Proto Piranha, Petey Piranha, ...: SMS_SPRAY_BOSSES)
@@ -210,26 +258,22 @@ bool s_airForward; // SMS_SPRAY_AIR_FORWARD: the bazooka pushes enemies already 
 bool s_hearts;      // SMS_SPRAY_HEARTS: an enemy a weapon defeats drops a heart too (a point of health)
 bool s_rocketOuch;
 f32 s_voiceVolume = 1.0f; // their volume (set_weapon's flags, SMS_SPRAY_VOICE_SHIFT: in percent)
-bool s_muteMario;          // SMS_SPRAY_MUTE_MARIO: Mario's own voice left out (a mod's: its rocket jump key held)  // SMS_SPRAY_ROCKET_OUCH: a rocket jump that hurts him, his cry of pain
 f32 s_goopArea;     // the bazooka's goop area (SmsSprayStats.goop_area), times 860 out from its middle (its burst at 130 percent); 0 its burst's size's
 f32 s_goop = 1.0f;  // how much goop the weapons clean, times the game's own (set_weapon's flags, SMS_SPRAY_GOOP_SHIFT)
 bool s_rocketHurt;  // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
 int s_shotLook;     // the bazooka's shot seen flying (set_weapon's flags): 0 none, 1 a streak of water (SMS_SPRAY_SHOT_WATER), 2 a green water balloon (SMS_SPRAY_SHOT_BALLOON), 3 a big one (and SMS_SPRAY_SHOT_BIG)
-bool s_trigger;      // R held (the mod keeps it from the game while a weapon is chosen)
-f32 s_soundUntil;    // the spray's sound, for a moment after a shot
 void fire();
 void followBazooka();
 void followStraight();
 void followVisual();
 void followBalloon();
+void playerTurn();
 void followHearts();
 void followChomp();
 const char* const kNames[WEAPONS] = {"FLUDD", "shotgun", "rifle", "bazooka", "submachine gun"};
 int s_told = -1; // the weapon last logged as fired
-int s_weapon;   // the one chosen
 bool s_defeat;  // weapons may defeat enemies
 f32 s_time;     // seconds played (afterMovement)
-f32 s_ready;    // when the next shot may go
 int s_shot;     // the last shot's number (1 to 7)
 int s_burst;    // the last shot (weapon and number) that burst
 u32 s_seed = 12345u;
@@ -316,8 +360,18 @@ void afterMovement()
 	const f32 dt = port_frame_scale(); // 30ths of a second this frame
 	s_time += dt / 30.0f;
 	const f32 keep = powf(kSlow, dt);
-	if (s_weapon != NORMAL && s_trigger && s_time >= s_ready)
-		fire();
+	// each player's weapon, the game running as them (co-op: player 2's with their globals)
+	{
+		SprayFor f(0);
+		playerTurn();
+	}
+	if (PortPlayers() == 2 && port_coop_enter_player2()) {
+		{
+			SprayFor f(1);
+			playerTurn();
+		}
+		port_coop_leave_player2();
+	}
 	// long range: FLUDD's drops too (the game ends every drop farther than 5000 across the ground
 	// from Mario, 6000 drawn: a shot never reached a far enemy); its own again at 1
 	if (gpModelWaterManager && (s_farScale > 1.0f || s_waterScaled)) {
@@ -325,31 +379,9 @@ void afterMovement()
 		gpModelWaterManager->unk5E0C = 6000.0f * s_farScale;
 		s_waterScaled                = s_farScale > 1.0f;
 	}
-	// the rocket jump keys held with the bazooka: no sliding down a wall (he keeps flying as from a
-	// jump, so a burst at the wall below him throws him on up it, as in Team Fortress 2)
-	if (s_weapon == BAZOOKA && s_muteMario && gpMarioOriginal && gpMarioOriginal->mStatus == MARIO_STATUS_WALL_SLIDE) {
-		TMario* m    = gpMarioOriginal;
-		const f32 vy = m->mVel.y;
-		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
-		m->mVel.y = vy; // (the jump's own push up not added)
-	}
 	followStraight();
-	followVisual();
-	followBalloon();
 	followHearts();
 	followChomp();
-	followBazooka();
-	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
-		TMario* m = gpMarioOriginal;
-		if (m && (m->mStatus & MARIO_STATUS_FLAG_JUMPING) && !m->checkFlag(MARIO_FLAG_IN_WATER)) {
-			m->unk104 = m->mPosition.y;
-			rocketSteer(m);
-		} else
-			s_rocketAir = false;
-	}
-	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
-		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_PO_NORMAL_NOZZLE_IMI, &gpMarioOriginal->mWaterGun->getEmitPos0(), nullptr, 1.0f, 0, 0,
-		                                     nullptr, 0, 4);
 	for (int i = 0; i < kMostHits; i++) {
 		Hit& h = s_hits[i];
 		if (!h.enemy || (h.vx * h.vx + h.vz * h.vz) < 0.09f)
@@ -391,6 +423,36 @@ void afterMovement()
 	}
 }
 
+// A player's weapon each frame (afterMovement: the game running as them): a shot when it is ready
+// and R is held, their shot seen flying, their bazooka's burst, their rocket jump
+void playerTurn()
+{
+	if (s_weapon != NORMAL && s_trigger && s_time >= s_ready)
+		fire();
+	// the rocket jump keys held with the bazooka: no sliding down a wall (he keeps flying as from a
+	// jump, so a burst at the wall below him throws him on up it, as in Team Fortress 2)
+	if (s_weapon == BAZOOKA && s_muteMario && gpMarioOriginal && gpMarioOriginal->mStatus == MARIO_STATUS_WALL_SLIDE) {
+		TMario* m    = gpMarioOriginal;
+		const f32 vy = m->mVel.y;
+		m->changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
+		m->mVel.y = vy; // (the jump's own push up not added)
+	}
+	followVisual();
+	followBalloon();
+	followBazooka();
+	if (s_rocketAir) { // up from a rocket jump: his fall counts from where he is, so landing does not stun him
+		TMario* m = gpMarioOriginal;
+		if (m && (m->mStatus & MARIO_STATUS_FLAG_JUMPING) && !m->checkFlag(MARIO_FLAG_IN_WATER)) {
+			m->unk104 = m->mPosition.y;
+			rocketSteer(m);
+		} else
+			s_rocketAir = false;
+	}
+	if (s_time < s_soundUntil && gpMarioOriginal && gpMarioOriginal->mWaterGun) // the spray's own sound, only as it fires
+		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_PO_NORMAL_NOZZLE_IMI, &gpMarioOriginal->mWaterGun->getEmitPos0(), nullptr, 1.0f, 0, 0,
+		                                     nullptr, 0, 4);
+}
+
 // shoved: those that walk about, not those on fences (net Koopas), the boss's bubbles or the
 // shadow Mario look-alikes; the rooted and flying are not moved, only hit
 bool moves(TSmallEnemy* e)
@@ -401,7 +463,12 @@ bool moves(TSmallEnemy* e)
 
 // A heart dropped where the bazooka defeated an enemy (SMS_SPRAY_HEARTS): beside its coin
 // hearts only in first person (FLUDD held in view) with the bazooka chosen: dropped, seen and picked up
-bool heartsHere() { return s_weapon == BAZOOKA && gpMarioOriginal && PortFluddHeld(gpMarioOriginal); }
+// (the player's: co-op, each player's own)
+bool heartsHere()
+{
+	TMario* m = PortPlayerMario(s_spFor >= 0 ? s_spFor : PortPlayerNow());
+	return s_weapon == BAZOOKA && m && PortFluddHeld(m);
+}
 
 void dropHeart(TLiveActor* e)
 {
@@ -433,7 +500,6 @@ void dropHeart(TLiveActor* e)
 void followHearts()
 {
 	const f32 dt = port_frame_scale();
-	TMario* m    = gpMarioOriginal;
 	for (int i = 0; i < kHearts; i++) {
 		Heart& h = s_heartList[i];
 		if (h.life <= 0.0f)
@@ -446,7 +512,11 @@ void followHearts()
 			if (h.at.y <= h.ground + 40.0f && h.vy < 0.0f)
 				h.at.y = h.ground + 40.0f, h.landed = true;
 		}
-		if (m && !m->onYoshi() && heartsHere()) {
+		for (int p = 0; p < PortPlayers() && h.life > 0.0f; p++) { // either player (co-op) touching it
+			SprayFor f(p);
+			TMario* m = PortPlayerMario(p);
+			if (!m || m->onYoshi() || !heartsHere())
+				continue;
 			const f32 dx = m->mPosition.x - h.at.x, dz = m->mPosition.z - h.at.z, dy = h.at.y - m->mPosition.y;
 			if (dx * dx + dz * dz < 80.0f * 80.0f && dy > -60.0f && dy < 190.0f) {
 				h.life = 0.0f;
@@ -1634,11 +1704,6 @@ const int kMostStraight = 8;
 Straight s_straights[kMostStraight];
 void clearStraights() { memset(s_straights, 0, sizeof s_straights); }
 int s_nextStraight;
-int s_bazookaShot;   // the bazooka's drop in flight (its shot), to burst where it lands
-JGeometry::TVec3<f32> s_bazookaAt;
-bool s_bazookaSeen;
-JGeometry::TVec3<f32> s_bazookaAim; // where this shot is aimed (the map or an enemy along the view), and how far
-f32 s_bazookaAimDist;
 const f32 kBazookaNow = 900.0f; // aimed nearer: it bursts there as it fires (a rocket jump's, at the ground near him)
 const f32 kRifleReach = 60000.0f; // as far as the stage goes
 
@@ -1647,7 +1712,7 @@ bool armed(TMario* m)
 {
 	if (PortFluddHeld(m))
 		return true;
-	if (!s_third || !m || m != gpMarioOriginal || m->onYoshi() || PortIsPlayer2(m))
+	if (!s_third || !m || m != gpMarioOriginal || m->onYoshi())
 		return false;
 	TWaterGun* g = m->mWaterGun;
 	if (!g || !g->mFluddModel)
@@ -2161,6 +2226,10 @@ bool PortSprayWeaponOnBack(TMario* m, bool* model)
 
 // R held, a spray weapon chosen
 bool PortSprayWeaponTrigger() { return s_trigger; }
+
+// The player whose weapon is meant (modapi_held_fludd.cpp placing a player's FLUDD, the balloons
+// drawn): 0 or 1, -1 the one the game runs as (or a mod picked)
+void PortSprayFor(int player) { s_spFor = player == 0 || player == 1 ? player : -1; }
 
 // The Phantamanta (TBossManta) a hit on `object` is a hit on (itself or a wing's extra hit area),
 // or null (modapi_goop_weapons.cpp: fire goop hurts it)

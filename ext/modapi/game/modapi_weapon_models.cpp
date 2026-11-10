@@ -25,6 +25,11 @@ int PortBazookaBalloonPieces(float* out, int most);
 int PortWeaponHearts(float* out, int most); // modapi_spray_weapons.cpp
 void PortGoopView(MtxPtr view);             // modapi_goop_weapons.cpp
 void PortGoopEntry();
+void PortSprayFor(int player); // modapi_spray_weapons.cpp: the player whose weapon is meant (-1: the one now)
+int PortPlayerNow(); // modapi_game.cpp: the players (split-screen co-op)
+int PortPlayerIndex(const void* m);
+class TWaterGun;
+const void* PortWaterGunMario(const TWaterGun* g); // modapi_held_fludd.cpp
 
 namespace {
 
@@ -50,26 +55,52 @@ const Model kModels[9] = {{kRiflePos, kRifleCol, kRifleCorners}, {kBazookaPos, k
                           {kBazookaPackGunPos, kBazookaPackGunCol, kBazookaPackGunCorners},
                           {kSmgPackGunPos, kSmgPackGunCol, kSmgPackGunCorners}};
 
-Mtx s_viewModel;  // the view's matrix and the model's place in the world, this frame
-int s_shown = -1; // the model placed this frame (0 the rifle, 1 the bazooka, 2 the submachine gun; 3 to 5 their packs), or none
-Mtx s_viewModel2; // and a second with it (6 to 8: the packs' weapons), or none
-int s_shown2 = -1;
+// Each player's (split-screen co-op: each FLUDD's, in each view)
+struct Shown {
+	Mtx viewModel;  // the view's matrix and the model's place in the world, this frame
+	int shown;      // the model placed this frame (0 the rifle, 1 the bazooka, 2 the submachine gun; 3 to 5 their packs), or none
+	Mtx viewModel2; // and a second with it (6 to 8: the packs' weapons), or none
+	int shown2;
+	int lastShown, lastShown2; // as last shown, to keep (PortWeaponModelKeep)
+	bool noFludd;   // FLUDD held with a weapon chosen: never drawn itself, its model or not
+	Shown() : shown(-1), shown2(-1), lastShown(-1), lastShown2(-1), noFludd(false) {}
+};
+Shown s_shownOf[2];
+int s_wmFor = -1; // the player whose FLUDD is placed now (PortWeaponModelFor)
+Shown& W() { return s_shownOf[s_wmFor >= 0 ? s_wmFor : PortPlayerNow()]; }
 
 class WeaponPacket : public J3DPacket {
 public:
+	int who;
 	virtual void draw();
 };
-WeaponPacket s_packet;
+WeaponPacket s_packets[2];
 
 void drawModel(const Model& m, MtxPtr viewModel);
 
 void WeaponPacket::draw()
 {
-	if (s_shown < 0 || s_shown > 8)
+	const Shown& w = s_shownOf[who];
+	if (w.shown < 0 || w.shown > 8)
 		return;
-	drawModel(kModels[s_shown], s_viewModel);
-	if (s_shown2 >= 0 && s_shown2 <= 8)
-		drawModel(kModels[s_shown2], s_viewModel2);
+	drawModel(kModels[w.shown], (MtxPtr)w.viewModel);
+	if (w.shown2 >= 0 && w.shown2 <= 8)
+		drawModel(kModels[w.shown2], (MtxPtr)w.viewModel2);
+}
+
+// a packet already in a draw buffer's list (entered twice it would point to itself, and the
+// buffer's drawing would never end: co-op enters each view, and each player's FLUDD enters)
+struct DrawBufferPeek {
+	J3DPacket** buffer;
+};
+bool entered(J3DDrawBuffer* b, J3DPacket* p)
+{
+	J3DPacket** list = reinterpret_cast<DrawBufferPeek*>(b)->buffer;
+	int n = 0;
+	for (J3DPacket* q = list ? list[0] : 0; q && n < 100000; q = q->getNextPacket(), n++)
+		if (q == p)
+			return true;
+	return false;
 }
 
 void drawModel(const Model& m, MtxPtr viewModel)
@@ -112,6 +143,7 @@ void drawModel(const Model& m, MtxPtr viewModel)
 // view's matrix of the frame (PortWeaponModelView).
 Mtx s_view;
 bool s_haveView;
+void drawBalloon(const float* c, const float* way, float scale);
 class BalloonPacket : public J3DPacket {
 public:
 	virtual void draw();
@@ -249,8 +281,6 @@ void BalloonPacket::draw()
 {
 	if (!s_haveView)
 		return;
-	float c[3], way[3], scale;
-	const bool flying = PortBazookaBalloon(c, way, &scale);
 	Mtx identity;
 	MTXIdentity(identity);
 	GXSetCurrentMtx(GX_PNMTX0);
@@ -276,8 +306,19 @@ void BalloonPacket::draw()
 	GXSetFog(GX_FOG_NONE, 0.0f, 0.0f, 0.0f, 0.0f, (GXColor){0, 0, 0, 0});
 	drawPieces();
 	drawHearts();
-	if (!flying)
-		return;
+	for (int p = 0; p < 2; p++) { // each player's balloon flying (co-op)
+		float c[3], way[3], scale;
+		PortSprayFor(p);
+		const bool flying = PortBazookaBalloon(c, way, &scale);
+		PortSprayFor(-1);
+		if (flying)
+			drawBalloon(c, way, scale);
+	}
+}
+
+// a balloon at c flying `way`, `scale` its size
+void drawBalloon(const float* c, const float* way, float scale)
+{
 	// its own frame: forward the way it flies, right and up across it
 	float fwd[3] = {way[0], way[1], way[2]};
 	float upw[3] = {0.0f, 1.0f, 0.0f};
@@ -343,50 +384,60 @@ const float* PortWeaponPackMuzzle(int which) { return which == 0 ? kRiflePackGun
 // world (x right, y forward to the muzzle, z up, in its own units).
 void PortWeaponModelShow(int which, MtxPtr viewModel)
 {
-	MTXCopy(viewModel, s_viewModel);
-	s_shown = which;
+	MTXCopy(viewModel, W().viewModel);
+	W().shown = which;
 }
+
+// The player whose FLUDD is placed now (modapi_held_fludd.cpp), -1 when done
+void PortWeaponModelFor(int player) { s_wmFor = player == 0 || player == 1 ? player : -1; }
 
 // A second model with it this frame (a pack's weapon, in its own place).
 void PortWeaponModelShowSecond(int which, MtxPtr viewModel)
 {
-	MTXCopy(viewModel, s_viewModel2);
-	s_shown2 = which;
+	MTXCopy(viewModel, W().viewModel2);
+	W().shown2 = which;
 }
-
-int s_lastShown = -1, s_lastShown2 = -1; // as last shown, to keep (PortWeaponModelKeep)
-bool s_noFludd; // FLUDD held with a weapon chosen: never drawn itself, its model or not
 
 // This frame, FLUDD held in view with a weapon (not the normal spray) chosen: FLUDD itself is left
 // out however its placing goes (a frame it is not placed showed all of it in view).
-void PortWeaponModelNoFludd(bool on) { s_noFludd = on; }
+void PortWeaponModelNoFludd(bool on) { W().noFludd = on; }
 
 void PortWeaponModelHide()
 {
-	if (s_shown >= 0)
-		s_lastShown = s_shown, s_lastShown2 = s_shown2;
-	s_shown = s_shown2 = -1;
+	Shown& w = W();
+	if (w.shown >= 0)
+		w.lastShown = w.shown, w.lastShown2 = w.shown2;
+	w.shown = w.shown2 = -1;
 }
 
 // Shown again where it was last (FLUDD not placed again this frame: Mario frozen).
 void PortWeaponModelKeep()
 {
-	s_shown  = s_lastShown;
-	s_shown2 = s_lastShown2;
+	Shown& w  = W();
+	w.shown  = w.lastShown;
+	w.shown2 = w.lastShown2;
 }
 
+// Whether a packet is entered in the opaque buffer already this pass (the goop weapons' too)
+bool PortPacketEntered(J3DPacket* p) { return j3dSys.getDrawBuffer(0) && entered(j3dSys.getDrawBuffer(0), p); }
+
 // As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): true when a weapon's model is
-// entered in its place (FLUDD then left out).
-bool PortWeaponModelEntry()
+// entered in its place (FLUDD then left out). Each player's FLUDD enters its own; the balloon and
+// the goop once for the view.
+bool PortWeaponModelEntry(TWaterGun* gun)
 {
+	const int who = gun ? PortPlayerIndex(PortWaterGunMario(gun)) : PortPlayerNow();
 	float at[3], way[3], scale; // the bazooka's balloon flying: entered too
 	float pieces[8], hearts[4];
 	PortGoopEntry(); // the goop weapons' stream and puddles
-	if (s_haveView && j3dSys.getDrawBuffer(0)
+	if (s_haveView && j3dSys.getDrawBuffer(0) && !entered(j3dSys.getDrawBuffer(0), &s_balloonPacket)
 	    && (PortBazookaBalloon(at, way, &scale) || PortBazookaBalloonPieces(pieces, 1) || PortWeaponHearts(hearts, 1)))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_balloonPacket, 0);
-	if (s_shown < 0 || !j3dSys.getDrawBuffer(0))
-		return s_noFludd;
-	j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
+	const Shown& w = s_shownOf[who];
+	if (w.shown < 0 || !j3dSys.getDrawBuffer(0))
+		return w.noFludd;
+	s_packets[who].who = who;
+	if (!entered(j3dSys.getDrawBuffer(0), &s_packets[who]))
+		j3dSys.getDrawBuffer(0)->entryImm(&s_packets[who], 0);
 	return true;
 }

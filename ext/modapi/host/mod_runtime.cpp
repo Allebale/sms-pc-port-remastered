@@ -457,6 +457,7 @@ int dispatchTo(uint32_t type, void* data, uint32_t size, SmsMod* only)
 		if (s.dead || s.mod->state != SmsMod::LOADED || (only && s.mod != only))
 			continue;
 		const int r = callHandler(s, &ev);
+		modg_select_player(-1); // a player a mod selected is its own business, never the next one's
 		if (type == SMS_EV_SHINE_SETUP)
 			shineModelPath(s.mod, (SmsEvShineSetup*)data);
 		if (r != SMS_CANCEL)
@@ -731,14 +732,15 @@ void applyHudHidden()
 	modg_set_hud_hidden(mask);
 }
 
-// The parts of Mario any loaded mod hides: each mod's bits ORed.
-int applyHiddenParts()
+// The parts of a player any loaded mod hides: each mod's bits ORed (each player's: co-op).
+int applyHiddenParts(int player)
 {
 	uint32_t parts = 0;
 	for (SmsMod* m : g_mods)
 		if (m != nullptr)
-			parts |= m->hiddenParts;
-	return modg_player_set_hidden_parts(parts);
+			parts |= m->hiddenParts[player];
+	modg_player_set_hidden_parts_of(player, parts);
+	return 1;
 }
 
 void dropRegistrations(SmsMod* m)
@@ -763,17 +765,30 @@ void dropRegistrations(SmsMod* m)
 		m->hudHidden = 0; // what it hid is shown again (unless another mod hides it)
 		applyHudHidden();
 	}
-	if (m->aims) { // Mario's body faces the way he moves again
+	if (m->aims) { // Mario's body faces the way he moves again (each player's)
 		m->aims = false;
-		modg_player_set_aim(0, 0.0f, 0.0f);
+		for (int p = 0; p < 2; p++) {
+			modg_select_player(p);
+			modg_player_set_aim(0, 0.0f, 0.0f);
+		}
+		modg_select_player(-1);
 	}
-	if (m->holdsFludd) { // FLUDD back on his back
+	if (m->holdsFludd) { // FLUDD back on his back (each player's)
 		m->holdsFludd = false;
-		modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+		for (int p = 0; p < 2; p++) {
+			modg_select_player(p);
+			modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+		}
+		modg_select_player(-1);
 	}
 	if (m->armsFludd) { // the normal spray, the game's own numbers, no zoom
 		m->armsFludd = false;
-		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
+		for (int p = 0; p < 2; p++) { // (each player's)
+			modg_select_player(p);
+			modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
+			modg_held_fludd_zoom(0.0f, 0);
+		}
+		modg_select_player(-1);
 		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_BLACK_GOOP; w++) {
 			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
 			modg_spray_view_distance(w, 0.0f);
@@ -786,12 +801,17 @@ void dropRegistrations(SmsMod* m)
 	}
 	if (m->setsView) {
 		m->setsView = false;
-		modg_held_fludd_view(0);
+		for (int p = 0; p < 2; p++) {
+			modg_select_player(p);
+			modg_held_fludd_view(0);
+		}
+		modg_select_player(-1);
 	}
-	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
-		m->hiddenParts = 0;
-		applyHiddenParts();
-	}
+	for (int p = 0; p < 2; p++)
+		if (m->hiddenParts[p]) { // what it hid of each player is drawn again (unless another mod hides it)
+			m->hiddenParts[p] = 0;
+			applyHiddenParts(p);
+		}
 	m->options.clear();
 	drawDropMod(m);
 }
@@ -1061,8 +1081,9 @@ int apiPlayerSetHiddenParts(uint32_t parts)
 	SmsMod* m = current();
 	if (!m)
 		return 0;
-	m->hiddenParts = parts & (SMS_PLAYER_PART_HEAD | SMS_PLAYER_PART_FLUDD);
-	return applyHiddenParts();
+	const int p       = modg_player_now(); // the player now (co-op: each their own)
+	m->hiddenParts[p] = parts & (SMS_PLAYER_PART_HEAD | SMS_PLAYER_PART_FLUDD);
+	return applyHiddenParts(p);
 }
 
 const SmsPlayerApi s_player = {
@@ -1216,9 +1237,28 @@ int apiHeldFluddTakeMouse(float* dx, float* dy)
 	return on;
 }
 
+// split-screen co-op: the players (ext/modapi/game/modapi_game.cpp)
+int apiPlayers() { return modg_players(); }
+int apiPlayerNow() { return modg_player_now(); }
+void apiSelectPlayer(int player) { modg_select_player(player); }
+int apiPlayerView(int player, float* x, float* y, float* w, float* h)
+{
+	float r[4];
+	const int split = modg_player_view(player, r);
+	if (x)
+		*x = r[0];
+	if (y)
+		*y = r[1];
+	if (w)
+		*w = r[2];
+	if (h)
+		*h = r[3];
+	return split;
+}
+
 const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
                                      apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState,
-                                     apiHeldFluddTakeMouse};
+                                     apiHeldFluddTakeMouse, apiPlayers, apiPlayerNow, apiSelectPlayer, apiPlayerView};
 
 // ------------------------------------------------------------------ the API: multiplayer
 

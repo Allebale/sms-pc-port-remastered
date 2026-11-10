@@ -56,6 +56,11 @@
 extern int port_spray_tagged_drops; // modapi_spray_weapons.cpp
 bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
 bool PortIsPlayer2(TMario* mario); // co-op's Luigi
+int PortPlayerNow(); // modapi_game.cpp: the players (split-screen co-op)
+int PortPlayers();
+TMario* PortPlayerMario(int i);
+extern "C" int port_coop_enter_player2(void); // ext/coop: the game running as player 2 for a while
+extern "C" void port_coop_leave_player2(void);
 MtxPtr PortFluddHeldEmitMtx(f32* scale); // the held FLUDD's nozzle tip
 bool PortSprayWeaponTrigger();
 class TBossManta;
@@ -73,7 +78,6 @@ const int kElectric = 6;  // SMS_SPRAY_ELECTRIC_GOOP
 const int kBlack    = 7;  // SMS_SPRAY_BLACK_GOOP: slippery, Mario walks and slides fast through it
 bool isKind(int k) { return k == kFire || k == kElectric || k == kBlack; }
 
-int s_kind;           // the goop weapon chosen: kFire, kElectric, or 0 none
 bool s_defeat;        // it may defeat enemies
 bool s_emitting;      // our own request, let through
 bool s_cheap; // the mod's "Goop performance mode": simpler puddles (no water over them), fewer flames
@@ -85,6 +89,34 @@ int (*const port_grass_burning)(float x, float z)                               
 int (*const port_grass_fires)(float* out, int most)                                = 0;
 void (*const port_grass_extinguish)(float x, float z, float r)                     = 0;
 f32 s_time;           // seconds played
+
+// Split-screen co-op (ext/coop): each player's goop weapon and black goop glide are their own
+// (s_gp[player]); the goop on the ground and walls is everyone's.
+struct GoopPlayer {
+	int kind;                 // the goop weapon chosen: kFire, kElectric, kBlack, or 0 none
+	bool havePrev, gliding;   // black goop: gliding, from where he was last frame
+	f32 prevX, prevZ, glideX, glideZ;
+	s32 lastWater;            // the water a goop weapon uses: FLUDD's last frame
+	f32 waterCarry;
+	GoopPlayer() : kind(0), havePrev(false), gliding(false), prevX(0), prevZ(0), glideX(0), glideZ(0), lastWater(-1), waterCarry(0) {}
+};
+GoopPlayer s_gp[2];
+int s_gpFor = -1;
+GoopPlayer& GP() { return s_gp[s_gpFor >= 0 ? s_gpFor : PortPlayerNow()]; }
+struct GoopFor {
+	int saved;
+	explicit GoopFor(int i) : saved(s_gpFor) { s_gpFor = i; }
+	~GoopFor() { s_gpFor = saved; }
+};
+#define s_kind GP().kind
+#define s_havePrev GP().havePrev
+#define s_gliding GP().gliding
+#define s_prevX GP().prevX
+#define s_prevZ GP().prevZ
+#define s_glideX GP().glideX
+#define s_glideZ GP().glideZ
+#define s_lastWater GP().lastWater
+#define s_waterCarry GP().waterCarry
 // each kind's numbers (the mod's menu): seconds of its stream, or of standing in its goop, that
 // defeat an enemy; how long its goop lasts, times a minute; its puddles' size, times their own
 struct Stats {
@@ -174,9 +206,16 @@ f32 sizeNow(const Puddle& p)
 // Goop never lands round Mario's feet: how big a puddle (or a blob on a wall) at (x, y, z) may be
 // and still keep clear of him (its wavy edge reaching a quarter further, and a margin); no limit
 // when he is far above or below
+f32 roomFromOne(TMario* m, f32 x, f32 y, f32 z, bool wall);
 f32 roomFromMario(f32 x, f32 y, f32 z, bool wall)
 {
-	TMario* m = gpMarioOriginal;
+	// (co-op: clear of either player's feet)
+	const f32 a = roomFromOne(PortPlayerMario(0), x, y, z, wall);
+	const f32 b = PortPlayers() == 2 ? roomFromOne(PortPlayerMario(1), x, y, z, wall) : 1e30f;
+	return a < b ? a : b;
+}
+f32 roomFromOne(TMario* m, f32 x, f32 y, f32 z, bool wall)
+{
 	if (!m)
 		return 1e30f;
 	const f32 dx = m->mPosition.x - x, dz = m->mPosition.z - z;
@@ -537,8 +576,6 @@ void zaps()
 // goop his way across the ground is kept from tick to tick instead, turning toward the game's own
 // step (times the mod's speed) only slowly: he speeds up beyond his own speed, slides on when the
 // stick is let go, and turns wide, as on ice
-bool s_havePrev, s_gliding;
-f32 s_prevX, s_prevZ, s_glideX, s_glideZ;
 
 bool onBlack(TMario* m)
 {
@@ -959,8 +996,6 @@ void undress();
 void dressFludd();
 
 // the water a goop weapon uses: FLUDD's own (what left the tank this tick), times its setting
-s32 s_lastWater = -1;
-f32 s_waterCarry;
 void drain()
 {
 	TMario* m    = gpMarioOriginal;
@@ -1028,9 +1063,21 @@ void afterMovement()
 	s_time += dt;
 	flights(dt);
 	zaps();
-	dressFludd();
-	drain();
-	blackGoop(dt);
+	dressFludd(); // (player 1's FLUDD: both share its textures)
+	// each player's goop weapon and glide, the game running as them (co-op: player 2's globals)
+	{
+		GoopFor f(0);
+		drain();
+		blackGoop(dt);
+	}
+	if (PortPlayers() == 2 && port_coop_enter_player2()) {
+		{
+			GoopFor f(1);
+			drain();
+			blackGoop(dt);
+		}
+		port_coop_leave_player2();
+	}
 	if (gpConductor) // (which enemies move by themselves, known before any fire)
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 			watchMovers(*it);
@@ -1050,7 +1097,17 @@ void afterMovement()
 	const bool grassFire = s_grassBurn && port_grass_fires && port_grass_fires(0, 0) > 0;
 	if (!any && !grassFire)
 		return;
-	hurtMario(dt);
+	{
+		GoopFor f(0);
+		hurtMario(dt);
+	}
+	if (PortPlayers() == 2 && port_coop_enter_player2()) { // (player 2 stepping in goop too)
+		{
+			GoopFor f(1);
+			hurtMario(dt);
+		}
+		port_coop_leave_player2();
+	}
 	if (gpConductor)
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 			walkToFire(*it, dt);
@@ -2111,7 +2168,8 @@ void dressFludd()
 {
 	if (!GXPC_SetTextureOverride)
 		return;
-	TMario* m    = gpMarioOriginal;
+	GoopFor f(0); // (player 1's)
+	TMario* m    = PortPlayerMario(0);
 	TWaterGun* g = m ? m->mWaterGun : 0;
 	if (!s_kind || !g) {
 		if (s_dressedCount)
@@ -2207,7 +2265,7 @@ bool PortGoopEmit(const TWaterEmitInfo& asked, int* made)
 		return false;
 	TMario* m    = gpMarioOriginal;
 	TWaterGun* g = m ? m->mWaterGun : 0;
-	if (!g || g->mCurrentNozzle != TWaterGun::Spray || m->onYoshi() || PortIsPlayer2(m))
+	if (!g || g->mCurrentNozzle != TWaterGun::Spray || m->onYoshi())
 		return false;
 	const JGeometry::TVec3<f32>& at = asked.mPos.value;
 	const f32 dx = at.x - g->mEmitPos[0].x, dy = at.y - g->mEmitPos[0].y, dz = at.z - g->mEmitPos[0].z;
@@ -2299,13 +2357,14 @@ void PortGoopView(MtxPtr view)
 bool s_entered; // entered with FLUDD this frame (else drawn with the water: PortGoopWaterDraw)
 bool goopToDraw()
 {
-	return (s_kind && port_spray_tagged_drops) || anyPuddle() || goopFlying() || (port_grass_fires && port_grass_fires(0, 0) > 0);
+	return ((s_gp[0].kind || s_gp[1].kind) && port_spray_tagged_drops) || anyPuddle() || goopFlying() || (port_grass_fires && port_grass_fires(0, 0) > 0);
 }
+bool PortPacketEntered(J3DPacket* p); // modapi_weapon_models.cpp
 void PortGoopEntry()
 {
 	if (!s_haveView || !j3dSys.getDrawBuffer(0))
 		return;
-	if (goopToDraw()) {
+	if (goopToDraw() && !PortPacketEntered(&s_packet)) { // (once a view: each player's FLUDD enters)
 		j3dSys.getDrawBuffer(0)->entryImm(&s_packet, 0);
 		s_entered = true;
 	}

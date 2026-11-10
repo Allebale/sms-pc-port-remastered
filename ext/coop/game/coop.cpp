@@ -1942,6 +1942,24 @@ static TMario* playingP2()
 	return m;
 }
 extern "C" THitActor* port_coop_player2_actor(void) { return playingP2(); }
+// A player's half of the screen while it is split (x, y, w, h as parts of it, 0 to 1; player 1
+// left or top): 1, else 0 (one view, the whole screen)
+extern "C" int port_coop_view_rect(int view, float* r)
+{
+	if (!s_split || !playingP2()) {
+		r[0] = r[1] = 0.0f, r[2] = r[3] = 1.0f;
+		return 0;
+	}
+	viewRect(view ? 1 : 0, r);
+	return 1;
+}
+// player 1's Mario, whoever the game runs as now (its globals player 2's while they run)
+extern "C" THitActor* port_coop_player1_actor(void)
+{
+	if (!s_inP2 || !s_p1.mario)
+		return s_inP2 ? nullptr : gpMarioOriginal;
+	return s_p1.mario;
+}
 // decomp-patches/zzzzzz-coop-07: player 2 for the wire manager
 extern "C" TTakeActor* port_coop_wire_player2(void) { return playingP2(); }
 
