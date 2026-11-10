@@ -857,6 +857,7 @@ void afterMovement()
 // water is taken back after (objectHitDone): shocked, not pushed
 TLiveActor* s_unpushed;
 JGeometry::TVec3<f32> s_unpushedV;
+TBossManta* s_fireManta; // a Phantamanta fire goop just hit
 int objectHit(void* object, void* sender, unsigned message)
 {
 	s_unpushed = 0;
@@ -867,19 +868,21 @@ int objectHit(void* object, void* sender, unsigned message)
 		if (TBossManta* m = PortSprayManta(object)) {
 			// Phantamanta: fire goop hurts it as water does (a hit, then its own wait before the next),
 			// where the game would not count the drop (only drops flagged 0x40 hurt it)
-			if (!(gpModelWaterManager->mParticleFlagSOA[drop->mParticleIndex] & 0x40) && m->isDamageable()) {
+			// each fire hit counts three of water's (16, 8, 4, 2, 1 by its generation), and the next
+			// comes half a second later (water's: a second). A drop the game counts (flagged 0x40)
+			// gets its own hit after this; else the hit is made here
+			if (m->isDamageable()) {
 				if (gpMarioParticleManager)
 					gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &m->mPosition, 0, nullptr);
-				// each fire hit counts three of water's (16, 8, 4, 2, 1 by its generation), and the
-				// next comes half a second later (water's: a second)
 				static const int kHits[6] = {16, 8, 4, 2, 1, 1};
 				const int most = kHits[m->mGeneration >= 0 && m->mGeneration < 6 ? m->mGeneration : 0];
 				m->unk19C += 2;
 				if (m->unk19C > most - 1)
 					m->unk19C = most - 1;
-				m->collidedWithWater();
-				if (m->unk1A0 == 0x1E)
-					m->unk1A0 = 15;
+				if (!(gpModelWaterManager->mParticleFlagSOA[drop->mParticleIndex] & 0x40))
+					m->collidedWithWater();
+				s_fireManta = m; // (its wait shortened after the game's hit: objectHitDone)
+				fprintf(stderr, "[goop] fire on a Phantamanta (generation %d): %d of %d hits\n", m->mGeneration, m->unk19C + 1, most);
 			}
 			return 0;
 		}
@@ -899,6 +902,11 @@ void objectHitDone(void* object, void* sender, unsigned message, int)
 {
 	if (message != HIT_MESSAGE_SPRAYED_BY_WATER || !object || !sender)
 		return;
+	if (s_fireManta) { // its next hit half a second away
+		if (s_fireManta->unk1A0 > 15)
+			s_fireManta->unk1A0 = 15;
+		s_fireManta = 0;
+	}
 	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(static_cast<THitActor*>(sender));
 	if (!drop)
 		return;
@@ -1585,37 +1593,15 @@ void drawWalls(int kind)
 		const f32 tx = -g.nz, tz = g.nx;
 		const f32 lift = 1.2f + 0.03f * (f32)i;
 		const f32 cx = g.x + g.nx * lift, cy = g.y, cz = g.z + g.nz * lift;
-		// a wavy edge as the puddles' (broad lobes, small bumps), its last bit darker (its rounded side)
-		const int kAround = 44;
-		const f32 rim = rimOf(r) * 0.8f;
-		GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)(kAround * 9));
-		for (int k = 0; k < kAround; k++) {
-			f32 ring[2][2][3]; // [this, next corner][inner, edge]
-			for (int e = 0; e < 2; e++) {
-				const f32 a  = 6.2831853f * (f32)((k + e) % kAround) / kAround;
-				const f32 rr = r * (1.0f + 0.13f * sinf(3.0f * a + g.seed) + 0.07f * sinf(5.0f * a + g.seed * 1.3f)
-				                    + 0.035f * sinf(9.0f * a + g.seed * 2.1f) + 0.02f * sinf(14.0f * a + g.seed * 3.7f));
-				const f32 in = rr - rim > rr * 0.5f ? rr - rim : rr * 0.5f;
-				const f32 dd[2] = {in, rr};
-				for (int q = 0; q < 2; q++) {
-					const f32 ox = cosf(a) * dd[q], oy = sinf(a) * dd[q];
-					const f32 out = q ? 0.0f : 1.5f; // (the inner part standing off the wall a little)
-					ring[e][q][0] = cx + tx * ox + g.nx * out, ring[e][q][1] = cy + oy, ring[e][q][2] = cz + tz * ox + g.nz * out;
-				}
-			}
-			const f32 mx = cx + g.nx * 1.5f, mz = cz + g.nz * 1.5f;
-			tcorner(mx, cy, mz, 255, (mx * tx + mz * tz) / kTile, -cy / kTile);
-			const int tri[2][2] = {{0, 0}, {1, 0}};
-			for (int c = 0; c < 2; c++) {
-				const f32* v = ring[tri[c][0]][0];
-				tcorner(v[0], v[1], v[2], 250, (v[0] * tx + v[2] * tz) / kTile, -v[1] / kTile);
-			}
-			// the rim: inner k, edge k, edge k+1; inner k, edge k+1, inner k+1
-			const int rimTri[6][2] = {{0, 0}, {0, 1}, {1, 1}, {0, 0}, {1, 1}, {1, 0}};
-			for (int c = 0; c < 6; c++) {
-				const f32* v = ring[rimTri[c][0]][rimTri[c][1]];
-				tcorner(v[0], v[1], v[2], rimTri[c][1] ? 140 : 250, (v[0] * tx + v[2] * tz) / kTile, -v[1] / kTile);
-			}
+		const int kAround = 20;
+		GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, (u16)(kAround + 2));
+		tcorner(cx, cy, cz, 255, (cx * tx + cz * tz) / kTile, -cy / kTile);
+		for (int k = 0; k <= kAround; k++) {
+			const f32 a  = 6.2831853f * (f32)(k % kAround) / kAround;
+			const f32 rr = r * (1.0f + 0.14f * sinf(3.0f * a + g.seed) + 0.08f * sinf(5.0f * a + g.seed * 1.3f));
+			const f32 ox = cosf(a) * rr, oy = sinf(a) * rr;
+			const f32 x = cx + tx * ox, y = cy + oy, z = cz + tz * ox;
+			tcorner(x, y, z, 235, (x * tx + z * tz) / kTile, -y / kTile);
 		}
 		GXEnd();
 		// the drips: running down from its lower half, longer with time, each its own
