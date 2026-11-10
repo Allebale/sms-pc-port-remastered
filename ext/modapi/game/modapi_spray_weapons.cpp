@@ -153,6 +153,7 @@ struct SprayPlayer {
 	f32 voiceVolume;       // its volume (SMS_SPRAY_VOICE_SHIFT: in percent)
 	f32 goop;              // how much goop the weapons clean, times the game's own (SMS_SPRAY_GOOP_SHIFT)
 	bool rocketHurt;       // SMS_SPRAY_ROCKET_HURT: a rocket jump costs Mario a point of health
+	bool keyLaunch;        // SmsSprayStats.key_launch: the rocket jump key held, hits throw enemies up and finish those in the air
 	int shotLook;          // the bazooka's shot seen flying: 0 none, 1 water, 2 a green water balloon, 3 a big one
 	SprayPlayer() { memset(this, 0, sizeof *this); voiceVolume = 1.0f, goop = 1.0f; }
 };
@@ -192,6 +193,7 @@ struct SprayFor {
 #define s_voiceVolume SP().voiceVolume
 #define s_goop SP().goop
 #define s_rocketHurt SP().rocketHurt
+#define s_keyLaunch SP().keyLaunch
 #define s_shotLook SP().shotLook
 #define s_defeat SP().defeat
 
@@ -559,6 +561,33 @@ void hitEnemy(TSmallEnemy* e, int weapon, int shot, f32 dx, f32 dz)
 		return;
 	const Weapon& k = kWeapons[weapon];
 	const bool fresh = h->lastShot != shot; // this shot's first drop to reach it
+	// the rocket jump key held (SmsSprayStats.key_launch, a mod's setting): a walking enemy hit on the
+	// ground is thrown up into the air, and one hit in the air is defeated at once
+	if (s_keyLaunch && moves(e)) {
+		const f32 kKeyLift = 40.0f; // up, a 30th of a second's (about the bazooka's own throw)
+		if (!fresh) {
+			return; // the rest of a shot that has done its part
+		} else if (e->checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+			h->lastShot = shot;
+			h->hits     = 0;
+			fprintf(stderr, "[weapons] an enemy in the air finished by the %s (rocket jump key held)\n", kNames[weapon]);
+			e->kill(); // as a stomp: its own defeat, coins and all
+			if (weapon == BAZOOKA)
+				dropHeart(e);
+			return;
+		} else {
+			h->lastShot = shot;
+			h->vx = dx * k.shove * 0.3f; // a little along the way of the shot, mostly up
+			h->vz = dz * k.shove * 0.3f;
+			JGeometry::TVec3<f32> v = e->getVelocity();
+			v.y = kKeyLift;
+			e->setVelocity(v);
+			e->mPosition.y += 8.0f;
+			e->onLiveFlag(LIVE_FLAG_AIRBORNE);
+			fprintf(stderr, "[weapons] an enemy thrown up by the %s (rocket jump key held)\n", kNames[weapon]);
+			return;
+		}
+	}
 	// already in the air, with SMS_SPRAY_AIR_FORWARD (a mod's setting): the bazooka's hit pushes it on
 	// forward, away from Mario, and does not throw it up again
 	TMario* mario = gpMarioOriginal;
@@ -2376,6 +2405,16 @@ f32 PortSprayWeaponFarScale(TLiveManager* manager)
 	if (s_farScale <= 1.0f || dynamic_cast<TMapObjBaseManager*>(manager))
 		return 1.0f;
 	return s_farScale;
+}
+
+// held_fludd->set_weapon_stats' key_launch (mod_runtime.cpp): the rocket jump key held now, so a hit
+// throws an enemy up and one in the air is defeated at once (the player's: co-op, each player's own)
+extern "C" int modg_spray_key_launch(int on)
+{
+	if ((on != 0) != s_keyLaunch)
+		fprintf(stderr, "[weapons] rocket jump key shots %s\n", on ? "throw enemies up" : "as ever");
+	s_keyLaunch = on != 0;
+	return 1;
 }
 
 // held_fludd->set_weapon_stats' self_jump (mod_runtime.cpp): the bazooka's rocket jump, 0 none

@@ -786,6 +786,7 @@ void dropRegistrations(SmsMod* m)
 		for (int p = 0; p < 2; p++) { // (each player's)
 			modg_select_player(p);
 			modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
+			modg_spray_key_launch(0);
 			modg_held_fludd_zoom(0.0f, 0);
 		}
 		modg_select_player(-1);
@@ -1181,6 +1182,8 @@ int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
 		modg_spray_far_scale(st->far_scale);
 	if (st && st->size >= offsetof(SmsSprayStats, shadow_damage) + sizeof(float))
 		modg_spray_shadow_damage(st->shadow_damage);
+	// the rocket jump key's shots (any weapon's stats carry it): only from a mod that sets it
+	modg_spray_key_launch(st && st->size >= offsetof(SmsSprayStats, key_launch) + sizeof(int) ? st->key_launch : 0);
 	if (weapon == SMS_SPRAY_BAZOOKA) // its goop area: only from a mod that sets it
 		modg_spray_goop_area(st && st->size >= offsetof(SmsSprayStats, goop_area) + sizeof(float) ? st->goop_area : 0.0f);
 	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump: only from a mod that sets it
