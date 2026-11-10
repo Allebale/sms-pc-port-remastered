@@ -65,22 +65,25 @@ struct Shown {
 	bool noFludd;   // FLUDD held with a weapon chosen: never drawn itself, its model or not
 	Shown() : shown(-1), shown2(-1), lastShown(-1), lastShown2(-1), noFludd(false) {}
 };
-Shown s_shownOf[2];
+// [player][view]: each view keeps its own (a view's places drawn in another, or left from it, put a
+// player's weapon off them as the other view's camera moved)
+Shown s_shownOf[2][2];
 int s_wmFor = -1; // the player whose FLUDD is placed now (PortWeaponModelFor)
-Shown& W() { return s_shownOf[s_wmFor >= 0 ? s_wmFor : PortPlayerNow()]; }
+int PortViewer(); // modapi_game.cpp: the view being worked out (co-op: 1 the second)
+Shown& W() { return s_shownOf[s_wmFor >= 0 ? s_wmFor : PortPlayerNow()][PortViewer() ? 1 : 0]; }
 
 class WeaponPacket : public J3DPacket {
 public:
-	int who;
+	int who, view;
 	virtual void draw();
 };
-WeaponPacket s_packets[2];
+WeaponPacket s_packets[2][2];
 
 void drawModel(const Model& m, MtxPtr viewModel);
 
 void WeaponPacket::draw()
 {
-	const Shown& w = s_shownOf[who];
+	const Shown& w = s_shownOf[who][view];
 	if (w.shown < 0 || w.shown > 8)
 		return;
 	drawModel(kModels[w.shown], (MtxPtr)w.viewModel);
@@ -433,11 +436,14 @@ bool PortWeaponModelEntry(TWaterGun* gun)
 	if (s_haveView && j3dSys.getDrawBuffer(0) && !entered(j3dSys.getDrawBuffer(0), &s_balloonPacket)
 	    && (PortBazookaBalloon(at, way, &scale) || PortBazookaBalloonPieces(pieces, 1) || PortWeaponHearts(hearts, 1)))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_balloonPacket, 0);
-	const Shown& w = s_shownOf[who];
+	const int view = PortViewer() ? 1 : 0;
+	const Shown& w = s_shownOf[who][view];
 	if (w.shown < 0 || !j3dSys.getDrawBuffer(0))
 		return w.noFludd;
-	s_packets[who].who = who;
-	if (!entered(j3dSys.getDrawBuffer(0), &s_packets[who]))
-		j3dSys.getDrawBuffer(0)->entryImm(&s_packets[who], 0);
+	WeaponPacket& pk = s_packets[who][view];
+	pk.who  = who;
+	pk.view = view;
+	if (!entered(j3dSys.getDrawBuffer(0), &pk))
+		j3dSys.getDrawBuffer(0)->entryImm(&pk, 0);
 	return true;
 }
