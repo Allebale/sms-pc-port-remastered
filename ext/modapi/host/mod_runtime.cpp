@@ -349,6 +349,7 @@ bool cancellable(uint32_t type)
 	case SMS_EV_GAME_OVER:
 	case SMS_EV_COINS_RESET:
 	case SMS_EV_OBJECT_HIT:
+	case SMS_EV_WATER_EMIT:
 	case SMS_EV_SAVE_STATE_REQUEST:
 	case SMS_EV_PLAYER_STATUS:
 	case SMS_EV_PLAYER_DAMAGE:
@@ -1060,7 +1061,7 @@ const SmsGameApi s_game = {
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
-	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray,
+	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop,
 };
 
 int apiPlayerGet(SmsPlayer* out)

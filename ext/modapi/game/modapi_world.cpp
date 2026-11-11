@@ -25,6 +25,8 @@
 #include <Player/Mario.hpp>
 #include <Player/ModelWaterManager.hpp>
 #include <Player/NozzleBase.hpp>
+#include <Player/SplashManager.hpp>
+#include <Map/PollutionManager.hpp>
 #include <Player/WaterGun.hpp>
 #include <Strategic/HitActor.hpp>
 #include <Strategic/LiveActor.hpp>
@@ -39,6 +41,7 @@ TMario* PortPlayerMario(int player); // ...each player's Mario
 extern "C" int port_cheat_infinite_fludd;
 extern "C" void port_coop_drop_made(int slot); // ext/coop: whose drop it is (co-op's own)
 extern "C" void port_coop_drop_moved(int to, int from);
+extern "C" void port_coop_drop_set_owner(int slot, int player);
 
 namespace {
 
@@ -50,7 +53,8 @@ void setVec(SmsVec3* v, f32 x, f32 y, f32 z) { v->x = x, v->y = y, v->z = z; }
 
 u32 s_dropTag[TModelWaterManager::SLOT_NUM];      // a mod's number for each slot's drop (0 the game's)
 s8 s_dropPlayer[TModelWaterManager::SLOT_NUM];    // the player whose FLUDD made it, -1 none
-u32 s_emitTag;       // the drop being made now by a mod (water->emit)
+u32 s_emitTag;       // the drop being made now by a mod (water->emit), and whose
+int s_emitPlayer;
 bool s_modEmitting;  // ...so SMS_EV_WATER_EMIT does not hear of it
 
 // The player whose globals are in force (co-op runs as player 2 for a while), or -1
@@ -76,6 +80,8 @@ void dropOut(int slot, SmsWaterDrop* out)
 	d.attack    = w->mParticleAttackSOA[slot] & 0xff;
 	d.tag       = s_dropTag[slot];
 	d.player    = s_dropPlayer[slot];
+	const int at = w->mParticleFlagSOA[slot] & 0xf; // 1 flying, 2 on the ground, 3 on a wall
+	d.landed    = at == 2 ? 1 : at == 3 ? 2 : 0;
 	const uint32_t n = out->size && out->size < sizeof d ? out->size : (uint32_t)sizeof d;
 	d.size = n;
 	memcpy(out, &d, n);
@@ -149,8 +155,10 @@ extern "C" void port_water_drop_made(int slot)
 	if (slot < 0 || slot >= TModelWaterManager::SLOT_NUM)
 		return;
 	s_dropTag[slot]    = s_modEmitting ? s_emitTag : 0;
-	s_dropPlayer[slot] = (s8)playerNow();
+	s_dropPlayer[slot] = (s8)(s_modEmitting ? s_emitPlayer : playerNow());
 	port_coop_drop_made(slot);
+	if (s_modEmitting) // (a mod's drop for a player: theirs, whoever the game runs as)
+		port_coop_drop_set_owner(slot, s_emitPlayer);
 }
 
 // a drop moved down to another slot as those before it ended (garbageCollect)
@@ -162,6 +170,9 @@ extern "C" void port_water_drop_moved(int to, int from)
 	s_dropPlayer[to] = s_dropPlayer[from];
 	port_coop_drop_moved(to, from);
 }
+
+// A mod's own drops being made now (water->emit): nothing else takes them
+bool PortWaterModEmitting() { return s_modEmitting; }
 
 // Every request for water drops (TModelWaterManager::emitRequest): a player's FLUDD's stream is
 // told to mods first (SMS_EV_WATER_EMIT), who may cancel it. True: cancelled, *made drops made.
@@ -235,8 +246,11 @@ extern "C" int modg_water_nozzle_drop(int player, SmsWaterDrop* out)
 extern "C" int modg_water_emit(const SmsWaterDrop* d)
 {
 	TModelWaterManager* w = gpModelWaterManager;
-	TMario* m             = gpMarioOriginal;
-	if (!w || !d || !m || !m->mWaterGun || !m->mWaterGun->mEmitInfo)
+	if (!d)
+		return -1;
+	const int who = d->player >= 0 && d->player < PortPlayers() ? d->player : playerNow();
+	TMario* m     = who >= 0 ? PortPlayerMario(who) : gpMarioOriginal;
+	if (!w || !m || !m->mWaterGun || !m->mWaterGun->mEmitInfo)
 		return -1;
 	TWaterEmitInfo info(*m->mWaterGun->mEmitInfo);
 	const f32 pow = sqrtf(d->velocity.x * d->velocity.x + d->velocity.y * d->velocity.y + d->velocity.z * d->velocity.z);
@@ -260,6 +274,7 @@ extern "C" int modg_water_emit(const SmsWaterDrop* d)
 	info.mFlag.set(d->flags ? d->flags : 0x40);
 	const int before = w->mParticleCount;
 	s_emitTag        = d->tag;
+	s_emitPlayer     = who;
 	s_modEmitting    = true;
 	const int made   = w->emitRequest(info);
 	s_modEmitting    = false;
@@ -482,4 +497,20 @@ extern "C" void modg_play_sound_at(uint32_t id, const SmsVec3* at)
 		return;
 	JGeometry::TVec3<f32> p(at->x, at->y, at->z);
 	SMSGetMSound()->startSoundActor(id, &p, 0, nullptr, 0, 4);
+}
+
+extern "C" int modg_splash(const SmsVec3* at, float size)
+{
+	if (!at || !gpSplashManager)
+		return 0;
+	gpSplashManager->newSplash(JGeometry::TVec3<f32>(at->x, at->y, at->z), size);
+	return 1;
+}
+
+extern "C" int modg_clean_goop(const SmsVec3* at, float radius)
+{
+	if (!at || !gpPollution || radius <= 0.0f)
+		return 0;
+	gpPollution->clean(at->x, at->y, at->z, radius);
+	return 1;
 }

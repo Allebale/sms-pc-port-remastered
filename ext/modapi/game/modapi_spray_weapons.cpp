@@ -2396,8 +2396,12 @@ bool weaponRequest(const TWaterEmitInfo& asked, int* made)
 	return true;
 }
 
+bool PortWaterModEmitting(); // modapi_world.cpp: a mod's own drops being made (water->emit)
+
 bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 {
+	if (PortWaterModEmitting())
+		return false; // a mod's own drops: made as asked
 	if (weaponRequest(asked, made))
 		return true;
 	return !s_firing && PortWaterEmitRequest(asked, made); // a mod's (any): it may cancel a player's stream

@@ -2015,6 +2015,13 @@ extern "C" void port_coop_drop_made(int slot)
 		s_dropOwner[slot] = s_active && s_p2.mario && gpMarioOriginal == s_p2.mario ? 1 : 0;
 }
 
+// a drop made for a player whatever the game runs as (a mod's, api->water->emit)
+extern "C" void port_coop_drop_set_owner(int slot, int player)
+{
+	if (slot >= 0 && slot < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[slot] = s_active && player == 1 ? 1 : 0;
+}
+
 extern "C" void port_coop_drop_moved(int to, int from)
 {
 	if (to >= 0 && to < TModelWaterManager::SLOT_NUM && from >= 0 && from < TModelWaterManager::SLOT_NUM)
