@@ -26,8 +26,11 @@
 #include <Player/Mario.hpp>
 #include <Player/ModelWaterManager.hpp>
 #include <Player/NozzleBase.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <Player/SplashManager.hpp>
 #include <Map/PollutionManager.hpp>
+#include <MoveBG/MapObjManager.hpp>
 #include <Player/WaterGun.hpp>
 #include <Strategic/HitActor.hpp>
 #include <Strategic/LiveActor.hpp>
@@ -35,6 +38,7 @@
 #include <System/Particles.hpp>
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 int PortPlayers();                   // modapi_game.cpp: 2 while co-op's player 2 plays
@@ -43,6 +47,9 @@ extern "C" int port_cheat_infinite_fludd;
 extern "C" void port_coop_drop_made(int slot); // ext/coop: whose drop it is (co-op's own)
 extern "C" void port_coop_drop_moved(int to, int from);
 extern "C" void port_coop_drop_set_owner(int slot, int player);
+extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
+f32 PortSprayWeaponFarScale(TLiveManager* manager);  // modapi_spray_weapons.cpp (the old weapons' long range)
+void PortSprayActorPosed(TLiveActor* a);             // ...an enemy bursting
 
 namespace {
 
@@ -539,5 +546,174 @@ extern "C" int modg_clean_goop(const SmsVec3* at, float radius)
 	if (!at || !gpPollution || radius <= 0.0f)
 		return 0;
 	gpPollution->clean(at->x, at->y, at->z, radius);
+	return 1;
+}
+
+// ------------------------------------------------------------------ actors' models scaled (actor->set_model_scale)
+
+namespace {
+struct Scaled {
+	TLiveActor* actor;
+	f32 scale;
+};
+const int kMostScaled = 16;
+Scaled s_scaled[kMostScaled];
+int s_scaledCount; // in use, the slots below it
+} // namespace
+
+// An actor's model scaled about its middle (its joints' middle), all of it alike, and its skin's
+// matrices made again: as it is posed this tick
+void PortActorModelScale(TLiveActor* a, f32 sc)
+{
+	J3DModel* md = a && a->mMActor ? a->mMActor->getModel() : 0;
+	J3DModelData* data = md ? md->getModelData() : 0;
+	const int n = data ? data->getJointNum() : 0;
+	if (n <= 0)
+		return;
+	f32 cx = 0.0f, cy = 0.0f, cz = 0.0f;
+	for (int j = 0; j < n; j++) {
+		MtxPtr m = md->getAnmMtx(j);
+		cx += m[0][3], cy += m[1][3], cz += m[2][3];
+	}
+	cx /= (f32)n, cy /= (f32)n, cz /= (f32)n;
+	Mtx toOrigin, scale, back, about, tmp;
+	MTXTrans(toOrigin, -cx, -cy, -cz);
+	MTXScale(scale, sc, sc, sc);
+	MTXTrans(back, cx, cy, cz);
+	MTXConcat(scale, toOrigin, tmp);
+	MTXConcat(back, tmp, about);
+	for (int j = 0; j < n; j++) {
+		Mtx out;
+		MTXConcat(about, md->getAnmMtx(j), out);
+		md->setAnmMtx(j, out);
+	}
+	if (data->getWEvlpMtxNum() > 0)
+		md->calcWeightEnvelopeMtx();
+}
+
+// Every live actor's model, posed for this tick (TLiveActor::perform, patch
+// zzzzzzzzzz-live-actor-posed): a mod's scale on it. Nothing to do with none asked for.
+extern "C" void port_live_actor_posed(TLiveActor* a)
+{
+	PortSprayActorPosed(a);
+	if (s_scaledCount <= 0 || !a)
+		return;
+	for (int i = 0; i < s_scaledCount; i++)
+		if (s_scaled[i].actor == a) {
+			if (a->checkLiveFlag(LIVE_FLAG_DEAD) && !a->mMActor) // gone
+				s_scaled[i].actor = 0;
+			else
+				PortActorModelScale(a, s_scaled[i].scale);
+			return;
+		}
+}
+
+extern "C" int modg_actor_set_model_scale(SmsObject o, float scale)
+{
+	TLiveActor* a = liveActor(o);
+	if (!a)
+		return 0;
+	const bool none = scale > 0.999f && scale < 1.001f;
+	int freeSlot = -1;
+	for (int i = 0; i < kMostScaled; i++) {
+		if (s_scaled[i].actor == a) {
+			if (none)
+				s_scaled[i].actor = 0;
+			else
+				s_scaled[i].scale = scale;
+			return 1;
+		}
+		if (freeSlot < 0 && !s_scaled[i].actor)
+			freeSlot = i;
+	}
+	if (none)
+		return 1;
+	if (freeSlot < 0)
+		freeSlot = 0; // (the oldest asked makes way)
+	s_scaled[freeSlot].actor = a;
+	s_scaled[freeSlot].scale = scale > 0.001f ? scale : 0.001f;
+	if (freeSlot + 1 > s_scaledCount)
+		s_scaledCount = freeSlot + 1;
+	return 1;
+}
+
+// a stage's actors are gone with it (modapi_game.cpp's stage setup)
+void PortWorldStageSetup()
+{
+	memset(s_scaled, 0, sizeof s_scaled);
+	s_scaledCount = 0;
+}
+
+// ------------------------------------------------------------------ game->wall_at, ->set_view_distance
+
+extern "C" int modg_wall_at(const SmsVec3* at, float radius, SmsVec3* normal)
+{
+	if (!at || !gpMap)
+		return 0;
+	TBGWallCheckRecord wall(at->x, at->y, at->z, radius, 1,
+	                        TBGWallCheckRecord::DONT_MOVE_XZ | TBGWallCheckRecord::IGNORE_WATER_THROUGH);
+	if (!gpMap->isTouchedWallsAndMoveXZ(&wall) || !wall.mResultWalls[0])
+		return 0;
+	const JGeometry::TVec3<f32>& n = wall.mResultWalls[0]->getNormal();
+	const f32 nl = sqrtf(n.x * n.x + n.z * n.z);
+	if (nl < 1e-3f)
+		return 0;
+	if (normal)
+		setVec(normal, n.x / nl, 0.0f, n.z / nl);
+	return 1;
+}
+
+namespace {
+f32 s_viewScale = 1.0f; // game->set_view_distance
+bool s_waterFar;        // the water manager's drop distances set for it
+} // namespace
+
+extern "C" int modg_set_view_distance(float scale)
+{
+	const f32 k = scale > 1.0f ? (scale < 20.0f ? scale : 20.0f) : 1.0f;
+	s_viewScale = k;
+	return 1;
+}
+
+// How far a live manager's actors are seen and moved, times their own (livemanager.cpp): the
+// furthest asked for; map objects as ever
+f32 PortViewDistanceScale(TLiveManager* manager)
+{
+	const f32 old = PortSprayWeaponFarScale(manager);
+	if (s_viewScale <= 1.0f || dynamic_cast<TMapObjBaseManager*>(manager))
+		return old;
+	return s_viewScale > old ? s_viewScale : old;
+}
+
+// each tick: the water drops kept as far (modapi_game.cpp's after movement)
+void PortWorldTick()
+{
+	if (gpModelWaterManager && (s_viewScale > 1.0f || s_waterFar)) {
+		gpModelWaterManager->unk5E08 = 5000.0f * s_viewScale;
+		gpModelWaterManager->unk5E0C = 6000.0f * s_viewScale;
+		s_waterFar                   = s_viewScale > 1.0f;
+	}
+}
+
+// ------------------------------------------------------------------ audio->play_clip
+
+extern "C" int modg_play_clip(const int16_t* pcm, int frames, int rate, float volume)
+{
+	if (!pcm || frames <= 0 || rate <= 0 || frames > rate * 30)
+		return 0;
+	// copied (the mod's memory may go): four of the port's own, each the latest asked for in turn
+	static short* s_copies[4];
+	static int s_sizes[4];
+	static int s_next;
+	const int i = s_next++ % 4;
+	if (s_sizes[i] < frames) {
+		free(s_copies[i]);
+		s_copies[i] = (short*)malloc((size_t)frames * sizeof(short));
+		s_sizes[i]  = s_copies[i] ? frames : 0;
+	}
+	if (!s_copies[i])
+		return 0;
+	memcpy(s_copies[i], pcm, (size_t)frames * sizeof(short));
+	port_clip_play(s_copies[i], frames, rate, volume > 0.0f ? volume : 0.0f);
 	return 1;
 }

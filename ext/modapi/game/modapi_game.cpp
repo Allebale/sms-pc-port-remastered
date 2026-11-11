@@ -85,6 +85,9 @@ extern "C" int modg_players(void) { return PortPlayers(); }
 extern "C" int port_coop_view_rect(int view, float* r);
 extern "C" int modg_player_view(int player, float* r) { return port_coop_view_rect(player, r); }
 
+void PortWorldTick();       // modapi_world.cpp: each tick (the water drops kept as far as asked)
+void PortWorldStageSetup(); // ...a new stage (its actors' model scales gone)
+
 namespace {
 
 bool s_stageReady; // between a stage's setup and leaving it
@@ -175,11 +178,13 @@ void afterMovement()
 	ev.tick             = s_tick++;
 	ev.ticks_per_second = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
 	ev.dt               = 1.0f / (float)ev.ticks_per_second;
+	PortWorldTick();
 	modh_dispatch(SMS_EV_TICK, &ev, sizeof ev);
 }
 
 void stageSetup()
 {
+	PortWorldStageSetup();
 	s_stageReady  = true;
 	s_tick        = 0;
 	s_started     = false;
@@ -1612,11 +1617,23 @@ extern "C" int modg_player_get(SmsPlayer* out)
 			s.sunglasses = m->mCap->isModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES) ? 1 : 0;
 			s.helmet     = m->mCap->isModelActive(TMarioCap::E_CAP_MODEL_HELMET) ? 1 : 0;
 		}
+		s.gravity        = m->mJumpParams.mGravity.get();
+		s.intended_yaw   = (float)m->mIntendedYaw * (360.0f / 65536.0f);
+		s.intended_speed = m->mIntendedMag / 32.0f > 1.0f ? 1.0f : m->mIntendedMag / 32.0f;
 	}
 	const uint32_t n = out->size && out->size < sizeof s ? out->size : (uint32_t)sizeof s;
 	memcpy(out, &s, n);
 	out->size = n;
 	return s.valid;
+}
+
+extern "C" int modg_player_set_fall_start(float y)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	m->unk104 = y; // (where the game counts his fall from: a landing below it stuns)
+	return 1;
 }
 
 extern "C" int modg_player_set_position(const SmsVec3* pos)

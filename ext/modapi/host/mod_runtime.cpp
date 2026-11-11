@@ -1061,7 +1061,7 @@ const SmsGameApi s_game = {
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
-	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop,
+	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop, modg_wall_at, modg_set_view_distance,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -1096,7 +1096,7 @@ const SmsPlayerApi s_player = {
 	sizeof(SmsPlayerApi),          apiPlayerGet,          modg_player_set_position, modg_player_set_velocity,
 	modg_player_set_forward_speed, modg_player_set_health, modg_player_set_water,   modg_player_set_status,
 	modg_player_set_nozzle,        modg_player_set_fludd,  modg_player_set_outfit,   modg_player_set_yaw,
-	apiPlayerSetAim,               apiPlayerSetHiddenParts,
+	apiPlayerSetAim,               apiPlayerSetHiddenParts, modg_player_set_fall_start,
 };
 
 // This frame's camera, read once a frame for the projections.
@@ -1149,7 +1149,7 @@ int apiWorldToCanvas(const SmsVec3* p, float* x, float* y, float* depth)
 
 const SmsCameraApi s_camera = {sizeof(SmsCameraApi), apiCameraGet, apiWorldToCanvas};
 
-const SmsAudioApi s_audio = {sizeof(SmsAudioApi), modg_play_system_sound, modg_play_sound_at};
+const SmsAudioApi s_audio = {sizeof(SmsAudioApi), modg_play_system_sound, modg_play_sound_at, modg_play_clip};
 
 const char* apiNativeBuild(void)
 {
@@ -1282,7 +1282,7 @@ const SmsWaterApi s_water = {sizeof(SmsWaterApi), modg_water_nozzle_drop, modg_w
 
 const SmsActorApi s_actor = {sizeof(SmsActorApi), modg_actor_velocity, modg_actor_set_velocity, modg_actor_flags,
                              modg_actor_set_flags, modg_actor_defeat, modg_actor_near, modg_actor_hit_size,
-                             modg_actor_push, modg_actor_send, modg_actor_wall_defeat};
+                             modg_actor_push, modg_actor_send, modg_actor_wall_defeat, modg_actor_set_model_scale};
 
 // ------------------------------------------------------------------ the API: multiplayer
 

@@ -1,4 +1,4 @@
-Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon_stats' far_scale): enemies and characters are drawn, move and are animated further away than the game's own distance, so a weapon can hit them there (enemies: TLiveManager::clipActorsAux; characters: TNPCManager::clipEnemies, TBaseNPC::perform, which stops them moving out of sight beyond it, and calcAnmOff_, which stops some animations, an angry Pianta's, beyond its own distance). Map objects keep theirs. Without such a mod, nothing changes.
+Reason: a mod's long range (api->game->set_view_distance, ext/modapi/game/modapi_world.cpp): enemies and characters are drawn, move and are animated further away than the game's own distance, so a weapon can hit them there (enemies: TLiveManager::clipActorsAux; characters: TNPCManager::clipEnemies, TBaseNPC::perform, which stops them moving out of sight beyond it, and calcAnmOff_, which stops some animations, an angry Pianta's, beyond its own distance). Map objects keep theirs. Without such a mod, nothing changes.
 
 --- a/src/Strategic/livemanager.cpp
 +++ b/src/Strategic/livemanager.cpp
@@ -7,7 +7,7 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
  #include <Camera/CubeManagerBase.hpp>
  #include <sms_modhook.h>
 +#ifdef TARGET_PC
-+f32 PortSprayWeaponFarScale(TLiveManager* manager); // FLUDD weapons' long range (ext/modapi/game/modapi_spray_weapons.cpp)
++f32 PortViewDistanceScale(TLiveManager* manager); // a mod's long range (ext/modapi/game/modapi_world.cpp: game->set_view_distance)
 +#endif
  
  TLiveManager::TLiveManager(const char* name)
@@ -17,9 +17,9 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
                                   float param_3)
  {
 +#ifdef TARGET_PC
-+	// a weapons mod's long range: enemies and characters drawn and moving further away, so they
++	// a mod's long range: enemies and characters drawn and moving further away, so they
 +	// can be hit there (1 without one)
-+	param_2 *= PortSprayWeaponFarScale(this);
++	param_2 *= PortViewDistanceScale(this);
 +#endif
  	SetViewFrustumClipCheckPerspective(gpCamera->getFovy(),
  	                                   gpCamera->getAspect(),
@@ -30,7 +30,7 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
  #include <NPC/NpcBase.hpp>
 +#ifdef TARGET_PC
 +class TLiveManager;
-+f32 PortSprayWeaponFarScale(TLiveManager* manager); // FLUDD weapons' long range (ext/modapi/game/modapi_spray_weapons.cpp)
++f32 PortViewDistanceScale(TLiveManager* manager); // a mod's long range (ext/modapi/game/modapi_world.cpp: game->set_view_distance)
 +#endif
  #include <System/MarDirector.hpp>
  #include <M3DUtil/SDLModel.hpp>
@@ -40,7 +40,7 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
  			// camera distance and CLBSquared after it.
  			f32 dist = getAnmOffDist_();
 +#ifdef TARGET_PC
-+			dist *= PortSprayWeaponFarScale(mManager); // a weapons mod's long range: animated further away
++			dist *= PortViewDistanceScale(mManager); // a mod's long range: animated further away
 +#endif
  			if (MsSquaredDist(mPosition, gpCamera->unk124) > CLBSquared(dist) && !bVar6
  			    && mSpine->getTime() > 2) {
@@ -50,7 +50,7 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
  		if (manager != nullptr)
  			farClip = *manager->unk58;
 +#ifdef TARGET_PC
-+		farClip *= PortSprayWeaponFarScale(manager); // a weapons mod's long range: they keep moving further away
++		farClip *= PortViewDistanceScale(manager); // a mod's long range: they keep moving further away
 +#endif
  
  		const JGeometry::TVec3<f32>& at  = gpCamera->unk148;
@@ -61,7 +61,7 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
  #include <NPC/NpcManager.hpp>
 +#ifdef TARGET_PC
 +class TLiveManager;
-+f32 PortSprayWeaponFarScale(TLiveManager* manager); // FLUDD weapons' long range (ext/modapi/game/modapi_spray_weapons.cpp)
++f32 PortViewDistanceScale(TLiveManager* manager); // a mod's long range (ext/modapi/game/modapi_world.cpp: game->set_view_distance)
 +#endif
  #include <stdio.h>
  #include <JSystem/JKernel/JKRFileLoader.hpp>
@@ -71,7 +71,7 @@ Reason: the FLUDD weapons' long range (a weapons mod, api->held_fludd set_weapon
  	f32 nearClip = getUnk54();
  	f32 farClip  = *getUnk58();
 +#ifdef TARGET_PC
-+	farClip *= PortSprayWeaponFarScale(this); // a weapons mod's long range (1 without one)
++	farClip *= PortViewDistanceScale(this); // a mod's long range (1 without one)
 +#endif
  
  	if (gpMarDirector->getCurrentMap() == 1) {

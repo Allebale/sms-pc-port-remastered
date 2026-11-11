@@ -2635,9 +2635,12 @@ extern "C" int modg_spray_weapon_stats(int weapon, int has, float every, float p
 // Every live actor's model, posed for this frame (TLiveActor::perform, patch
 // zzzzzzzzzz-live-actor-posed): one bursting (shatter) swells and pops, all of it scaled alike about
 // its middle, and its skin's matrices made again. Nothing to do without one going.
-extern "C" void port_live_actor_posed(TLiveActor* a)
+void PortActorModelScale(TLiveActor* a, f32 scale); // modapi_world.cpp: its model scaled about its middle
+
+// (port_live_actor_posed, modapi_world.cpp) an enemy bursting (shatter) in its model's pose this tick
+void PortSprayActorPosed(TLiveActor* a)
 {
-	if (s_shatterCount <= 0 || !a || !a->mMActor)
+	if (s_shatterCount <= 0 || !a)
 		return;
 	const Shatter* sh = 0;
 	for (int i = 0; i < s_shatterCount; i++)
@@ -2645,36 +2648,10 @@ extern "C" void port_live_actor_posed(TLiveActor* a)
 			sh = &s_shatters[i];
 	if (!sh)
 		return;
-	J3DModel* md = a->mMActor->getModel();
-	J3DModelData* data = md ? md->getModelData() : 0;
-	if (!data)
-		return;
 	const f32 t = (s_time - sh->start) * 30.0f; // 30ths of a second since
 	if (t < 0.0f || t > 150.0f)
 		return;
 	// swells (1 to 1.35 in 4 30ths of a second), then pops to nothing in 2 more, and stays so
 	const f32 k = t < 4.0f ? 1.0f + 0.35f * t / 4.0f : t < 6.0f ? 1.35f * (1.0f - (t - 4.0f) / 2.0f) : 0.0f;
-	const f32 sc = k > 0.001f ? k : 0.001f;
-	const int n = data->getJointNum();
-	if (n <= 0)
-		return;
-	f32 cx = 0.0f, cy = 0.0f, cz = 0.0f; // about its middle: its joints' middle
-	for (int j = 0; j < n; j++) {
-		MtxPtr m = md->getAnmMtx(j);
-		cx += m[0][3], cy += m[1][3], cz += m[2][3];
-	}
-	cx /= (f32)n, cy /= (f32)n, cz /= (f32)n;
-	Mtx toOrigin, scale, back, about, tmp;
-	MTXTrans(toOrigin, -cx, -cy, -cz);
-	MTXScale(scale, sc, sc, sc);
-	MTXTrans(back, cx, cy, cz);
-	MTXConcat(scale, toOrigin, tmp);
-	MTXConcat(back, tmp, about);
-	for (int j = 0; j < n; j++) {
-		Mtx out;
-		MTXConcat(about, md->getAnmMtx(j), out);
-		md->setAnmMtx(j, out);
-	}
-	if (data->getWEvlpMtxNum() > 0)
-		md->calcWeightEnvelopeMtx();
+	PortActorModelScale(a, k > 0.001f ? k : 0.001f);
 }
