@@ -504,12 +504,26 @@ extern "C" int modg_ray(const SmsVec3* a, const SmsVec3* b, SmsVec3* hit)
 	return 0;
 }
 
+// The game's sounds keep the place they are played at and read it as long as they play: each a
+// place of its own here, kept (a sound asked for again near where it plays keeps its place)
 extern "C" void modg_play_sound_at(uint32_t id, const SmsVec3* at)
 {
 	if (!at || !SMSGetMSound())
 		return;
-	JGeometry::TVec3<f32> p(at->x, at->y, at->z);
-	SMSGetMSound()->startSoundActorWithInfo(id, &p, nullptr, 1.0f, 0, 0, nullptr, 0, 4); // (held ones go on as asked each tick)
+	static JGeometry::TVec3<f32> s_places[32];
+	static u32 s_ids[32];
+	static int s_next;
+	int slot = -1;
+	for (int i = 0; i < 32 && slot < 0; i++) {
+		const f32 dx = s_places[i].x - at->x, dy = s_places[i].y - at->y, dz = s_places[i].z - at->z;
+		if (s_ids[i] == id && dx * dx + dy * dy + dz * dz < 200.0f * 200.0f)
+			slot = i;
+	}
+	if (slot < 0)
+		slot = s_next++ % 32;
+	s_ids[slot] = id;
+	s_places[slot].set(at->x, at->y, at->z);
+	SMSGetMSound()->startSoundActorWithInfo(id, &s_places[slot], nullptr, 1.0f, 0, 0, nullptr, 0, 4); // (held ones go on as asked each tick)
 }
 
 extern "C" int modg_splash(const SmsVec3* at, float size)
