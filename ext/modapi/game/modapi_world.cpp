@@ -11,6 +11,7 @@
 #include <Enemy/Enemy.hpp>
 #include <Enemy/SmallEnemy.hpp>
 #include <Enemy/WalkerEnemy.hpp>
+#include <Enemy/HamuKuri.hpp>
 #include <Enemy/AmiNoko.hpp>
 #include <Enemy/BossTelesaObj.hpp>
 #include <Enemy/Telesa.hpp>
@@ -82,6 +83,7 @@ void dropOut(int slot, SmsWaterDrop* out)
 	d.player    = s_dropPlayer[slot];
 	const int at = w->mParticleFlagSOA[slot] & 0xf; // 1 flying, 2 on the ground, 3 on a wall
 	d.landed    = at == 2 ? 1 : at == 3 ? 2 : 0;
+	d.clean     = w->mWaterParticleTypes[w->mParticleTypeSOA[slot]]->mCleanSize.get() * 32.0f; // as the game's splash
 	const uint32_t n = out->size && out->size < sizeof d ? out->size : (uint32_t)sizeof d;
 	d.size = n;
 	memcpy(out, &d, n);
@@ -300,6 +302,7 @@ extern "C" int modg_water_set(int slot, const SmsWaterDrop* in)
 	w->mParticlePositionSOA[slot].set(in->position.x, in->position.y, in->position.z);
 	w->mParticleVelocitySOA[slot].set(in->velocity.x, in->velocity.y, in->velocity.z);
 	w->mParticleLifetimeSOA[slot] = (f32)in->alive;
+	s_dropTag[slot]               = in->tag;
 	if (in->drop_size > 0.0f)
 		w->mParticleSizeSOA[slot] = in->drop_size;
 	return 1;
@@ -438,14 +441,24 @@ extern "C" int modg_actor_push(SmsObject o, float dx, float dz)
 	if (!gpMap->isInArea(e->mPosition.x + dx, e->mPosition.z + dz))
 		return 0; // the stage's edge
 	// moved with the map's own wall test, as actors are: kept out of walls, sliding along them;
-	// steps, slopes and kerbs do not stop it
-	const f32 r      = radiusOf(e) > 30.0f ? radiusOf(e) : 30.0f;
-	const f32 height = heightOf(e) > 60.0f ? heightOf(e) * 0.5f : 30.0f;
+	// steps, slopes and kerbs do not stop it (its body's size, not its reach)
+	const f32 r      = e->mBodyRadius > 30.0f ? e->mBodyRadius : 30.0f;
+	const f32 height = e->mHeadHeight > 60.0f ? e->mHeadHeight * 0.5f : 30.0f;
 	TBGWallCheckRecord wall(e->mPosition.x + dx, e->mPosition.y + height, e->mPosition.z + dz, r, 1, 0);
 	const bool touched = gpMap->isTouchedWallsAndMoveXZ(&wall);
 	e->mPosition.x     = wall.mCenter.x;
 	e->mPosition.z     = wall.mCenter.z;
 	return touched ? 2 : 1;
+}
+
+extern "C" int modg_actor_wall_defeat(SmsObject o)
+{
+	THamuKuri* stu = o ? dynamic_cast<THamuKuri*>(ref(o)) : 0; // (Strollin' Stus and their kind)
+	if (!stu || stu->checkLiveFlag(LIVE_FLAG_DEAD) || stu->getSpine()->getCurrentNerve() == &TNerveHamuKuriWallDie::theNerve())
+		return 0;
+	stu->getSpine()->reset();
+	stu->getSpine()->setNext(&TNerveHamuKuriWallDie::theNerve());
+	return 1;
 }
 
 extern "C" int modg_actor_send(SmsObject o, SmsObject sender, uint32_t message)
@@ -496,7 +509,7 @@ extern "C" void modg_play_sound_at(uint32_t id, const SmsVec3* at)
 	if (!at || !SMSGetMSound())
 		return;
 	JGeometry::TVec3<f32> p(at->x, at->y, at->z);
-	SMSGetMSound()->startSoundActor(id, &p, 0, nullptr, 0, 4);
+	SMSGetMSound()->startSoundActorWithInfo(id, &p, nullptr, 1.0f, 0, 0, nullptr, 0, 4); // (held ones go on as asked each tick)
 }
 
 extern "C" int modg_splash(const SmsVec3* at, float size)

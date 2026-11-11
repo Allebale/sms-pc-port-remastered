@@ -1282,7 +1282,7 @@ const SmsWaterApi s_water = {sizeof(SmsWaterApi), modg_water_nozzle_drop, modg_w
 
 const SmsActorApi s_actor = {sizeof(SmsActorApi), modg_actor_velocity, modg_actor_set_velocity, modg_actor_flags,
                              modg_actor_set_flags, modg_actor_defeat, modg_actor_near, modg_actor_hit_size,
-                             modg_actor_push, modg_actor_send};
+                             modg_actor_push, modg_actor_send, modg_actor_wall_defeat};
 
 // ------------------------------------------------------------------ the API: multiplayer
 

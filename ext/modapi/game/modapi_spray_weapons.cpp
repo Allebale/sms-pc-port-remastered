@@ -2485,6 +2485,15 @@ int PortBazookaBalloonPieces(float* out, int most)
 
 bool PortSprayWeaponChosen() { return s_weapon != NORMAL; }
 
+// A mod's shot (held_fludd->kick): the shown weapon's pump as from its own shot (its kick:
+// the bazooka's 1, the rifle's 0.7, the submachine gun's 0.3)
+void PortSprayWeaponKicked(f32 amount)
+{
+	SprayFor f(PortPlayerNow());
+	s_lastShotAt     = s_time;
+	s_lastShotWeapon = amount >= 0.95f ? BAZOOKA : amount < 0.5f ? SMG : RIFLE;
+}
+
 // How far through its pump the gun is after the last shot (0 to 1), or -1 past it: the held gun's
 // animation (modapi_held_fludd.cpp), a pump only as a weapon fires.
 f32 PortSprayWeaponShotPhase()

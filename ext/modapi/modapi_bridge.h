@@ -125,6 +125,7 @@ int modg_actor_near(const SmsVec3* p, float radius, uint32_t kinds, SmsObject* o
 int modg_actor_hit_size(SmsObject o, float* radius, float* height);
 int modg_actor_push(SmsObject o, float dx, float dz);
 int modg_actor_send(SmsObject o, SmsObject sender, uint32_t message);
+int modg_actor_wall_defeat(SmsObject o);
 void modg_held_fludd_kick(float amount);
 int modg_held_fludd_aim(SmsVec3* eye, SmsVec3* forward);
 void* modg_native(const char* name);

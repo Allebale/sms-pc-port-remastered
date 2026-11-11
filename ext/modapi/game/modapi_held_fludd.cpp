@@ -1036,10 +1036,13 @@ void PortFluddHeldKick(f32 amount)
 }
 
 // held_fludd->kick and ->aim (the mod API: the player selected, or the one the game runs as)
+void PortSprayWeaponKicked(f32 amount); // modapi_spray_weapons.cpp: the shown weapon's pump
+
 extern "C" void modg_held_fludd_kick(float amount)
 {
 	For f(PortPlayerNow());
 	PortFluddHeldKick(amount);
+	PortSprayWeaponKicked(amount);
 }
 
 extern "C" int modg_held_fludd_aim(SmsVec3* eye, SmsVec3* forward)
