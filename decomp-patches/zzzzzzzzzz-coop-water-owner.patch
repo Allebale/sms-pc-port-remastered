@@ -1,4 +1,4 @@
-Reason: split-screen co-op (ext/coop): each FLUDD drop remembers which player sprayed it, and the hit of a drop of player 2's is taken with player 2's globals in force, so an enemy it reaches is pushed away from player 2 (the game's own push reads Mario's place and facing). Alone, nothing changes.
+Reason: each FLUDD drop remembers which player sprayed it and a mod's number for it (ext/modapi/game/modapi_world.cpp, api->water), and (split-screen co-op, ext/coop) the hit of a drop of player 2's is taken with player 2's globals in force, so an enemy it reaches is pushed away from player 2 (the game's own push reads Mario's place and facing). Alone and without mods, nothing changes.
 
 --- a/src/Player/ModelWaterManager.cpp
 +++ b/src/Player/ModelWaterManager.cpp
@@ -8,8 +8,8 @@ Reason: split-screen co-op (ext/coop): each FLUDD drop remembers which player sp
  // and may stop one (port_ext.h: ext/multiplayer passes them to the other games)
 +// Split-screen co-op (ext/coop/game/coop.cpp): whose each drop is, and a drop's hit taken with
 +// the game's player globals (Mario's place and facing) its player's, so the push is from them
-+extern "C" void port_coop_drop_made(int slot);
-+extern "C" void port_coop_drop_moved(int to, int from);
++extern "C" void port_water_drop_made(int slot);
++extern "C" void port_water_drop_moved(int to, int from);
 +extern "C" int port_coop_drop_hit_begin(THitActor* drop);
 +extern "C" void port_coop_drop_hit_end(int began);
 +
@@ -29,7 +29,7 @@ Reason: split-screen co-op (ext/coop): each FLUDD drop remembers which player sp
  void TModelWaterManager::makeEmit(const TWaterEmitInfo& param_1)
  {
 +#ifdef TARGET_PC
-+	port_coop_drop_made(mParticleCount); // (co-op: the player spraying it)
++	port_water_drop_made(mParticleCount); // (whose, and a mod's number for it)
 +#endif
  	mParticleLifetimeSOA[mParticleCount] = param_1.mAlive.get();
  	mParticleFlagSOA[mParticleCount]     = param_1.mFlag.get() | 1;
@@ -39,7 +39,7 @@ Reason: split-screen co-op (ext/coop): each FLUDD drop remembers which player sp
  			mParticleFlagSOA[nextFreeSlot]     = mParticleFlagSOA[i];
  			mParticleAttackSOA[nextFreeSlot]   = mParticleAttackSOA[i];
 +#ifdef TARGET_PC
-+			port_coop_drop_moved(nextFreeSlot, i);
++			port_water_drop_moved(nextFreeSlot, i);
 +#endif
  			mParticlePositionSOA[nextFreeSlot] = mParticlePositionSOA[i];
  			mParticleVelocitySOA[nextFreeSlot] = mParticleVelocitySOA[i];

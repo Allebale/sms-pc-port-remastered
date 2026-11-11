@@ -1060,7 +1060,7 @@ const SmsGameApi s_game = {
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
-	modg_object_set_color, modg_object_set_tint,
+	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -1148,7 +1148,7 @@ int apiWorldToCanvas(const SmsVec3* p, float* x, float* y, float* depth)
 
 const SmsCameraApi s_camera = {sizeof(SmsCameraApi), apiCameraGet, apiWorldToCanvas};
 
-const SmsAudioApi s_audio = {sizeof(SmsAudioApi), modg_play_system_sound};
+const SmsAudioApi s_audio = {sizeof(SmsAudioApi), modg_play_system_sound, modg_play_sound_at};
 
 const char* apiNativeBuild(void)
 {
@@ -1271,7 +1271,17 @@ int apiPlayerView(int player, float* x, float* y, float* w, float* h)
 
 const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
                                      apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState,
-                                     apiHeldFluddTakeMouse, apiPlayers, apiPlayerNow, apiSelectPlayer, apiPlayerView};
+                                     apiHeldFluddTakeMouse, apiPlayers, apiPlayerNow, apiSelectPlayer, apiPlayerView,
+                                     modg_held_fludd_kick, modg_held_fludd_aim};
+
+// ------------------------------------------------------------------ the API: water drops, actors (1.8)
+
+const SmsWaterApi s_water = {sizeof(SmsWaterApi), modg_water_nozzle_drop, modg_water_emit, modg_water_count,
+                             modg_water_get, modg_water_set, modg_water_drop_of, modg_water_use};
+
+const SmsActorApi s_actor = {sizeof(SmsActorApi), modg_actor_velocity, modg_actor_set_velocity, modg_actor_flags,
+                             modg_actor_set_flags, modg_actor_defeat, modg_actor_near, modg_actor_hit_size,
+                             modg_actor_push, modg_actor_send};
 
 // ------------------------------------------------------------------ the API: multiplayer
 
@@ -1815,7 +1825,7 @@ const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
-	&s_heldFludd,
+	&s_heldFludd,       &s_water,          &s_actor,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)

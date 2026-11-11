@@ -103,6 +103,28 @@ int modg_world_has_cutscene(const char* name);
 int modg_world_play_cutscene(const char* name, const SmsVec3* focus, int frames);
 int modg_world_cutscene_playing(void);
 void modg_play_system_sound(uint32_t id);
+// API 1.8: general tools (modapi_world.cpp)
+void modg_play_sound_at(uint32_t id, const SmsVec3* at);
+int modg_particle(uint32_t id, const SmsVec3* at);
+int modg_ray(const SmsVec3* a, const SmsVec3* b, SmsVec3* hit);
+int modg_water_nozzle_drop(int player, SmsWaterDrop* out);
+int modg_water_emit(const SmsWaterDrop* drop);
+int modg_water_count(void);
+int modg_water_get(int slot, SmsWaterDrop* out);
+int modg_water_set(int slot, const SmsWaterDrop* in);
+int modg_water_drop_of(SmsObject sender);
+int modg_water_use(int player, int drops);
+int modg_actor_velocity(SmsObject o, SmsVec3* out);
+int modg_actor_set_velocity(SmsObject o, const SmsVec3* v);
+uint32_t modg_actor_flags(SmsObject o);
+int modg_actor_set_flags(SmsObject o, uint32_t on, uint32_t off);
+int modg_actor_defeat(SmsObject o);
+int modg_actor_near(const SmsVec3* p, float radius, uint32_t kinds, SmsObject* out, int most);
+int modg_actor_hit_size(SmsObject o, float* radius, float* height);
+int modg_actor_push(SmsObject o, float dx, float dz);
+int modg_actor_send(SmsObject o, SmsObject sender, uint32_t message);
+void modg_held_fludd_kick(float amount);
+int modg_held_fludd_aim(SmsVec3* eye, SmsVec3* forward);
 void* modg_native(const char* name);
 
 #ifdef __cplusplus

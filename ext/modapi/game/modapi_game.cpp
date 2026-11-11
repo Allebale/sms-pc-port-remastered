@@ -892,8 +892,16 @@ int objectHitNote(void* object, void* sender, unsigned)
 	return 0; // only noted: modapi's objectHit sends SMS_EV_OBJECT_HIT
 }
 
-void objectHitDone(void* object, void* sender, unsigned message, int)
+void objectHitDone(void* object, void* sender, unsigned message, int result)
 {
+	if (object && modh_wants(SMS_EV_OBJECT_HIT_DONE)) {
+		SmsEvHitDone done;
+		done.object  = obj((THitActor*)object);
+		done.sender  = sender ? obj((THitActor*)sender) : 0;
+		done.message = message;
+		done.result  = result;
+		modh_dispatch(SMS_EV_OBJECT_HIT_DONE, &done, sizeof done);
+	}
 	if (!object || !modh_wants(SMS_EV_ACTOR_DAMAGE))
 		return;
 	THitActor* h   = (THitActor*)object;

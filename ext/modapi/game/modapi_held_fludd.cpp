@@ -21,6 +21,7 @@
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
+#include "../modapi_bridge.h"
 #include "sms_gx/gx_pc.h"
 #include "port_menu_draw.h"
 
@@ -1032,4 +1033,24 @@ void PortFluddHeldKick(f32 amount)
 {
 	if (amount > s_kick)
 		s_kick = amount > 1.0f ? 1.0f : amount;
+}
+
+// held_fludd->kick and ->aim (the mod API: the player selected, or the one the game runs as)
+extern "C" void modg_held_fludd_kick(float amount)
+{
+	For f(PortPlayerNow());
+	PortFluddHeldKick(amount);
+}
+
+extern "C" int modg_held_fludd_aim(SmsVec3* eye, SmsVec3* forward)
+{
+	For f(PortPlayerNow());
+	JGeometry::TVec3<f32> e, w;
+	if (!PortFluddHeldView(&e, &w))
+		return 0;
+	if (eye)
+		eye->x = e.x, eye->y = e.y, eye->z = e.z;
+	if (forward)
+		forward->x = w.x, forward->y = w.y, forward->z = w.z;
+	return 1;
 }

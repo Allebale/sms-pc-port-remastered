@@ -2376,7 +2376,9 @@ extern "C" int modg_spray_weapon_set(int weapon, int flags)
 // The bazooka with the rocket jump keys held (SMS_SPRAY_MUTE_MARIO): cleaning no goop
 bool PortSprayBazookaNoClean() { return s_weapon == BAZOOKA && s_muteMario; }
 
-bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
+bool PortWaterEmitRequest(const TWaterEmitInfo& asked, int* made); // modapi_world.cpp: SMS_EV_WATER_EMIT
+
+bool weaponRequest(const TWaterEmitInfo& asked, int* made)
 {
 	if (PortGoopEmit(asked, made))
 		return true; // FLUDD's stream, as goop
@@ -2392,6 +2394,13 @@ bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
 		return false;
 	*made = 0;
 	return true;
+}
+
+bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made)
+{
+	if (weaponRequest(asked, made))
+		return true;
+	return !s_firing && PortWaterEmitRequest(asked, made); // a mod's (any): it may cancel a player's stream
 }
 
 // The spray weapon chosen now (the bazooka's own model, modapi_held_fludd.cpp).
