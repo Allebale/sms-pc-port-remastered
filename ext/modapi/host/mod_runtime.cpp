@@ -1259,7 +1259,8 @@ const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAG
 // ------------------------------------------------------------------ the API: water drops, actors (1.8)
 
 const SmsWaterApi s_water = {sizeof(SmsWaterApi), modg_water_nozzle_drop, modg_water_emit, modg_water_count,
-                             modg_water_get, modg_water_set, modg_water_drop_of, modg_water_use};
+                             modg_water_get, modg_water_set, modg_water_drop_of, modg_water_use,
+                             modg_water_seen_at};
 
 const SmsActorApi s_actor = {sizeof(SmsActorApi), modg_actor_velocity, modg_actor_set_velocity, modg_actor_flags,
                              modg_actor_set_flags, modg_actor_defeat, modg_actor_near, modg_actor_hit_size,

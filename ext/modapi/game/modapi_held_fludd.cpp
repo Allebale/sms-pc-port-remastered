@@ -843,11 +843,12 @@ int PortViewOwner(MtxPtr view)
 // player's stream comes out of the FLUDD held in their own view, in front of their face; anyone
 // else sees FLUDD on their back, so the drops near the held one are seen moved that way, less the
 // further they are from it (none 400 away).
-void PortWaterSeenAt(f32* at, MtxPtr view)
+namespace {
+bool seenAt(f32* at, int owner)
 {
 	if (PortPlayers() != 2)
-		return;
-	const int owner = PortViewOwner(view);
+		return false;
+	bool moved = false;
 	for (int p = 0; p < 2; p++) {
 		const Held& h = s_held[p];
 		if (p == owner || !h.haveHeldEmit || !h.haveBackEmit)
@@ -864,7 +865,27 @@ void PortWaterSeenAt(f32* at, MtxPtr view)
 		at[0] += (h.backEmit.x - hx) * w;
 		at[1] += (h.backEmit.y - hy) * w;
 		at[2] += (h.backEmit.z - hz) * w;
+		moved = true;
 	}
+	return moved;
+}
+} // namespace
+
+void PortWaterSeenAt(f32* at, MtxPtr view)
+{
+	seenAt(at, PortViewOwner(view));
+}
+
+// water->seen_at: in a view told by its number (the view's own player)
+extern "C" int modg_water_seen_at(SmsVec3* at, int view)
+{
+	if (!at || view < 0 || view > 1)
+		return 0;
+	f32 p[3] = {at->x, at->y, at->z};
+	if (!seenAt(p, view))
+		return 0;
+	at->x = p[0], at->y = p[1], at->z = p[2];
+	return 1;
 }
 
 // A shot's recoil for the held gun (held_fludd->kick): 0 to 1.

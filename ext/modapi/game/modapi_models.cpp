@@ -693,12 +693,39 @@ extern "C" int modg_held_fludd_dress(int player, SmsTexture texture)
 	return 1;
 }
 
+// Which view a view matrix is (co-op: the views are drawn after both are worked out, so the
+// game's globals cannot tell it): the one whose matrix of this frame has its eye
+namespace {
+int viewOf(MtxPtr view)
+{
+	if (!view || PortPlayers() != 2)
+		return 0;
+	f32 best = 1e30f;
+	int v    = 0;
+	for (int k = 0; k < 2; k++) {
+		if (!s_haveView[k])
+			continue;
+		f32 d2 = 0.0f;
+		for (int c = 0; c < 3; c++) {
+			const MtxPtr a = view;
+			const Mtx& b   = s_viewOf[k];
+			const f32 ea   = -(a[0][c] * a[0][3] + a[1][c] * a[1][3] + a[2][c] * a[2][3]);
+			const f32 eb   = -(b[0][c] * b[0][3] + b[1][c] * b[1][3] + b[2][c] * b[2][3]);
+			d2 += (ea - eb) * (ea - eb);
+		}
+		if (d2 < best)
+			best = d2, v = k;
+	}
+	return v;
+}
+} // namespace
+
 // Patch zzzzzzzzz-mod-drops: as the water drops are drawn (TModelWaterManager::perform's draw):
 // the mods' models drawn here when FLUDD was not drawn this frame to enter them (first person with
 // its other nozzles, FLUDD hidden with Mario's body)
 void PortWaterDrawn(MtxPtr view)
 {
-	const int v        = PortViewer() ? 1 : 0;
+	const int v        = viewOf(view);
 	const bool entered = s_entered[v];
 	s_entered[v]       = false;
 	if (view && !entered && (s_drawCount || s_triCount || s_batchCount || modh_wants(SMS_EV_DRAW_SCENE))) {

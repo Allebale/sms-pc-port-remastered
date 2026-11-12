@@ -108,6 +108,7 @@ int modg_water_get(int slot, SmsWaterDrop* out);
 int modg_water_set(int slot, const SmsWaterDrop* in);
 int modg_water_drop_of(SmsObject sender);
 int modg_water_use(int player, int drops);
+int modg_water_seen_at(SmsVec3* at, int view);
 int modg_actor_velocity(SmsObject o, SmsVec3* out);
 int modg_actor_set_velocity(SmsObject o, const SmsVec3* v);
 uint32_t modg_actor_flags(SmsObject o);
