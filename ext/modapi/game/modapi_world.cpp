@@ -241,7 +241,7 @@ bool PortWaterEmitRequest(const TWaterEmitInfo& asked, int* made)
 		if (!g || gpMarioOriginal != m) // (its own FLUDD: the game runs as that player as it sprays)
 			continue;
 		const f32 dx = at.x - g->mEmitPos[0].x, dy = at.y - g->mEmitPos[0].y, dz = at.z - g->mEmitPos[0].z;
-		if (dx * dx + dy * dy + dz * dz > 40.0f * 40.0f)
+		if (dx * dx + dy * dy + dz * dz > 120.0f * 120.0f) // (its nozzle's stream, each of its streams)
 			continue;
 		SmsEvWaterEmit ev;
 		memset(&ev, 0, sizeof ev);
