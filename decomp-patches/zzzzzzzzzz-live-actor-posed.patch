@@ -1,4 +1,4 @@
-Reason: a mod's weapons (ext/modapi/game/modapi_spray_weapons.cpp): an enemy shot in the air swells and pops, its model scaled as it is posed each frame (port_live_actor_posed, which does nothing unless one is). Nothing else changes.
+Reason: a mod's model sizes (api->actor->set_model_scale, ext/modapi/game/modapi_world.cpp): an actor's model scaled as it is posed each frame (port_live_actor_posed, which does nothing unless a mod asked for one: an enemy swelling and popping, say). Nothing else changes.
 
 --- a/src/Strategic/liveactor.cpp
 +++ b/src/Strategic/liveactor.cpp
@@ -7,8 +7,8 @@ Reason: a mod's weapons (ext/modapi/game/modapi_spray_weapons.cpp): an enemy sho
  }
  
 +#ifdef TARGET_PC
-+// port: a live actor's model posed for this frame, its joints for a mod to move (an enemy bursting:
-+// ext/modapi/game/modapi_spray_weapons.cpp)
++// port: a live actor's model posed for this frame, a mod's size for it (api->actor->set_model_scale,
++// ext/modapi/game/modapi_world.cpp)
 +extern "C" void port_live_actor_posed(TLiveActor* actor);
 +#endif
 +

@@ -448,7 +448,7 @@ void dressOwn(TMario* m, bool luigi)
 }
 
 // Player 2's FLUDD (body and nozzles) with textures of its own: they share Mario's, so a look given
-// to one FLUDD's textures (the goop weapons' dressing, port_coop_own_fludd_textures) showed on
+// to one FLUDD's textures (a mod's dress, held_fludd->dress, port_coop_own_fludd_textures) showed on
 // both. Made when first asked for, once for each player 2.
 TMario* s_ownFluddFor;
 // a model's textures its own: its data's, its material packets' (each keeps the one it was made
@@ -2066,7 +2066,7 @@ extern "C" int port_coop_view_rect(int view, float* r)
 	viewRect(view ? 1 : 0, r);
 	return 1;
 }
-// Player 2's FLUDD given textures of its own (the goop weapons, to dress each FLUDD apart): 1 done
+// Player 2's FLUDD given textures of its own (a mod dressing each FLUDD apart): 1 done
 extern "C" int port_coop_own_fludd_textures(void* mario)
 {
 	TMario* m = (TMario*)mario;

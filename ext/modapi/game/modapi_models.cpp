@@ -2,7 +2,7 @@
 // with the scene in each view, in the world or on a player's FLUDD (held in view, or on his back:
 // its frames, worked out as FLUDD is placed, modapi_held_fludd.cpp). Asked for each tick; drawn as
 // a packet of the scene's opaque draw buffer, entered as FLUDD is (TWaterGun::perform's CUE_ENTRY,
-// the patch zzzzzzzz-held-fludd-weapon-model). Nothing is drawn or left out till a mod asks.
+// the patch zzzzzzzz-held-fludd-mod-models). Nothing is drawn or left out till a mod asks.
 #include "../modapi_bridge.h"
 
 #include <JSystem/J3D/J3DGraphBase/J3DDrawBuffer.hpp>
@@ -24,7 +24,6 @@ int PortViewer();                  // modapi_game.cpp: the view being worked out
 int PortPlayerIndex(const void* m);
 int PortPlayerNow();
 bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
-bool PortPacketEntered(J3DPacket* p); // modapi_weapon_models.cpp
 TMario* PortPlayerMario(int i);
 int PortPlayers();
 extern "C" int port_coop_own_fludd_textures(void* mario); // ext/coop: player 2's FLUDD's own textures
@@ -33,6 +32,22 @@ extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const un
     __attribute__((weak));
 
 namespace {
+
+// a packet already in a draw buffer's list this frame (each player's FLUDD enters; the models once a
+// view). The buffer's list starts its first word (J3DDrawBuffer's layout).
+struct DrawBufferPeek {
+	J3DPacket** buffer;
+};
+bool entered(J3DDrawBuffer* b, J3DPacket* p)
+{
+	J3DPacket** list = reinterpret_cast<DrawBufferPeek*>(b)->buffer;
+	int n            = 0;
+	for (J3DPacket* q = list ? list[0] : 0; q && n < 100000; q = q->getNextPacket(), n++)
+		if (q == p)
+			return true;
+	return false;
+}
+bool PortPacketEntered(J3DPacket* p) { return j3dSys.getDrawBuffer(0) && entered(j3dSys.getDrawBuffer(0), p); }
 
 const int kMeshes = 64, kDraws = 96, kTris = 24000;
 
@@ -53,6 +68,7 @@ int s_drawCount;
 SmsCorner s_tris[kTris];
 int s_triCount;
 int s_hide[2]; // each player's FLUDD left out (1 << SMS_FRAME_HELD, 1 << SMS_FRAME_BACK)
+int s_gameHide[2]; // ...and the game's own (held in view, he is dead), each frame
 
 // each player's frames in each view, as last placed
 struct Frame {
@@ -285,17 +301,17 @@ void PortModelsFrame(int player, int view, int frame, MtxPtr world)
 
 // each tick, before the mods' (modapi_world.cpp): what they ask for is drawn this tick only
 void PortModelsDressTick();
+void PortHeldFluddPoseTick(); // modapi_held_fludd.cpp
 void PortModelsTick()
 {
 	PortModelsDressTick();
+	PortHeldFluddPoseTick();
 	s_drawCount = 0;
 	s_triCount  = 0;
 	s_texCount = s_batchCount = 0;
 	s_hide[0] = s_hide[1] = 0;
 }
 
-// Whether a mod draws or hides anything of this player's now (the old weapon models left out then)
-bool PortModelsActive(int player) { return player >= 0 && player < 2 && s_hide[player] != 0; }
 
 // As a player's FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): the models entered for
 // this view (once); true when this FLUDD is left out (a mod's model in its place)
@@ -311,10 +327,17 @@ bool PortModelsEntry(TWaterGun* gun)
 	if (!gun || !gun->mMario)
 		return false;
 	const int who = PortPlayerIndex(gun->mMario);
-	if (who < 0 || who > 1 || !s_hide[who])
+	if (who < 0 || who > 1 || !(s_hide[who] | s_gameHide[who]))
 		return false;
 	const bool heldHere = PortFluddHeld(gun->mMario) && who == view;
-	return (s_hide[who] & (1 << (heldHere ? SMS_FRAME_HELD : SMS_FRAME_BACK))) != 0;
+	return ((s_hide[who] | s_gameHide[who]) & (1 << (heldHere ? SMS_FRAME_HELD : SMS_FRAME_BACK))) != 0;
+}
+
+// FLUDD left out by the game itself this frame (modapi_held_fludd.cpp: held in view, he is dead)
+void PortModelsHideFluddNow(int player, int frames)
+{
+	if (player >= 0 && player < 2)
+		s_gameHide[player] = frames;
 }
 
 extern "C" SmsMesh modg_models_create(SmsMod* mod, const SmsCorner* c, int count)
@@ -649,10 +672,9 @@ extern "C" int modg_held_fludd_dress(int player, SmsTexture texture)
 	return 1;
 }
 
-// Patch zzzzzzzzz-goop-weapons: as the water drops are drawn (TModelWaterManager::perform's draw):
+// Patch zzzzzzzzz-mod-drops: as the water drops are drawn (TModelWaterManager::perform's draw):
 // the mods' models drawn here when FLUDD was not drawn this frame to enter them (first person with
 // its other nozzles, FLUDD hidden with Mario's body)
-void PortGoopWaterDraw(MtxPtr view); // modapi_goop_weapons.cpp (the old goop weapons')
 void PortWaterDrawn(MtxPtr view)
 {
 	const int v        = PortViewer() ? 1 : 0;
@@ -663,5 +685,4 @@ void PortWaterDrawn(MtxPtr view)
 		s_packets[v].view = v;
 		s_packets[v].draw();
 	}
-	PortGoopWaterDraw(view);
 }

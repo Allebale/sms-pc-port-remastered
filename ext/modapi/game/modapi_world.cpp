@@ -48,8 +48,6 @@ extern "C" void port_coop_drop_made(int slot); // ext/coop: whose drop it is (co
 extern "C" void port_coop_drop_moved(int to, int from);
 extern "C" void port_coop_drop_set_owner(int slot, int player);
 extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
-f32 PortSprayWeaponFarScale(TLiveManager* manager);  // modapi_spray_weapons.cpp (the old weapons' long range)
-void PortSprayActorPosed(TLiveActor* a);             // ...an enemy bursting
 
 namespace {
 
@@ -189,17 +187,11 @@ extern "C" void port_water_drop_moved(int to, int from)
 	port_coop_drop_moved(to, from);
 }
 
-// Patch zzzzzzzzz-goop-weapons: a drop left out of the water's drawing (a mod draws it itself)
-bool PortGoopDropHidden(int i);
-bool PortWaterDropUnseen(int i)
-{
-	return (i >= 0 && i < TModelWaterManager::SLOT_NUM && s_dropUnseen[i]) || PortGoopDropHidden(i);
-}
+// Patch zzzzzzzzz-mod-drops: a drop left out of the water's drawing (a mod draws it itself)
+bool PortWaterDropUnseen(int i) { return i >= 0 && i < TModelWaterManager::SLOT_NUM && s_dropUnseen[i]; }
 
 // ...a drop touching the ground (its first touch) or a wall: told to mods (SMS_EV_WATER_LAND); true
 // ends it there
-bool PortGoopDropLands(int i, const TBGCheckData* ground);
-bool PortGoopDropWall(int i, const TBGCheckData* wall);
 bool waterLands(int i, const TBGCheckData* at, bool wall)
 {
 	TModelWaterManager* w = gpModelWaterManager;
@@ -222,15 +214,12 @@ bool waterLands(int i, const TBGCheckData* at, bool wall)
 	e.drop_size = w->mParticleSizeSOA[i];
 	return modh_dispatch(SMS_EV_WATER_LAND, &e, sizeof e) != 0;
 }
-bool PortWaterDropLands(int i, const TBGCheckData* ground) { return waterLands(i, ground, false) || PortGoopDropLands(i, ground); }
-bool PortWaterDropWall(int i, const TBGCheckData* wall) { return waterLands(i, wall, true) || PortGoopDropWall(i, wall); }
-
-// A mod's own drops being made now (water->emit): nothing else takes them
-bool PortWaterModEmitting() { return s_modEmitting; }
+bool PortWaterDropLands(int i, const TBGCheckData* ground) { return waterLands(i, ground, false); }
+bool PortWaterDropWall(int i, const TBGCheckData* wall) { return waterLands(i, wall, true); }
 
 // Every request for water drops (TModelWaterManager::emitRequest): a player's FLUDD's stream is
 // told to mods first (SMS_EV_WATER_EMIT), who may cancel it. True: cancelled, *made drops made.
-bool PortWaterEmitRequest(const TWaterEmitInfo& asked, int* made)
+bool PortWaterRequest(const TWaterEmitInfo& asked, int* made)
 {
 	if (s_modEmitting || s_tagging || !modh_wants(SMS_EV_WATER_EMIT))
 		return false;
@@ -651,7 +640,6 @@ void PortActorModelScale(TLiveActor* a, f32 sc)
 // zzzzzzzzzz-live-actor-posed): a mod's scale on it. Nothing to do with none asked for.
 extern "C" void port_live_actor_posed(TLiveActor* a)
 {
-	PortSprayActorPosed(a);
 	if (s_scaledCount <= 0 || !a)
 		return;
 	for (int i = 0; i < s_scaledCount; i++)
@@ -691,6 +679,13 @@ extern "C" int modg_actor_set_model_scale(SmsObject o, float scale)
 	if (freeSlot + 1 > s_scaledCount)
 		s_scaledCount = freeSlot + 1;
 	return 1;
+}
+
+// a mod unloading: every model its own size again (mod_runtime.cpp)
+extern "C" void modg_actor_unscale_all(void)
+{
+	memset(s_scaled, 0, sizeof s_scaled);
+	s_scaledCount = 0;
 }
 
 // a stage's actors are gone with it (modapi_game.cpp's stage setup)
@@ -739,10 +734,9 @@ extern "C" int modg_set_view_distance(float scale)
 // furthest asked for; map objects as ever
 f32 PortViewDistanceScale(TLiveManager* manager)
 {
-	const f32 old = PortSprayWeaponFarScale(manager);
 	if (s_viewScale <= 1.0f || dynamic_cast<TMapObjBaseManager*>(manager))
-		return old;
-	return s_viewScale > old ? s_viewScale : old;
+		return 1.0f;
+	return s_viewScale;
 }
 
 // each tick: the water drops kept as far (modapi_game.cpp's after movement)

@@ -71,26 +71,16 @@ int modg_player_set_yaw(float degrees); // API 1.5 beta 8
 int modg_player_set_aim(int on, float yaw, float pitch); // API 1.5 beta 8
 int modg_player_set_hidden_parts(uint32_t parts);        // API 1.5 beta 8
 int modg_held_fludd_set(int on, float right, float down, float forward, float scale, float aim); // first person
-int modg_spray_weapon_set(int weapon, int flags); // first person
-int modg_spray_rocket_jump(float strength);
-int modg_spray_view_distance(int weapon, float distance);
-int modg_spray_far_scale(float scale);
-int modg_spray_shadow_damage(float scale);
-int modg_spray_goop_area(float scale);
-int modg_spray_key_launch(int on);
-int modg_spray_feet_forward(float k);
-int modg_spray_key_lift(float up);
+int modg_held_fludd_pose(int player, int flags, float pump, float hold); // API 1.8
 int modg_held_fludd_view(int on);
 int modg_held_fludd_zoom(float fovy, int flags);
-int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags);
+int modg_held_fludd_state(int* firstPerson, int* held, float* zoomFovy, int* zoomFlags);
 // split-screen co-op: the players (ext/modapi/game/modapi_game.cpp)
 int modg_players(void);       // 2 while a second player plays, else 1
 int modg_player_now(void);    // the player the game runs as now (or the one selected): 0 or 1
 void modg_select_player(int player); // api->player and held_fludd act on this player (-1: the one the game runs as)
 int modg_player_set_hidden_parts_of(int player, uint32_t parts);
 int modg_player_view(int player, float* rect); // its part of the screen (x, y, w, h, 0 to 1): 1 while split
-int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water, float hit,
-                           float burst, float lift, float dropSize);
 
 int modg_camera_get(SmsCamera* out);
 
@@ -129,6 +119,7 @@ int modg_actor_push(SmsObject o, float dx, float dz);
 int modg_actor_send(SmsObject o, SmsObject sender, uint32_t message);
 int modg_actor_wall_defeat(SmsObject o);
 int modg_actor_set_model_scale(SmsObject o, float scale);
+void modg_actor_unscale_all(void);
 int modg_actor_kind(SmsObject o);
 SmsObject modg_actor_owner(SmsObject o);
 int modg_actor_parts(SmsObject o, SmsObject* out, int most);

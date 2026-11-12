@@ -43,7 +43,7 @@ struct Held {
 	bool on;
 	f32 right, down, forward, scale, aim;
 	Vec target;           // where this frame's water goes
-	Vec viewEye, viewWay; // the view this frame (the rifle's aim)
+	Vec viewEye, viewWay; // the view this frame (held_fludd->aim)
 	f32 kick;             // a shot's recoil, 0 to 1, settling
 	f32 bobPhase, bobSize, bobLift; // the sway as he walks, runs and jumps
 	bool placed;          // placed this frame (target good)
@@ -53,14 +53,15 @@ struct Held {
 	bool haveInView;
 	int flipAfter;        // frames left to keep it still after a flip
 	int view;             // the first-person camera is on (set_view)
-	f32 zoomFovy;         // the rifle's zoom: the field of view to narrow the camera to (0 none)
+	f32 zoomFovy;         // a mod's zoom: the field of view to narrow the camera to (0 none)
 	int zoomFlags;        // SMS_ZOOM_FIRST_PERSON, SMS_ZOOM_SCOPE
-	JGeometry::TVec3<f32> backMuzzle, backMario; // on his back: where a shot starts, and where he was then
 	int packFwd, packUp;  // the pack's axes (onBack)
 	f32 packFwdSign, packUpSign;
 	int packFwdO, packUpO; // ...seen by the other player while FLUDD is held (co-op: posed on the chest,
 	f32 packFwdSignO, packUpSignO; // other axes than on his back: learnt apart)
-	bool haveBackMuzzle;
+	int poseFlags;        // a mod's pose for it this tick (held_fludd->pose): SMS_POSE_*,
+	f32 posePump;         // its pump (0 to 1, -1 none) and how far ahead held in view (0 the set's)
+	f32 poseHold;
 	Mtx heldEmit;         // held in view: its emit matrix and scale (the roller coaster's rocket)
 	f32 heldEmitScale;
 	bool haveHeldEmit;
@@ -104,13 +105,10 @@ struct For {
 #define s_view H().view
 #define s_zoomFovy H().zoomFovy
 #define s_zoomFlags H().zoomFlags
-#define s_backMuzzle H().backMuzzle
-#define s_backMario H().backMario
 #define s_packFwd H().packFwd
 #define s_packUp H().packUp
 #define s_packFwdSign H().packFwdSign
 #define s_packUpSign H().packUpSign
-#define s_haveBackMuzzle H().haveBackMuzzle
 #define s_heldEmit H().heldEmit
 #define s_heldEmitScale H().heldEmitScale
 #define s_haveHeldEmit H().haveHeldEmit
@@ -176,8 +174,6 @@ bool flipping(TMario* m)
 
 } // namespace
 
-void PortWeaponModelHide(); // modapi_weapon_models.cpp
-
 // api->held_fludd->set (mod_runtime.cpp)
 extern "C" int modg_held_fludd_set(int on, float right, float down, float forward, float scale, float aim)
 {
@@ -189,13 +185,12 @@ extern "C" int modg_held_fludd_set(int on, float right, float down, float forwar
 	s_aim     = aim > 50.0f ? aim : 1200.0f;
 	if (!s_on) { // (its turn in the view is kept: shown again with the nozzle away, it is held so)
 		s_placed = s_haveLast = false;
-		PortWeaponModelHide();
 	}
 	s_flipAfter = 0;
 	return PortPlayerMario(PortPlayerNow()) ? 1 : 0;
 }
 
-// Shared by a first-person mod and a weapons mod (api->held_fludd's set_view, set_zoom, get_state):
+// Shared by a first-person mod and a mod with a gun (api->held_fludd's set_view, set_zoom, get_state):
 // what each sets, for the other to read (each player's). Nothing in the game acts on it.
 
 extern "C" int modg_held_fludd_view(int on)
@@ -272,10 +267,10 @@ void drawUnderHud(JDrama::TGraphics* graphics)
 // The mods' place in the game's last list, after the characters and before the HUD
 // (MarDirectorInitECT.cpp): their under-HUD draws there each frame.
 namespace {
-class TScopeObj : public JDrama::TViewObj {
+class TUnderHudObj : public JDrama::TViewObj {
 public:
-	TScopeObj()
-	    : JDrama::TViewObj("<FLUDD weapons scope>")
+	TUnderHudObj()
+	    : JDrama::TViewObj("<mods under the HUD>")
 	{
 	}
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics)
@@ -284,41 +279,43 @@ public:
 			drawUnderHud(graphics);
 	}
 };
-TScopeObj s_scopeObj;
+TUnderHudObj s_underHudObj;
 } // namespace
 
-JDrama::TViewObj* PortHeldFluddScopeObj() { return &s_scopeObj; }
+JDrama::TViewObj* PortUnderHudObj() { return &s_underHudObj; }
 
-int PortSprayWeaponId();
 bool PortFluddHeld(TMario* mario);
-extern "C" int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags)
+extern "C" int modg_held_fludd_state(int* firstPerson, int* held, float* zoomFovy, int* zoomFlags)
 {
 	*firstPerson = s_view;
 	*held        = PortPlayerMario(PortPlayerNow()) && PortFluddHeld(PortPlayerMario(PortPlayerNow()));
-	*weapon      = PortSprayWeaponId();
 	*zoomFovy    = s_zoomFovy;
 	*zoomFlags   = s_zoomFlags;
 	return 1;
 }
 
-// Is this Mario's FLUDD held in view now (drawn even with his models left out)?
-bool PortSprayWeaponChosen(); // modapi_spray_weapons.cpp
-int PortSprayWeaponId();
-void PortWeaponModelShow(int which, MtxPtr viewModel); // modapi_weapon_models.cpp
-void PortWeaponModelHide();
-void PortWeaponModelKeep();
-void PortWeaponModelNoFludd(bool on);
-float PortWeaponModelMuzzle(int which);
+// api->held_fludd->pose (API 1.8): a mod's pose for a player's FLUDD this tick (asked each tick)
+extern "C" int modg_held_fludd_pose(int player, int flags, float pump, float hold)
+{
+	if (player < 0 || player > 1)
+		return 0;
+	Held& h     = s_held[player];
+	h.poseFlags = flags & (SMS_POSE_STILL | SMS_POSE_NOZZLE_OUT);
+	h.posePump  = pump >= 0.0f ? (pump < 1.0f ? pump : 1.0f) : -1.0f;
+	h.poseHold  = hold > 0.0f ? hold : 0.0f;
+	return 1;
+}
 
-f32 PortSprayWeaponShotPhase();
-f32 PortSprayWeaponViewDistance(); // modapi_spray_weapons.cpp
-bool PortSprayWeaponOnBack(TMario* m, bool* model); // modapi_spray_weapons.cpp
-bool PortSprayWeaponTrigger();
-const float* PortWeaponPackMuzzle(int which); // modapi_weapon_models.cpp
-void PortWeaponModelShowSecond(int which, MtxPtr viewModel);
+// each tick (modapi_models.cpp's): the poses asked for again
+void PortHeldFluddPoseTick()
+{
+	for (int p = 0; p < 2; p++)
+		s_held[p].poseFlags = 0, s_held[p].posePump = -1.0f, s_held[p].poseHold = 0.0f;
+}
+void PortModelsHideFluddNow(int player, int frames); // modapi_models.cpp
 
 // Co-op's player 2 (Luigi, ext/coop): while the game runs as player 2, gpMarioOriginal is Luigi.
-// The First Person mod, FLUDD held in view and the weapons are player 1's only.
+// The First Person mod and FLUDD held in view are each player's own.
 extern "C" THitActor* port_coop_player2_actor(void);
 bool PortIsPlayer2(TMario* mario)
 {
@@ -338,19 +335,11 @@ bool PortFluddHeld(TMario* mario)
 	return g->mCurrentNozzle == TWaterGun::Spray;
 }
 
-// FLUDD on his back while a spray weapon fires from it (third person, SMS_SPRAY_THIRD_PERSON):
-// the nozzle kept out while R is held and a moment after (the game then puts it away as ever),
-// with a pump as each shot goes. With the weapons' models on (SMS_SPRAY_THIRD_PERSON_MODEL), all
-// of FLUDD drawn as the weapon's pack instead (modapi_weapon_models.cpp), on his back as FLUDD is.
-// Where its water starts (the shots, modapi_spray_weapons.cpp): the nozzle, or the pack's muzzle.
-// (its place, where he was then: Held's backMuzzle and backMario)
 // Which of FLUDD's own axes (its base turn on his back) point forward and up, and their signs:
-// learnt while he stands up straight, then kept, so the pack lies down with him in a dive or a
-// belly slide as FLUDD does (Held's packFwd, packUp).
-// `other`: co-op, the other player's view of a player whose FLUDD is held in their own: their
-// weapon seen as in third person, its pack on their back with the gun on it (FLUDD's pose, its
-// water's start and the shots' left as their own view has them)
-// FLUDD on his back's frame (a mod's models' SMS_FRAME_BACK, the weapons' pack): from its
+// learnt while he stands up straight, then kept, so a model on his back lies down with him in a
+// dive or a belly slide as FLUDD does (Held's packFwd, packUp). `other`: co-op, the other player's
+// view of a player whose FLUDD is held in their own (posed on their chest there).
+// FLUDD on his back's frame (a mod's models' SMS_FRAME_BACK): from its
 // nozzle_center, its turn on his back (its axes nearest the way he faces and up), so it leans and
 // sways with him as FLUDD does. `other`: co-op, the other player's view of a player whose FLUDD is
 // held in their own (posed on the chest there: upright, the way his body faces). Its axes (right,
@@ -441,112 +430,29 @@ bool backAxes(TWaterGun* g, bool other, Vec* rightOut, Vec* fwdOut, Vec* upOut, 
 	return true;
 }
 
-void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
+// FLUDD on his back posed by a mod (held_fludd->pose): its nozzle kept out (SMS_POSE_NOZZLE_OUT, a
+// mod's gun firing from it in third person), still but for a pump at the pose's point of one
+// (posePump), not put away or pumped as the game would.
+void onBack(TWaterGun* g)
 {
 	For f(PortPlayerIndex(g->mMario));
-	bool model = false;
-	const int weapon  = PortSprayWeaponId();
-	const int which   = weapon == 2 ? 0 : weapon == 3 ? 1 : weapon == 4 ? 2 : -1; // the rifle, bazooka, submachine gun
-	if (other) {
-		if (!g->mFluddModel || which < 0)
-			return;
-		model = true;
-	} else {
-		s_haveBackMuzzle = false;
-		if (!g->mFluddModel || !PortSprayWeaponOnBack(g->mMario, &model))
-			return;
-	}
-	model             = model && which >= 0;
-	const f32 phase   = PortSprayWeaponShotPhase();
-	J3DModel* fm      = g->mFluddModel->getModel();
-	if (!other && (model || phase >= 0.0f || PortSprayWeaponTrigger())) {
-		g->unk1CEC = 0.0f;       // out
-		g->unk1CFA = g->unk1CF8; // and the game's own wait before it puts it away
-		g->mFluddModel->setBck(phase >= 0.0f && !model ? "wg_pump" : "wg_house");
-		if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
-			ctrl->setRate(0.0f);
-			ctrl->setFrame(phase >= 0.0f && !model ? phase * ctrl->getEnd() : 0.0f);
-		}
-		g->mFluddModel->calc();
-		if (MActor* nozzle = g->getCurrentNozzle()->getMActor()) {
-			nozzle->getModel()->setBaseTRMtx(fm->getAnmMtx(g->unk1CD8));
-			nozzle->getModel()->calc();
-		}
-		g->setEmitPt();
-	}
-	MtxPtr em = g->getEmitMtx(0);
-	s_backMario.set(g->mMario->mPosition.x, g->mMario->mPosition.y, g->mMario->mPosition.z);
-	if (!model) {
-		if (em && g->unk1CEC <= 0.0f) { // the nozzle's tip, while it is out
-			s_backMuzzle.set(em[0][3], em[1][3], em[2][3]);
-		} else { // put away: where it comes out from
-			MtxPtr nc = fm->getAnmMtx(g->unk1CD8);
-			s_backMuzzle.set(nc[0][3], nc[1][3], nc[2][3]);
-		}
-		s_haveBackMuzzle = true;
+	const f32 phase = H().posePump;
+	if (!g->mFluddModel || (!(H().poseFlags & SMS_POSE_NOZZLE_OUT) && phase < 0.0f))
 		return;
+	J3DModel* fm = g->mFluddModel->getModel();
+	g->unk1CEC   = 0.0f;       // out
+	g->unk1CFA   = g->unk1CF8; // and the game's own wait before it puts it away
+	g->mFluddModel->setBck(phase >= 0.0f ? "wg_pump" : "wg_house");
+	if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
+		ctrl->setRate(0.0f);
+		ctrl->setFrame(phase >= 0.0f ? phase * ctrl->getEnd() : 0.0f);
 	}
-	Vec right, fwd, up, face;
-	MtxPtr nc;
-	if (!backAxes(g, other, &right, &fwd, &up, &face, &nc))
-		return;
-	const Vec at = {nc[0][3], nc[1][3], nc[2][3]};
-	Mtx place, viewModel;
-	const f32 col[3][3] = {{right.x, fwd.x, up.x}, {right.y, fwd.y, up.y}, {right.z, fwd.z, up.z}};
-	const f32 o[3]      = {at.x, at.y, at.z};
-	for (int r = 0; r < 3; r++) {
-		for (int c = 0; c < 3; c++)
-			place[r][c] = col[r][c];
-		place[r][3] = o[r];
+	g->mFluddModel->calc();
+	if (MActor* nozzle = g->getCurrentNozzle()->getMActor()) {
+		nozzle->getModel()->setBaseTRMtx(fm->getAnmMtx(g->unk1CD8));
+		nozzle->getModel()->calc();
 	}
-	MTXConcat(graphics->getViewMtx(), place, viewModel);
-	PortWeaponModelShow(3 + which, viewModel); // all of FLUDD left out, the pack in its place
-	// its weapon on top, held level and pointing ahead whatever his body's lean as he walks or runs
-	// (lying in a dive: the way his head points), kicking back and up as it fires, turned about
-	// where it sits on the neck
-	const f32 py = 2.0f, pz = 21.0f; // that point, in the pack's units (make_pack.py)
-	const Vec pivot = {at.x + fwd.x * py + up.x * pz, at.y + fwd.y * py + up.y * pz, at.z + fwd.z * py + up.z * pz};
-	// level while he is up (walking, running, jumping); lying down (a belly slide, asleep) along
-	// him with the pack, as FLUDD's nozzle lies
-	Vec ahead = up, gUp = {-fwd.x, -fwd.y, -fwd.z}; // lying: along him, the way his head is, its top off his back
-	if (up.y > 0.6f) {
-		ahead = fwd;
-		ahead.y = 0.0f;
-		if (!unit(ahead))
-			ahead = face;
-		gUp.x = 0.0f, gUp.y = 1.0f, gUp.z = 0.0f;
-	}
-	Vec gRight = cross(ahead, gUp);
-	unit(gRight);
-	Mtx level;
-	const f32 gc[3][3] = {{gRight.x, ahead.x, gUp.x}, {gRight.y, ahead.y, gUp.y}, {gRight.z, ahead.z, gUp.z}};
-	const f32 pv[3]    = {pivot.x, pivot.y, pivot.z};
-	for (int r = 0; r < 3; r++) {
-		for (int c = 0; c < 3; c++)
-			level[r][c] = gc[r][c];
-		level[r][3] = pv[r] - (gc[r][1] * py + gc[r][2] * pz); // the pivot where it is on the pack
-	}
-	{
-		const f32 kick = phase >= 0.0f ? (1.0f - phase) * (1.0f - phase) : 0.0f;
-		const f32 back = kick * (which == 1 ? 9.0f : which == 0 ? 6.0f : 3.5f);
-		const f32 tilt = kick * (which == 1 ? 0.2f : which == 0 ? 0.25f : 0.12f);
-		const f32 c = cosf(tilt), s = sinf(tilt);
-		Mtx kicked, gunWorld, gunView;
-		MTXIdentity(kicked);
-		kicked[1][1] = c, kicked[1][2] = -s, kicked[2][1] = s, kicked[2][2] = c;
-		kicked[1][3] = py - (c * py - s * pz) - back;
-		kicked[2][3] = pz - (s * py + c * pz);
-		MTXConcat(level, kicked, gunWorld);
-		MTXConcat(graphics->getViewMtx(), gunWorld, gunView);
-		PortWeaponModelShowSecond(6 + which, gunView);
-	}
-	if (other)
-		return;
-	const float* mz = PortWeaponPackMuzzle(which); // the shots from its muzzle, held still
-	s_backMuzzle.set(level[0][0] * mz[0] + level[0][1] * mz[1] + level[0][2] * mz[2] + level[0][3],
-	                 level[1][0] * mz[0] + level[1][1] * mz[1] + level[1][2] * mz[2] + level[1][3],
-	                 level[2][0] * mz[0] + level[2][1] * mz[1] + level[2][2] * mz[2] + level[2][3]);
-	s_haveBackMuzzle = true;
+	g->setEmitPt();
 }
 
 // As FLUDD is calculated for the view (TWaterGun::perform): moved in front of it.
@@ -554,16 +460,7 @@ void onBack(TWaterGun* g, JDrama::TGraphics* graphics, bool other)
 // roller coaster's, TRocket::calcRootMatrix) sits on its nozzle there, not on his back's
 // (Held's heldEmit, heldEmitScale, haveHeldEmit, heldEmitGun)
 
-void PortWeaponModelView(MtxPtr view); // modapi_weapon_models.cpp
-// Mario climbing (a fence, a pole or bar, a rope or wire, hanging from a ledge or a ceiling): his
-// hands busy, the weapons hidden
-static bool climbing(const TMario* m)
-{
-	if (!m || (m->mStatus & MARIO_STATUS_TYPE_MASK) != MARIO_STATUS_TYPE_SPECIAL)
-		return false;
-	const u32 i = m->mStatus & 0x3F;
-	return i <= 0x1C || (i >= 0x28 && i <= 0x2F);
-}
+
 
 void placeFor(TWaterGun* g, JDrama::TGraphics* graphics);
 
@@ -606,23 +503,15 @@ void backFrames(TWaterGun* g, int who, bool other)
 	PortModelsFrame(who, view, 3, level);
 }
 
-void PortWeaponModelFor(int player); // modapi_weapon_models.cpp: the player whose weapon's model is meant
-void PortSprayFor(int player);       // modapi_spray_weapons.cpp: the player whose weapon is meant
 void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 {
 	const int who = g ? PortPlayerIndex(g->mMario) : PortPlayerNow();
 	For f(who);
-	PortWeaponModelFor(who);
-	PortSprayFor(who);
 	if (graphics)
 		PortModelsView(PortViewer() ? 1 : 0, graphics->getViewMtx());
 	if (g && g->mMario && PortPlayers() == 2 && who != PortViewer()) {
 		// co-op, the other player's view: their FLUDD on their back there (as the game poses it),
 		// held in their own view only; its water still starts where it is held (not set again)
-		if (graphics)
-			PortWeaponModelView(graphics->getViewMtx());
-		PortWeaponModelHide();
-		PortWeaponModelNoFludd(false);
 		const bool held = PortFluddHeld(g->mMario);
 		if (held && g->mFluddModel) {
 			J3DModel* model = g->mFluddModel->getModel();
@@ -638,13 +527,8 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 				h.haveBackEmit = true;
 			}
 		}
-		// their weapon on their back as its pack, as the other player sees them (alive, not climbing)
-		if (graphics && !g->mMario->checkFlag(MARIO_FLAG_GAME_OVER) && !(PortSprayWeaponChosen() && climbing(g->mMario)))
-			onBack(g, graphics, held);
 		PortModelsFrame(who, PortViewer() ? 1 : 0, 1, nullptr); // (held in their own view only)
 		backFrames(g, who, held);
-		PortWeaponModelFor(-1);
-		PortSprayFor(-1);
 		return;
 	}
 	if (g && g->mMario && !PortFluddHeld(g->mMario))
@@ -654,8 +538,6 @@ void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics)
 		backFrames(g, who, false);
 	else if (g)
 		PortModelsFrame(who, PortViewer() ? 1 : 0, 2, nullptr), PortModelsFrame(who, PortViewer() ? 1 : 0, 3, nullptr);
-	PortWeaponModelFor(-1);
-	PortSprayFor(-1);
 }
 
 void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
@@ -663,28 +545,20 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 	s_placed = false;
 	if (g && g != s_heldEmitGun)
 		s_haveHeldEmit = false; // another FLUDD (another stage): placed afresh
-	if (graphics)
-		PortWeaponModelView(graphics->getViewMtx()); // the frame's view (the bazooka's balloon)
-	PortWeaponModelHide(); // shown again below, held with the bazooka chosen
-	PortWeaponModelNoFludd(g && PortFluddHeld(g->mMario) && PortSprayWeaponId() >= 2 && PortSprayWeaponId() <= 4);
-	if (g && g->mMario && PortFluddHeld(g->mMario) && g->mMario->checkFlag(MARIO_FLAG_GAME_OVER)) {
-		PortWeaponModelNoFludd(true); // he is dead (or dying): FLUDD held in view and the weapon's model hidden
-		return;
-	}
-	if (g && g->mMario && PortSprayWeaponChosen() && climbing(g->mMario)) {
-		if (PortFluddHeld(g->mMario))
-			PortWeaponModelNoFludd(true); // climbing: the weapon held in view hidden (FLUDD with it)
-		return;                           // (and on his back FLUDD as itself, not the weapon's pack)
-	}
+	const bool dead = g && g->mMario && PortFluddHeld(g->mMario) && g->mMario->checkFlag(MARIO_FLAG_GAME_OVER);
+	if (g && g->mMario)
+		PortModelsHideFluddNow(PortPlayerIndex(g->mMario), dead ? 1 << SMS_FRAME_HELD : 0);
+	if (dead)
+		return; // he is dead (or dying): FLUDD held in view hidden
 	if (g && graphics && !PortFluddHeld(g->mMario))
-		onBack(g, graphics, false);
+		onBack(g);
 	if (!g || !graphics || !PortFluddHeld(g->mMario))
 		return;
 	// its nozzle kept out, as the gun: idle, the game puts it away after a moment (the "house"
 	// animation, unk1CEC from 0 out to 1 away), which would turn the whole of it round to face
 	// the view (the nozzle's way is what is turned to the aim). Held at 0 for the next frame:
 	// the idle step adds unk1CF4 to it, and with no delay left (unk1CFA) poses it there.
-	// Pumping, 0 itself: the pump's own animation then (the normal spray). With a spray weapon
+	// Pumping, 0 itself: the pump's own animation then (the normal spray). With a mod's still pose
 	// chosen its animation is set below, still but for a pump as it fires.
 	const u32 upper = (g->mMario->mUpperState & 0x8000) ? 0 : g->mMario->mUpperState;
 	g->unk1CFA      = 0;
@@ -694,18 +568,16 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 	J3DModel* model = g->mFluddModel->getModel();
 	MtxPtr base     = model->getBaseTRMtx();
 	if (s_haveLast && memcmp(base, s_lastBase, sizeof(Mtx)) == 0) {
-		s_placed = true; // not posed again this frame (Mario frozen): where it was, a weapon's model too
-		if (PortSprayWeaponChosen())
-			PortWeaponModelKeep();
+		s_placed = true; // not posed again this frame (Mario frozen): where it was
 		return;
 	}
 	// still, nozzle out (the put-away animation at its start), unless water comes out: the
-	// normal spray's pump as the game has it while it sprays; a weapon's one pump as it fires.
+	// normal spray's pump as the game has it while it sprays; a mod's one pump as its gun fires.
 	// (Otherwise the game may pump it along with Mario's arm: Super Mario Eclipse keeps him
 	// holding the pump.)
-	const bool weapon = PortSprayWeaponChosen();
-	const bool overridden = weapon || !g->isEmitting();
-	const f32 phase = weapon ? PortSprayWeaponShotPhase() : -1.0f;
+	const bool still      = (H().poseFlags & SMS_POSE_STILL) != 0; // a mod's gun (held_fludd->pose)
+	const bool overridden = still || !g->isEmitting();
+	const f32 phase       = still ? H().posePump : -1.0f;
 	if (overridden) { // the still pose first (the gun's turn is worked out from it)
 		g->mFluddModel->setBck("wg_house");
 		if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
@@ -723,8 +595,6 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 	}
 	MtxPtr em = g->getEmitMtx(0);
 	if (!em) {
-		if (PortSprayWeaponChosen())
-			PortWeaponModelKeep(); // not placed this frame: its model where it was
 		return;
 	}
 
@@ -737,8 +607,8 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 	eye          = along(eye, -v[0][3], R);
 	eye          = along(eye, -v[1][3], U);
 	eye          = along(eye, v[2][3], F);
-	// how far ahead it is held: the first-person mod's, or the chosen weapon's own (the weapons mod's)
-	const f32 vd   = PortSprayWeaponViewDistance();
+	// how far ahead it is held: the first-person mod's, or a mod's pose's (its gun's own)
+	const f32 vd   = H().poseHold;
 	const f32 hold = vd > 1.0f && s_forward > 1.0f ? vd / s_forward : 1.0f;
 	Vec tip        = along(along(along(eye, s_right * hold, R), -s_down * hold, U), s_forward * hold, F);
 	s_target     = along(eye, s_aim, F);
@@ -757,8 +627,6 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 	Vec way          = {em[0][0], em[1][0], em[2][0]};
 	const Vec at     = {em[0][3], em[1][3], em[2][3]};
 	if (!unit(way)) {
-		if (PortSprayWeaponChosen())
-			PortWeaponModelKeep(); // not placed this frame: its model where it was
 		return;
 	}
 
@@ -794,8 +662,6 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 		}
 	}
 	if (!s_haveInView) {
-		if (PortSprayWeaponChosen())
-			PortWeaponModelKeep(); // not placed this frame: its model where it was
 		return;
 	}
 	f32 turned[3][3];
@@ -854,34 +720,6 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 		}
 	}
 
-	// The rifle, the bazooka and the submachine gun: their own models in FLUDD's place (modapi_weapon_models.cpp), on
-	// the shoulder, the muzzle a little past where the water starts and pointing at the aim,
-	// tipped up by the kick; their own units to about 50 and 47 of the game's long.
-	const int chosenWeapon = PortSprayWeaponId();
-	if (chosenWeapon == 2 || chosenWeapon == 3 || chosenWeapon == 4) {
-		const int which   = chosenWeapon == 2 ? 0 : chosenWeapon == 3 ? 1 : 2; // the rifle, bazooka, submachine gun
-		const f32 scale   = which == 0 ? 12.5f : which == 1 ? 15.0f : 15.0f;
-		const f32 ahead   = which == 0 ? 4.0f : which == 1 ? 6.0f : 4.0f; // the muzzle past the water's start
-		Vec fwd = {toTarget.x + U.x * s_kick * 0.35f, toTarget.y + U.y * s_kick * 0.35f, toTarget.z + U.z * s_kick * 0.35f};
-		unit(fwd);
-		Vec right = cross(fwd, U);
-		if (unit(right)) {
-			const Vec up     = cross(right, fwd);
-			const Vec muzzle = along(tip, ahead, fwd);
-			const Vec origin = along(muzzle, -PortWeaponModelMuzzle(which) * scale, fwd);
-			Mtx world, viewModel;
-			const f32 col[3][3] = {{right.x, fwd.x, up.x}, {right.y, fwd.y, up.y}, {right.z, fwd.z, up.z}};
-			const f32 at[3]     = {origin.x, origin.y, origin.z};
-			for (int row = 0; row < 3; row++) {
-				for (int c2 = 0; c2 < 3; c2++)
-					world[row][c2] = col[row][c2] * scale;
-				world[row][3] = at[row];
-			}
-			MTXConcat(v, world, viewModel);
-			PortWeaponModelShow(which, viewModel);
-		}
-	}
-
 	// the new place: the tip (at the mod's scale, from the base) where the mod put it
 	const f32 k     = s_scale;
 	const Vec rel   = {k * (at.x - origin.x), k * (at.y - origin.y), k * (at.z - origin.z)};
@@ -901,7 +739,7 @@ void placeFor(TWaterGun* g, JDrama::TGraphics* graphics)
 	const Vec saved = scale;
 	scale.x *= k, scale.y *= k, scale.z *= k;
 	model->setBaseTRMtx(nb);
-	if (overridden && phase >= 0.0f) { // a weapon's pump as it fires
+	if (overridden && phase >= 0.0f) { // a mod's pump as its gun fires
 		g->mFluddModel->setBck("wg_pump");
 		if (J3DFrameCtrl* ctrl = g->mFluddModel->getFrameCtrl(ANM_TYPE_BCK)) {
 			ctrl->setRate(0.0f);
@@ -962,27 +800,14 @@ bool PortFluddHeldNoFlip(TMario* mario, int anm_id)
 	       || (status == MARIO_STATUS_U_TURN_JUMP && anm_id == TMario::ANIM_TJMP1);
 }
 
-// The view this frame, while FLUDD is held in it (the spray weapons' aim): the eye and the way
-// it looks (a unit vector).
+// The view this frame, while FLUDD is held in it (held_fludd->aim): the eye and the way it looks (a
+// unit vector).
 bool PortFluddHeldView(JGeometry::TVec3<f32>* eye, JGeometry::TVec3<f32>* forward)
 {
 	if (!s_placed)
 		return false;
 	eye->set(s_viewEye.x, s_viewEye.y, s_viewEye.z);
 	forward->set(s_viewWay.x, s_viewWay.y, s_viewWay.z);
-	return true;
-}
-
-// Where a weapon's shot starts with FLUDD on his back (third person): its nozzle's tip, or the
-// weapon's pack's muzzle; false when neither is known this frame.
-bool PortFluddBackMuzzle(JGeometry::TVec3<f32>* at)
-{
-	TMario* m = PortPlayerMario(PortPlayerNow());
-	if (!s_haveBackMuzzle || !m)
-		return false;
-	// placed as last drawn: moved on with him since (the shot goes after his move this frame)
-	at->set(s_backMuzzle.x + m->mPosition.x - s_backMario.x, s_backMuzzle.y + m->mPosition.y - s_backMario.y,
-	        s_backMuzzle.z + m->mPosition.z - s_backMario.z);
 	return true;
 }
 
@@ -1008,7 +833,7 @@ int PortViewOwner(MtxPtr view)
 	return -1;
 }
 
-// Co-op: where a drop (water or goop, at `at`) is seen in the view `view`. A first-person
+// Co-op: where a drop (at `at`) is seen in the view `view`. A first-person
 // player's stream comes out of the FLUDD held in their own view, in front of their face; anyone
 // else sees FLUDD on their back, so the drops near the held one are seen moved that way, less the
 // further they are from it (none 400 away).
@@ -1036,17 +861,7 @@ void PortWaterSeenAt(f32* at, MtxPtr view)
 	}
 }
 
-// A player's held FLUDD's emit matrix (the goop's stream from its nozzle), or null
-MtxPtr PortFluddHeldEmitOf(int p, f32* scale)
-{
-	For f(p);
-	return PortFluddHeldEmitMtx(scale);
-}
-
-// The Mario a FLUDD is on (modapi_weapon_models.cpp)
-const void* PortWaterGunMario(const TWaterGun* g) { return g ? g->mMario : 0; }
-
-// A shot's recoil for the held gun (the spray weapons): 0 to 1.
+// A shot's recoil for the held gun (held_fludd->kick): 0 to 1.
 void PortFluddHeldKick(f32 amount)
 {
 	if (amount > s_kick)
@@ -1054,13 +869,11 @@ void PortFluddHeldKick(f32 amount)
 }
 
 // held_fludd->kick and ->aim (the mod API: the player selected, or the one the game runs as)
-void PortSprayWeaponKicked(f32 amount); // modapi_spray_weapons.cpp: the shown weapon's pump
 
 extern "C" void modg_held_fludd_kick(float amount)
 {
 	For f(PortPlayerNow());
 	PortFluddHeldKick(amount);
-	PortSprayWeaponKicked(amount);
 }
 
 extern "C" int modg_held_fludd_aim(SmsVec3* eye, SmsVec3* forward)

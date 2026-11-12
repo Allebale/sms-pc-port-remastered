@@ -785,26 +785,19 @@ void dropRegistrations(SmsMod* m)
 		}
 		modg_select_player(-1);
 	}
-	if (m->armsFludd) { // the normal spray, the game's own numbers, no zoom
+	if (m->armsFludd) { // no zoom, FLUDD's own pose, the game's own view distance and model sizes
 		m->armsFludd = false;
 		for (int p = 0; p < 2; p++) { // (each player's)
 			modg_select_player(p);
-			modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
-			modg_spray_key_launch(0);
-			modg_spray_feet_forward(0.0f);
-			modg_spray_key_lift(0.0f);
 			modg_held_fludd_zoom(0.0f, 0);
 		}
 		modg_select_player(-1);
-		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_BLACK_GOOP; w++) {
-			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
-			modg_spray_view_distance(w, 0.0f);
-		}
-		modg_spray_rocket_jump(0.0f);
-		modg_spray_far_scale(1.0f);
-		modg_spray_shadow_damage(1.0f);
-		modg_spray_goop_area(0.0f);
 		modg_held_fludd_zoom(0.0f, 0);
+	}
+	if (m->changesWorld) { // the game's own view distance, every model its own size again
+		m->changesWorld = false;
+		modg_set_view_distance(1.0f);
+		modg_actor_unscale_all();
 	}
 	if (m->setsView) {
 		m->setsView = false;
@@ -1056,13 +1049,27 @@ void apiSetHudHidden(SmsMod* mod, uint32_t mask)
 
 uint32_t apiHudHidden(void) { return modg_hud_hidden(); }
 
+// a mod's view distance and model sizes: the game's own again when it unloads
+int apiSetViewDistance(float scale)
+{
+	if (SmsMod* m = current())
+		m->changesWorld = true;
+	return modg_set_view_distance(scale);
+}
+int apiSetModelScale(SmsObject actor, float scale)
+{
+	if (SmsMod* m = current())
+		m->changesWorld = true;
+	return modg_actor_set_model_scale(actor, scale);
+}
+
 const SmsGameApi s_game = {
 	sizeof(SmsGameApi), apiState,        modg_flag_get,       modg_flag_set,         apiCoins,
 	apiLives,           apiShines,       apiBlueCoins,        apiHasShine,           modg_warp,
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
-	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop, modg_wall_at, modg_set_view_distance,
+	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop, modg_wall_at, apiSetViewDistance,
 	modg_out_of_walls,
 };
 
@@ -1163,8 +1170,8 @@ const char* apiNativeBuild(void)
 const SmsNativeApi s_native = {sizeof(SmsNativeApi), apiNativeBuild, modg_native};
 
 // ------------------------------------------------------------------ FLUDD held in view (first person)
-// ext/modapi/game/modapi_held_fludd.cpp and modapi_spray_weapons.cpp: the mod that holds it, so
-// it goes back (and the normal spray with it) when that one unloads
+// ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one
+// unloads
 
 int apiHeldFluddSet(int on, float right, float down, float forward, float scale, float aim)
 {
@@ -1173,41 +1180,11 @@ int apiHeldFluddSet(int on, float right, float down, float forward, float scale,
 	return modg_held_fludd_set(on, right, down, forward, scale, aim);
 }
 
-int apiSprayWeaponSet(int weapon, int flags)
+int apiHeldFluddPose(int player, int flags, float pump, float hold)
 {
 	if (SmsMod* m = current())
-		m->armsFludd = m->armsFludd || weapon != SMS_SPRAY_NORMAL || flags != 0;
-	return modg_spray_weapon_set(weapon, flags);
-}
-
-int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
-{
-	if (SmsMod* m = current())
-		m->armsFludd = m->armsFludd || st != nullptr;
-	// each weapon's hold distance in first person, and long range (from mods that set them)
-	modg_spray_view_distance(weapon, st && st->size >= offsetof(SmsSprayStats, view_distance) + sizeof(float) ? st->view_distance : 0.0f);
-	if (st && st->size >= offsetof(SmsSprayStats, far_scale) + sizeof(float))
-		modg_spray_far_scale(st->far_scale);
-	if (st && st->size >= offsetof(SmsSprayStats, shadow_damage) + sizeof(float))
-		modg_spray_shadow_damage(st->shadow_damage);
-	// the rocket jump key's shots (any weapon's stats carry it): only from a mod that sets it
-	// (the spray weapons' stats only: the goop weapons' carry none)
-	if (weapon < SMS_SPRAY_FIRE_GOOP)
-		modg_spray_key_launch(st && st->size >= offsetof(SmsSprayStats, key_launch) + sizeof(int) ? st->key_launch : 0);
-	if (weapon == SMS_SPRAY_BAZOOKA) // its goop area: only from a mod that sets it
-		modg_spray_goop_area(st && st->size >= offsetof(SmsSprayStats, goop_area) + sizeof(float) ? st->goop_area : 0.0f);
-	if (weapon == SMS_SPRAY_BAZOOKA) // its throw up with the rocket jump key: only from a mod that sets it
-		modg_spray_key_lift(st && st->size >= offsetof(SmsSprayStats, key_lift) + sizeof(float) ? st->key_lift : 0.0f);
-	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump off the feet: only from a mod that sets it
-		modg_spray_feet_forward(st && st->size >= offsetof(SmsSprayStats, feet_forward) + sizeof(float) ? st->feet_forward : 0.0f);
-	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump: only from a mod that sets it
-		modg_spray_rocket_jump(st && st->size >= offsetof(SmsSprayStats, self_jump) + sizeof(float) ? st->self_jump : 0.0f);
-	if (!st || st->size < offsetof(SmsSprayStats, lift))
-		return modg_spray_weapon_stats(weapon, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-	const float lift = st->size >= offsetof(SmsSprayStats, lift) + sizeof(float) ? st->lift : -1.0f; // older mods: with the push
-	const float drop = st->size >= offsetof(SmsSprayStats, drop_size) + sizeof(float) ? st->drop_size : 1.0f;
-	return modg_spray_weapon_stats(weapon, 1, st->every, st->push, st->range, st->to_defeat, st->water, st->hit_size, st->burst,
-	                               lift, drop);
+		m->armsFludd = true;
+	return modg_held_fludd_pose(player, flags, pump, hold);
 }
 
 int apiHeldFluddView(int on)
@@ -1228,12 +1205,12 @@ int apiHeldFluddState(SmsHeldFluddState* st)
 {
 	if (!st || st->size < offsetof(SmsHeldFluddState, zoom_flags) + sizeof(int))
 		return 0;
-	int fp = 0, held = 0, weapon = 0, flags = 0;
+	int fp = 0, held = 0, flags = 0;
 	float fovy = 0.0f;
-	modg_held_fludd_state(&fp, &held, &weapon, &fovy, &flags);
+	modg_held_fludd_state(&fp, &held, &fovy, &flags);
 	st->first_person = fp;
 	st->held         = held;
-	st->weapon       = weapon;
+	st->unused       = 0;
 	st->zoom_fovy    = fovy;
 	st->zoom_flags   = flags;
 	if (st->size >= offsetof(SmsHeldFluddState, game_scope) + sizeof(int))
@@ -1273,10 +1250,11 @@ int apiPlayerView(int player, float* x, float* y, float* w, float* h)
 	return split;
 }
 
-const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
-                                     apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState,
+const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, nullptr,
+                                     nullptr, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState,
                                      apiHeldFluddTakeMouse, apiPlayers, apiPlayerNow, apiSelectPlayer, apiPlayerView,
-                                     modg_held_fludd_kick, modg_held_fludd_aim, modg_held_fludd_dress};
+                                     modg_held_fludd_kick, modg_held_fludd_aim, modg_held_fludd_dress,
+                                     apiHeldFluddPose};
 
 // ------------------------------------------------------------------ the API: water drops, actors (1.8)
 
@@ -1285,7 +1263,7 @@ const SmsWaterApi s_water = {sizeof(SmsWaterApi), modg_water_nozzle_drop, modg_w
 
 const SmsActorApi s_actor = {sizeof(SmsActorApi), modg_actor_velocity, modg_actor_set_velocity, modg_actor_flags,
                              modg_actor_set_flags, modg_actor_defeat, modg_actor_near, modg_actor_hit_size,
-                             modg_actor_push, modg_actor_send, modg_actor_wall_defeat, modg_actor_set_model_scale,
+                             modg_actor_push, modg_actor_send, modg_actor_wall_defeat, apiSetModelScale,
                              modg_actor_kind, modg_actor_owner, modg_actor_parts, modg_actor_water_meter,
                              modg_actor_set_water_meter, modg_actor_set_water_wait, modg_actor_knock,
                              modg_actor_set_position, modg_actor_set_yaw, modg_actor_gravity, modg_actor_effect};

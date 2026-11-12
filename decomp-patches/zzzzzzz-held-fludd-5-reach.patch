@@ -1,4 +1,4 @@
-Reason: a mod's long range (api->game->set_view_distance, ext/modapi/game/modapi_world.cpp): enemies and characters are drawn, move and are animated further away than the game's own distance, so a weapon can hit them there (enemies: TLiveManager::clipActorsAux; characters: TNPCManager::clipEnemies, TBaseNPC::perform, which stops them moving out of sight beyond it, and calcAnmOff_, which stops some animations, an angry Pianta's, beyond its own distance). Map objects keep theirs. Without such a mod, nothing changes.
+Reason: a mod's long range (api->game->set_view_distance, ext/modapi/game/modapi_world.cpp): enemies and characters are drawn, move and are animated further away than the game's own distance, so a mod's far shots can reach them there (enemies: TLiveManager::clipActorsAux; characters: TNPCManager::clipEnemies, TBaseNPC::perform, which stops them moving out of sight beyond it, and calcAnmOff_, which stops some animations, an angry Pianta's, beyond its own distance). Map objects keep theirs. Without such a mod, nothing changes.
 
 --- a/src/Strategic/livemanager.cpp
 +++ b/src/Strategic/livemanager.cpp

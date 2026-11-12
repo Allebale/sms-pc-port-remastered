@@ -1,9 +1,11 @@
+Reason: the mod API's water drops (ext/modapi/game/modapi_world.cpp, modapi_models.cpp): a drop a mod draws itself (its look of its own) is left out of the water's drawing; a drop landing on the ground or a wall is told to mods (SMS_EV_WATER_LAND), who may end it there; and mods' models are drawn with the water when FLUDD was not drawn to enter them (first person with its other nozzles). Without a mod, nothing changes.
+
 --- a/src/Player/ModelWaterManager.cpp
 +++ b/src/Player/ModelWaterManager.cpp
 @@ -344,6 +344,12 @@
  #ifdef TARGET_PC
- // FLUDD's spray weapons (ext/modapi/game/modapi_spray_weapons.cpp)
- bool PortSprayWeaponRequest(const TWaterEmitInfo& asked, int* made);
+ // the mod API's water (ext/modapi/game/modapi_world.cpp)
+ bool PortWaterRequest(const TWaterEmitInfo& asked, int* made);
 +// the mod API's drops (ext/modapi/game/modapi_world.cpp): some a mod draws itself, not as water, and
 +// told to mods where they land (SMS_EV_WATER_LAND: true to end it there)
 +bool PortWaterDropUnseen(int i);

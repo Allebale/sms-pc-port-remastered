@@ -1,4 +1,4 @@
-Reason: the First Person mod's rifle and bazooka (FLUDD held in view, api->held_fludd): their own models are drawn in FLUDD's place while one is chosen (ext/modapi/game/modapi_weapon_models.cpp). As FLUDD is entered for drawing, its packet is entered instead and FLUDD (and its nozzle) left out. Without the mod holding one, nothing changes.
+Reason: a mod's own models (api->models, ext/modapi/game/modapi_models.cpp): as FLUDD is entered for drawing, the models mods ask for are entered too (once a view), and FLUDD (and its nozzle) left out where a mod's model takes its place (models->hide_fludd). Without a mod asking, nothing changes.
 
 --- a/src/Player/WaterGun.cpp
 +++ b/src/Player/WaterGun.cpp
@@ -6,7 +6,7 @@ Reason: the First Person mod's rifle and bazooka (FLUDD held in view, api->held_
  #include <Player/Mario.hpp>
  #ifdef TARGET_PC
  #include "port_ext.h"
-+bool PortWeaponModelEntry(TWaterGun* gun); // a weapon's own model (ext/modapi/game/modapi_weapon_models.cpp)
++bool PortModelsEntry(TWaterGun* gun); // a mod's own models (ext/modapi/game/modapi_models.cpp)
  void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics);
  bool PortFluddHeldWay(TWaterGun* g, const JGeometry::TVec3<f32>& from, JGeometry::TVec3<f32>* way);
  #endif
@@ -15,8 +15,8 @@ Reason: the First Person mod's rifle and bazooka (FLUDD held in view, api->held_
  void TWaterGun::perform(u32 cue, JDrama::TGraphics* graphics)
  {
 +#ifdef TARGET_PC
-+	// a weapon's own model drawn in FLUDD's place (ext/modapi/game/modapi_weapon_models.cpp)
-+	if ((cue & CUE_ENTRY) != 0 && PortWeaponModelEntry(this))
++	// mods' own models entered with it, FLUDD left out where one takes its place (modapi_models.cpp)
++	if ((cue & CUE_ENTRY) != 0 && PortModelsEntry(this))
 +		cue &= ~CUE_ENTRY;
 +#endif
  	// TODO: frame 0x70 against retail 0xb0 with every instruction exact
