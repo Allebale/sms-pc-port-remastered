@@ -686,8 +686,10 @@ f32 PortViewDistanceScale(TLiveManager* manager)
 }
 
 // each tick: the water drops kept as far (modapi_game.cpp's after movement)
+void PortModelsTick(); // modapi_models.cpp
 void PortWorldTick()
 {
+	PortModelsTick(); // what mods draw is asked for again each tick
 	if (gpModelWaterManager && (s_viewScale > 1.0f || s_waterFar)) {
 		gpModelWaterManager->unk5E08 = 5000.0f * s_viewScale;
 		gpModelWaterManager->unk5E0C = 6000.0f * s_viewScale;

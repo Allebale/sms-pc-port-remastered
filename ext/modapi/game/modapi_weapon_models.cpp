@@ -427,15 +427,20 @@ bool PortPacketEntered(J3DPacket* p) { return j3dSys.getDrawBuffer(0) && entered
 // As FLUDD is entered for drawing (TWaterGun::perform's CUE_ENTRY): true when a weapon's model is
 // entered in its place (FLUDD then left out). Each player's FLUDD enters its own; the balloon and
 // the goop once for the view.
+bool PortModelsEntry(TWaterGun* gun); // modapi_models.cpp: a mod's own models
+bool PortModelsActive(int player);
 bool PortWeaponModelEntry(TWaterGun* gun)
 {
 	const int who = gun ? PortPlayerIndex(PortWaterGunMario(gun)) : PortPlayerNow();
+	const bool modHides = PortModelsEntry(gun);
 	float at[3], way[3], scale; // the bazooka's balloon flying: entered too
 	float pieces[8], hearts[4];
 	PortGoopEntry(); // the goop weapons' stream and puddles
 	if (s_haveView && j3dSys.getDrawBuffer(0) && !entered(j3dSys.getDrawBuffer(0), &s_balloonPacket)
 	    && (PortBazookaBalloon(at, way, &scale) || PortBazookaBalloonPieces(pieces, 1) || PortWeaponHearts(hearts, 1)))
 		j3dSys.getDrawBuffer(0)->entryImm(&s_balloonPacket, 0);
+	if (PortModelsActive(who)) // a mod draws this player's own: the old weapon models left out
+		return modHides;
 	const int view = PortViewer() ? 1 : 0;
 	const Shown& w = s_shownOf[who][view];
 	if (w.shown < 0 || !j3dSys.getDrawBuffer(0))

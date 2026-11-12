@@ -764,6 +764,7 @@ void dropRegistrations(SmsMod* m)
 		it = it->second.mod == m ? s_bindings.erase(it) : std::next(it);
 	if (s_captor == m)
 		s_captor = nullptr;
+	modg_models_unload(m); // its models gone
 	if (m->hudHidden) {
 		m->hudHidden = 0; // what it hid is shown again (unless another mod hides it)
 		applyHudHidden();
@@ -1285,6 +1286,9 @@ const SmsActorApi s_actor = {sizeof(SmsActorApi), modg_actor_velocity, modg_acto
                              modg_actor_push, modg_actor_send, modg_actor_wall_defeat, modg_actor_set_model_scale,
                              modg_actor_kind, modg_actor_owner, modg_actor_parts, modg_actor_water_meter,
                              modg_actor_set_water_meter, modg_actor_set_water_wait, modg_actor_knock};
+
+const SmsModelApi s_models = {sizeof(SmsModelApi), modg_models_create, modg_models_destroy, modg_models_draw,
+                              modg_models_draw_triangles, modg_models_frame, modg_models_hide_fludd};
 
 // ------------------------------------------------------------------ the API: multiplayer
 
@@ -1828,7 +1832,7 @@ const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
-	&s_heldFludd,       &s_water,          &s_actor,
+	&s_heldFludd,       &s_water,          &s_actor,          &s_models,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)
