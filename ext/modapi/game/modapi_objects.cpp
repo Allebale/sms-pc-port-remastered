@@ -411,6 +411,7 @@ extern "C" int modg_actor_knock(SmsObject o, const SmsVec3* push)
 		const f32 k    = (t->mLeafHipDropImpulse > 0.0f ? t->mLeafHipDropImpulse : 0.05f) * (hard / 10.0f);
 		for (int i = 0; t->mLeaves && i < t->mLeafNum; i++)
 			t->mLeaves[i].mAngularVelocity += (i & 1) ? k : -k;
+		t->mFreezeLeaves = false; // (settled leaves are no longer moved till woken, as Mario touching it does)
 		return 1;
 	}
 	return 0;
