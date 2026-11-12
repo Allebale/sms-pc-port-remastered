@@ -750,6 +750,16 @@ void PortModelsTick(); // modapi_models.cpp
 void PortWorldTick()
 {
 	PortModelsTick(); // what mods draw is asked for again each tick
+	// a drop a mod draws itself never lies on the ground or runs down a wall as water (the game would
+	// draw its wet patch): told to mods as landed there (if no landing told them yet), and gone
+	TModelWaterManager* w = gpModelWaterManager;
+	for (int i = 0; w && i < (int)w->mParticleCount; i++) {
+		const int at = w->mParticleFlagSOA[i] & 0xf;
+		if (!s_dropUnseen[i] || (at != 2 && at != 3) || w->mParticleLifetimeSOA[i] <= 0.0f)
+			continue;
+		waterLands(i, w->unk2914[i], at == 3);
+		w->mParticleLifetimeSOA[i] = 0.0f;
+	}
 	if (gpModelWaterManager && (s_viewScale > 1.0f || s_waterFar)) {
 		gpModelWaterManager->unk5E08 = 5000.0f * s_viewScale;
 		gpModelWaterManager->unk5E0C = 6000.0f * s_viewScale;
