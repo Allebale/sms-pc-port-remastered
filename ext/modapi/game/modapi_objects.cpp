@@ -1,6 +1,6 @@
 // The mod API's game objects by what they are (API 1.8): actor->kind, ->owner, ->parts, the water
 // meters (how much water a boss, a character or a hiding picture still takes: ->water_meter,
-// ->set_water_meter, ->set_water_wait) and ->knock (balls, fruit and trees). General tools for any
+// ->set_water_meter, ->set_water_wait) and ->knock (balls and fruit). General tools for any
 // mod: none of it does anything till a mod asks.
 #include "../modapi_bridge.h"
 
@@ -18,7 +18,6 @@
 #include <M3DUtil/MActor.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <MoveBG/MapObjHide.hpp>
-#include <MoveBG/MapObjTree.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/SoundEffects.hpp>
 #include <NPC/NpcBase.hpp>
@@ -95,8 +94,6 @@ int kindOf(THitActor* a)
 		return SMS_KIND_HIDING_PICTURE;
 	if (dynamic_cast<TMapObjBall*>(a))
 		return SMS_KIND_BALL;
-	if (dynamic_cast<TMapObjTree*>(a))
-		return SMS_KIND_TREE;
 	if (dynamic_cast<TBaseNPC*>(a))
 		return SMS_KIND_CHARACTER;
 	if (dynamic_cast<TSmallEnemy*>(a))
@@ -404,14 +401,6 @@ extern "C" int modg_actor_knock(SmsObject o, const SmsVec3* push)
 		b->offLiveFlag(LIVE_FLAG_UNK10); // moving again (as kicked)
 		if (TResetFruit* fruit = dynamic_cast<TResetFruit*>(b))
 			fruit->makeObjLiving(); // off its tree or its spot, as a kicked one
-		return 1;
-	}
-	if (TMapObjTree* t = dynamic_cast<TMapObjTree*>(l)) {
-		const f32 hard = sqrtf(push->x * push->x + push->y * push->y + push->z * push->z);
-		const f32 k    = (t->mLeafHipDropImpulse > 0.0f ? t->mLeafHipDropImpulse : 0.05f) * (hard / 10.0f);
-		for (int i = 0; t->mLeaves && i < t->mLeafNum; i++)
-			t->mLeaves[i].mAngularVelocity += (i & 1) ? k : -k;
-		t->mFreezeLeaves = false; // (settled leaves are no longer moved till woken, as Mario touching it does)
 		return 1;
 	}
 	return 0;
