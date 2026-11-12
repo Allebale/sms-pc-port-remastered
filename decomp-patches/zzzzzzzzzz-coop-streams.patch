@@ -3,9 +3,9 @@ Reason: split-screen co-op (ext/coop): a first-person player's water and goop, s
 --- a/src/Player/ModelWaterManager.cpp
 +++ b/src/Player/ModelWaterManager.cpp
 @@ -350,6 +350,8 @@
- bool PortGoopDropLands(int i, const TBGCheckData* ground);
- bool PortGoopDropWall(int i, const TBGCheckData* wall); // ...and any drop on a wall
- void PortGoopWaterDraw(MtxPtr view); // ...and drawn here when FLUDD was not (first person, its other nozzles)
+ bool PortWaterDropLands(int i, const TBGCheckData* ground);
+ bool PortWaterDropWall(int i, const TBGCheckData* wall); // ...and any drop on a wall
+ void PortWaterDrawn(MtxPtr view); // ...and mods' models drawn here when FLUDD was not (first person, its other nozzles)
 +// split-screen co-op: where a drop is seen in this view (modapi_held_fludd.cpp)
 +void PortWaterSeenAt(f32* at, MtxPtr view);
  #endif

@@ -1620,6 +1620,7 @@ extern "C" int modg_player_get(SmsPlayer* out)
 		s.gravity        = m->mJumpParams.mGravity.get();
 		s.intended_yaw   = (float)m->mIntendedYaw * (360.0f / 65536.0f);
 		s.intended_speed = m->mIntendedMag / 32.0f > 1.0f ? 1.0f : m->mIntendedMag / 32.0f;
+		s.invincible     = m->isInvincible() ? 1 : 0;
 	}
 	const uint32_t n = out->size && out->size < sizeof s ? out->size : (uint32_t)sizeof s;
 	memcpy(out, &s, n);
@@ -1634,6 +1635,16 @@ extern "C" int modg_player_set_fall_start(float y)
 		return 0;
 	m->unk104 = y; // (where the game counts his fall from: a landing below it stuns)
 	return 1;
+}
+
+extern "C" int modg_player_burn(void)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	const u32 before = m->mStatus;
+	m->checkGraffitoFire(); // as the game's fire goop: burning, a point of health
+	return m->mStatus == MARIO_STATUS_FIRE_DOWN && before != MARIO_STATUS_FIRE_DOWN;
 }
 
 extern "C" int modg_player_set_position(const SmsVec3* pos)

@@ -1063,6 +1063,7 @@ const SmsGameApi s_game = {
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
 	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop, modg_wall_at, modg_set_view_distance,
+	modg_out_of_walls,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -1098,6 +1099,7 @@ const SmsPlayerApi s_player = {
 	modg_player_set_forward_speed, modg_player_set_health, modg_player_set_water,   modg_player_set_status,
 	modg_player_set_nozzle,        modg_player_set_fludd,  modg_player_set_outfit,   modg_player_set_yaw,
 	apiPlayerSetAim,               apiPlayerSetHiddenParts, modg_player_set_fall_start,
+	modg_player_burn,
 };
 
 // This frame's camera, read once a frame for the projections.
@@ -1274,7 +1276,7 @@ int apiPlayerView(int player, float* x, float* y, float* w, float* h)
 const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
                                      apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState,
                                      apiHeldFluddTakeMouse, apiPlayers, apiPlayerNow, apiSelectPlayer, apiPlayerView,
-                                     modg_held_fludd_kick, modg_held_fludd_aim};
+                                     modg_held_fludd_kick, modg_held_fludd_aim, modg_held_fludd_dress};
 
 // ------------------------------------------------------------------ the API: water drops, actors (1.8)
 
@@ -1285,10 +1287,13 @@ const SmsActorApi s_actor = {sizeof(SmsActorApi), modg_actor_velocity, modg_acto
                              modg_actor_set_flags, modg_actor_defeat, modg_actor_near, modg_actor_hit_size,
                              modg_actor_push, modg_actor_send, modg_actor_wall_defeat, modg_actor_set_model_scale,
                              modg_actor_kind, modg_actor_owner, modg_actor_parts, modg_actor_water_meter,
-                             modg_actor_set_water_meter, modg_actor_set_water_wait, modg_actor_knock};
+                             modg_actor_set_water_meter, modg_actor_set_water_wait, modg_actor_knock,
+                             modg_actor_set_position, modg_actor_set_yaw, modg_actor_gravity, modg_actor_effect};
 
 const SmsModelApi s_models = {sizeof(SmsModelApi), modg_models_create, modg_models_destroy, modg_models_draw,
-                              modg_models_draw_triangles, modg_models_frame, modg_models_hide_fludd};
+                              modg_models_draw_triangles, modg_models_frame, modg_models_hide_fludd,
+                              modg_models_texture_create, modg_models_texture_update, modg_models_texture_destroy,
+                              modg_models_draw_textured};
 
 // ------------------------------------------------------------------ the API: multiplayer
 

@@ -61,9 +61,15 @@ void setVec(SmsVec3* v, f32 x, f32 y, f32 z) { v->x = x, v->y = y, v->z = z; }
 
 u32 s_dropTag[TModelWaterManager::SLOT_NUM];      // a mod's number for each slot's drop (0 the game's)
 s8 s_dropPlayer[TModelWaterManager::SLOT_NUM];    // the player whose FLUDD made it, -1 none
+u8 s_dropUnseen[TModelWaterManager::SLOT_NUM];   // left out of the water's drawing (a mod draws it)
 u32 s_emitTag;       // the drop being made now by a mod (water->emit), and whose
 int s_emitPlayer;
+bool s_emitUnseen;
 bool s_modEmitting;  // ...so SMS_EV_WATER_EMIT does not hear of it
+// a player's FLUDD's own stream being made now with a mod's tag (SMS_EV_WATER_EMIT's handler set it)
+bool s_tagging;
+u32 s_tagNow;
+bool s_unseenNow;
 
 // The player whose globals are in force (co-op runs as player 2 for a while), or -1
 int playerNow()
@@ -91,6 +97,7 @@ void dropOut(int slot, SmsWaterDrop* out)
 	const int at = w->mParticleFlagSOA[slot] & 0xf; // 1 flying, 2 on the ground, 3 on a wall
 	d.landed    = at == 2 ? 1 : at == 3 ? 2 : 0;
 	d.clean     = w->mWaterParticleTypes[w->mParticleTypeSOA[slot]]->mCleanSize.get() * 32.0f; // as the game's splash
+	d.unseen    = s_dropUnseen[slot];
 	const uint32_t n = out->size && out->size < sizeof d ? out->size : (uint32_t)sizeof d;
 	d.size = n;
 	memcpy(out, &d, n);
@@ -163,7 +170,8 @@ extern "C" void port_water_drop_made(int slot)
 {
 	if (slot < 0 || slot >= TModelWaterManager::SLOT_NUM)
 		return;
-	s_dropTag[slot]    = s_modEmitting ? s_emitTag : 0;
+	s_dropTag[slot]    = s_modEmitting ? s_emitTag : s_tagging ? s_tagNow : 0;
+	s_dropUnseen[slot] = s_modEmitting ? s_emitUnseen : s_tagging && s_unseenNow;
 	s_dropPlayer[slot] = (s8)(s_modEmitting ? s_emitPlayer : playerNow());
 	port_coop_drop_made(slot);
 	if (s_modEmitting) // (a mod's drop for a player: theirs, whoever the game runs as)
@@ -176,9 +184,46 @@ extern "C" void port_water_drop_moved(int to, int from)
 	if (to < 0 || to >= TModelWaterManager::SLOT_NUM || from < 0 || from >= TModelWaterManager::SLOT_NUM)
 		return;
 	s_dropTag[to]    = s_dropTag[from];
+	s_dropUnseen[to] = s_dropUnseen[from];
 	s_dropPlayer[to] = s_dropPlayer[from];
 	port_coop_drop_moved(to, from);
 }
+
+// Patch zzzzzzzzz-goop-weapons: a drop left out of the water's drawing (a mod draws it itself)
+bool PortGoopDropHidden(int i);
+bool PortWaterDropUnseen(int i)
+{
+	return (i >= 0 && i < TModelWaterManager::SLOT_NUM && s_dropUnseen[i]) || PortGoopDropHidden(i);
+}
+
+// ...a drop touching the ground (its first touch) or a wall: told to mods (SMS_EV_WATER_LAND); true
+// ends it there
+bool PortGoopDropLands(int i, const TBGCheckData* ground);
+bool PortGoopDropWall(int i, const TBGCheckData* wall);
+bool waterLands(int i, const TBGCheckData* at, bool wall)
+{
+	TModelWaterManager* w = gpModelWaterManager;
+	if (!w || i < 0 || i >= (int)w->mParticleCount || !modh_wants(SMS_EV_WATER_LAND))
+		return false;
+	SmsEvWaterLand e;
+	memset(&e, 0, sizeof e);
+	e.slot   = i;
+	e.tag    = s_dropTag[i];
+	e.player = s_dropPlayer[i];
+	const JGeometry::TVec3<f32>& p = w->mParticlePositionSOA[i];
+	setVec(&e.position, p.x, p.y, p.z);
+	setVec(&e.normal, 0.0f, wall ? 0.0f : 1.0f, 0.0f);
+	if (at && at->isLegal()) {
+		const JGeometry::TVec3<f32>& n = at->getNormal();
+		setVec(&e.normal, n.x, n.y, n.z);
+		e.on = at->mActor ? obj(const_cast<TLiveActor*>(at->mActor)) : 0;
+	}
+	e.wall      = wall ? 1 : 0;
+	e.drop_size = w->mParticleSizeSOA[i];
+	return modh_dispatch(SMS_EV_WATER_LAND, &e, sizeof e) != 0;
+}
+bool PortWaterDropLands(int i, const TBGCheckData* ground) { return waterLands(i, ground, false) || PortGoopDropLands(i, ground); }
+bool PortWaterDropWall(int i, const TBGCheckData* wall) { return waterLands(i, wall, true) || PortGoopDropWall(i, wall); }
 
 // A mod's own drops being made now (water->emit): nothing else takes them
 bool PortWaterModEmitting() { return s_modEmitting; }
@@ -187,7 +232,7 @@ bool PortWaterModEmitting() { return s_modEmitting; }
 // told to mods first (SMS_EV_WATER_EMIT), who may cancel it. True: cancelled, *made drops made.
 bool PortWaterEmitRequest(const TWaterEmitInfo& asked, int* made)
 {
-	if (s_modEmitting || !modh_wants(SMS_EV_WATER_EMIT))
+	if (s_modEmitting || s_tagging || !modh_wants(SMS_EV_WATER_EMIT))
 		return false;
 	const JGeometry::TVec3<f32>& at = asked.mPos.value;
 	for (int p = 0; p < PortPlayers(); p++) {
@@ -218,7 +263,15 @@ bool PortWaterEmitRequest(const TWaterEmitInfo& asked, int* made)
 			*made = 0;
 			return true;
 		}
-		return false;
+		if (!d.tag && !d.unseen)
+			return false;
+		// a handler's tag (or its look of its own): the game's drops made now carry it
+		s_tagging  = true;
+		s_tagNow   = d.tag;
+		s_unseenNow = d.unseen != 0;
+		*made      = gpModelWaterManager->emitRequest(asked);
+		s_tagging  = false;
+		return true;
 	}
 	return false;
 }
@@ -282,6 +335,7 @@ extern "C" int modg_water_emit(const SmsWaterDrop* d)
 	info.mAttack.set((s16)(d->attack > 0 && d->attack < 256 ? d->attack : 1));
 	info.mFlag.set(d->flags ? d->flags : 0x40);
 	const int before = w->mParticleCount;
+	s_emitUnseen     = d->size >= offsetof(SmsWaterDrop, unseen) + sizeof(int) && d->unseen;
 	s_emitTag        = d->tag;
 	s_emitPlayer     = who;
 	s_modEmitting    = true;
@@ -310,6 +364,8 @@ extern "C" int modg_water_set(int slot, const SmsWaterDrop* in)
 	w->mParticleVelocitySOA[slot].set(in->velocity.x, in->velocity.y, in->velocity.z);
 	w->mParticleLifetimeSOA[slot] = (f32)in->alive;
 	s_dropTag[slot]               = in->tag;
+	if (in->size >= offsetof(SmsWaterDrop, unseen) + sizeof(int))
+		s_dropUnseen[slot] = in->unseen != 0;
 	if (in->drop_size > 0.0f)
 		w->mParticleSizeSOA[slot] = in->drop_size;
 	return 1;
@@ -638,10 +694,14 @@ extern "C" int modg_actor_set_model_scale(SmsObject o, float scale)
 }
 
 // a stage's actors are gone with it (modapi_game.cpp's stage setup)
+void PortWorldSparksReset();
+void PortModelsDressReset(); // modapi_models.cpp
 void PortWorldStageSetup()
 {
+	PortModelsDressReset();
 	memset(s_scaled, 0, sizeof s_scaled);
 	s_scaledCount = 0;
+	PortWorldSparksReset();
 }
 
 // ------------------------------------------------------------------ game->wall_at, ->set_view_distance
@@ -719,3 +779,97 @@ extern "C" int modg_play_clip(const int16_t* pcm, int frames, int rate, float vo
 	port_clip_play(s_copies[i], frames, rate, volume > 0.0f ? volume : 0.0f);
 	return 1;
 }
+
+// ------------------------------------------------------------------ API 1.8: goop-like tools
+
+extern "C" int modg_actor_set_position(SmsObject o, const SmsVec3* at)
+{
+	TLiveActor* a = liveActor(o);
+	if (!a || !at)
+		return 0;
+	a->mPosition.set(at->x, at->y, at->z);
+	return 1;
+}
+
+extern "C" int modg_actor_set_yaw(SmsObject o, float degrees)
+{
+	TLiveActor* a = liveActor(o);
+	if (!a)
+		return 0;
+	a->mRotation.y = degrees;
+	return 1;
+}
+
+extern "C" float modg_actor_gravity(SmsObject o)
+{
+	TLiveActor* a = liveActor(o);
+	return a ? a->getGravityY() : 0.0f;
+}
+
+namespace {
+// the places the shocked's sparks are bound to (they follow it while they last)
+struct Spark {
+	TLiveActor* a;
+	JGeometry::TVec3<f32> at;
+};
+Spark s_sparks[32];
+int s_nextSpark;
+} // namespace
+
+extern "C" int modg_actor_effect(SmsObject o, int effect)
+{
+	TLiveActor* a = liveActor(o);
+	if (!a || !gpMarioParticleManager)
+		return 0;
+	if (effect == SMS_EFFECT_SMOKE) {
+		gpMarioParticleManager->emit(PARTICLE_MS_MOE_FIRE_OFF, &a->mPosition, 0, nullptr);
+		return 1;
+	}
+	if (effect == SMS_EFFECT_BURNING) { // a burning Strollin' Stu's flames
+		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_MOE_FIRE_A, &a->mPosition, 1, a);
+		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_MOE_FIRE_B, &a->mPosition, 1, a);
+		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_MOE_FIRE_D, &a->mPosition, 1, a);
+		return 1;
+	}
+	if (effect == SMS_EFFECT_SHOCKED) { // Mario's own shock's sparks, on its middle
+		Spark* sp = 0;
+		for (int i = 0; i < 32 && !sp; i++)
+			if (s_sparks[i].a == a)
+				sp = &s_sparks[i];
+		if (!sp) {
+			sp    = &s_sparks[s_nextSpark++ % 32];
+			sp->a = a;
+		}
+		const f32 size = a->mScaling.y > 0.1f ? a->mScaling.y : 1.0f;
+		sp->at.set(a->mPosition.x, a->mPosition.y + 40.0f * size, a->mPosition.z);
+		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_M_BIRI_A, &sp->at, 1, a);
+		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_M_BIRI_C, &sp->at, 1, a);
+		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_M_BIRI_B, &sp->at, 1, a);
+		return 1;
+	}
+	return 0;
+}
+
+extern "C" int modg_out_of_walls(const SmsVec3* at, float radius, SmsVec3* out, SmsVec3* normal)
+{
+	if (!at || !out)
+		return 0;
+	*out = *at;
+	if (!gpMap)
+		return 0;
+	TBGWallCheckRecord wall(at->x, at->y, at->z, radius, 4, TBGWallCheckRecord::IGNORE_WATER_THROUGH);
+	if (!gpMap->isTouchedWallsAndMoveXZ(&wall))
+		return 0;
+	setVec(out, wall.mCenter.x, at->y, wall.mCenter.z);
+	if (normal) {
+		setVec(normal, 0.0f, 0.0f, 0.0f);
+		if (wall.mResultWalls[0]) {
+			const JGeometry::TVec3<f32>& n = wall.mResultWalls[0]->getNormal();
+			setVec(normal, n.x, n.y, n.z);
+		}
+	}
+	return 1;
+}
+
+// a new stage: the sparks' actors are gone
+void PortWorldSparksReset() { memset(s_sparks, 0, sizeof s_sparks); }
