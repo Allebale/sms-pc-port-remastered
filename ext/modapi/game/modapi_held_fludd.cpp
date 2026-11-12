@@ -349,8 +349,7 @@ public:
 	}
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics)
 	{
-		if (cue & 0x8) // CUE_DRAW
-			PortHeldFluddDrawScope(graphics);
+		(void)cue, (void)graphics; // (a mod draws a scope itself now: draw->*)
 	}
 };
 TScopeObj s_scopeObj;
