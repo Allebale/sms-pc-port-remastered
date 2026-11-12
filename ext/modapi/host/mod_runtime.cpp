@@ -1106,7 +1106,7 @@ const SmsPlayerApi s_player = {
 	modg_player_set_forward_speed, modg_player_set_health, modg_player_set_water,   modg_player_set_status,
 	modg_player_set_nozzle,        modg_player_set_fludd,  modg_player_set_outfit,   modg_player_set_yaw,
 	apiPlayerSetAim,               apiPlayerSetHiddenParts, modg_player_set_fall_start,
-	modg_player_burn,
+	modg_player_burn,              modg_player_hurt,
 };
 
 // This frame's camera, read once a frame for the projections.

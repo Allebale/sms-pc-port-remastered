@@ -73,9 +73,17 @@ int s_gameHide[2]; // ...and the game's own (held in view, he is dead), each fra
 // each player's frames in each view, as last placed
 struct Frame {
 	bool on;
+	unsigned tick; // the tick it was placed in
 	Mtx m;
 };
 Frame s_frames[2][2][4];
+unsigned s_tick;
+
+// placed lately: a FLUDD not drawn for a while (a portal, a stage's start) leaves no frame behind
+bool fresh(const Frame& f)
+{
+	return f.on && s_tick - f.tick <= 2;
+}
 Mtx s_viewOf[2];
 bool s_haveView[2];
 
@@ -248,7 +256,7 @@ void ModelsPacket::draw()
 			MTXCopy(d.place, world);
 		else {
 			const Frame& f = s_frames[d.player][view][d.frame];
-			if (!f.on)
+			if (!fresh(f))
 				continue;
 			MTXConcat(f.m, d.place, world);
 		}
@@ -295,6 +303,7 @@ void PortModelsFrame(int player, int view, int frame, MtxPtr world)
 		return;
 	Frame& f = s_frames[player][view][frame];
 	f.on     = world != nullptr;
+	f.tick   = s_tick;
 	if (world)
 		MTXCopy(world, f.m);
 }
@@ -306,6 +315,7 @@ void PortModelsTick()
 {
 	PortModelsDressTick();
 	PortHeldFluddPoseTick();
+	s_tick++;
 	s_drawCount = 0;
 	s_triCount  = 0;
 	s_texCount = s_batchCount = 0;
@@ -396,7 +406,7 @@ extern "C" int modg_models_draw(SmsMesh mesh, int frame, int player, const float
 			memcpy(world, place, sizeof(Mtx));
 		else {
 			const Frame& f = s_frames[player][s_sceneView][frame];
-			if (!f.on)
+			if (!fresh(f))
 				return 0;
 			MTXConcat(f.m, (MtxPtr)place, world);
 		}
@@ -441,7 +451,7 @@ extern "C" int modg_models_frame(int frame, int player, float out[3][4])
 	const int views[2] = {player, 1 - player};
 	for (int k = 0; k < 2; k++) {
 		const Frame& f = s_frames[player][views[k]][frame];
-		if (f.on) {
+		if (fresh(f)) {
 			memcpy(out, f.m, sizeof(Mtx));
 			return 1;
 		}
@@ -634,6 +644,7 @@ void PortModelsDressReset()
 		undress(p);
 		s_dress[p].next = 0;
 	}
+	memset(s_frames, 0, sizeof s_frames); // a new stage: nothing placed yet
 }
 
 void redress(SmsTexture texture)

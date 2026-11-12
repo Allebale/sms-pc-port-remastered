@@ -145,6 +145,7 @@ float modg_actor_gravity(SmsObject o);
 int modg_actor_effect(SmsObject o, int effect);
 int modg_out_of_walls(const SmsVec3* at, float radius, SmsVec3* out, SmsVec3* normal);
 int modg_player_burn(void);
+int modg_player_hurt(int points);
 int modg_wall_at(const SmsVec3* at, float radius, SmsVec3* normal);
 int modg_set_view_distance(float scale);
 int modg_play_clip(const int16_t* pcm, int frames, int rate, float volume);

@@ -353,6 +353,12 @@ bool backAxes(TWaterGun* g, bool other, Vec* rightOut, Vec* fwdOut, Vec* upOut, 
 	// he faces and up), so it leans and sways with him as FLUDD does
 	MtxPtr base   = fm->getBaseTRMtx();
 	MtxPtr nc     = fm->getAnmMtx(g->unk1CD8);
+	{ // not posed on him lately (a portal, a stage's start): left where it was, so not there
+		const f32 dx = nc[0][3] - g->mMario->mPosition.x, dy = nc[1][3] - g->mMario->mPosition.y,
+		          dz = nc[2][3] - g->mMario->mPosition.z;
+		if (dx * dx + dy * dy + dz * dz > 400.0f * 400.0f)
+			return false;
+	}
 	const f32 ang = g->mMario->mFaceAngle.y * (3.14159265f / 32768.0f);
 	Vec face = {sinf(ang), 0.0f, cosf(ang)};
 	const Vec worldUp = {0.0f, 1.0f, 0.0f};

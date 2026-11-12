@@ -1647,6 +1647,17 @@ extern "C" int modg_player_burn(void)
 	return m->mStatus == MARIO_STATUS_FIRE_DOWN && before != MARIO_STATUS_FIRE_DOWN;
 }
 
+extern "C" int modg_player_hurt(int points)
+{
+	TMario* m = mario();
+	if (!m || points <= 0)
+		return 0;
+	if (m->getHealth() <= 0)
+		return 1;
+	m->decHP(points); // the game's own damage, so 0 health loses a life
+	return 1;
+}
+
 extern "C" int modg_player_set_position(const SmsVec3* pos)
 {
 	TMario* m = mario();
