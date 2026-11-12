@@ -21,6 +21,8 @@ void modh_frame(uint32_t frame, int mode);
 // Sends an event to its subscribers; returns 1 if a handler cancelled it.
 // Consumable events stop at the first handler that consumes them.
 int modh_dispatch(uint32_t type, void* data, uint32_t size);
+/* SMS_EV_DRAW_UNDER_HUD's draws (host/mod_draw.cpp): their corners (GXPCModVertex), how many */
+int modh_draw_under(float cw, float ch, int player, uint32_t frame, const struct GXPCModVertex** out);
 // 1 when a mod listens for `type` (to skip building payloads nobody reads).
 int modh_wants(uint32_t type);
 // The controllers were read: keeps them as read (input->pad), sends

@@ -211,90 +211,34 @@ extern "C" int modg_held_fludd_zoom(float fovy, int flags)
 	return 1;
 }
 
-// The rifle's sniper scope (SMS_ZOOM_SCOPE in set_zoom's flags), drawn by the game over the stage's
-// picture and under its HUD (MarDirectorDirect.cpp, before its 2D list): black round a round sight,
-// thin cross hairs with marks along them and a red dot in the middle, coming in with the zoom (a
-// weapons mod's own drawing is over everything, the HUD's counters and talk boxes too).
-namespace {
-OSTime s_scopeSince; // when the scope was asked for, 0 not
-const f32 kScopeIn = 0.3f;
-
-void scopeVertex(f32 x, f32 y, u8 r, u8 g, u8 b, u8 a)
-{
-	GXPosition3f32(x, y, 0.0f);
-	GXColor4u8(r, g, b, a);
-}
-
-// a box from (x0, y0) to (x1, y1)
-void scopeBox(f32 x0, f32 y0, f32 x1, f32 y1, u8 r, u8 g, u8 b, u8 a)
-{
-	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-	scopeVertex(x0, y0, r, g, b, a);
-	scopeVertex(x1, y0, r, g, b, a);
-	scopeVertex(x1, y1, r, g, b, a);
-	scopeVertex(x0, y1, r, g, b, a);
-	GXEnd();
-}
-
-// a ring round (cx, cy) from radius `in` to `out`, `sx` the x units to a y unit (to look round)
-void scopeRing(f32 cx, f32 cy, f32 in, f32 out, f32 sx, u8 r, u8 g, u8 b, u8 a)
-{
-	const int kSteps = 96;
-	for (int i = 0; i < kSteps; i++) {
-		const f32 a0 = 6.2831853f * i / kSteps, a1 = 6.2831853f * (i + 1) / kSteps;
-		const f32 c0 = cosf(a0), s0 = sinf(a0), c1 = cosf(a1), s1 = sinf(a1);
-		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-		scopeVertex(cx + c0 * in * sx, cy + s0 * in, r, g, b, a);
-		scopeVertex(cx + c0 * out * sx, cy + s0 * out, r, g, b, a);
-		scopeVertex(cx + c1 * out * sx, cy + s1 * out, r, g, b, a);
-		scopeVertex(cx + c1 * in * sx, cy + s1 * in, r, g, b, a);
-		GXEnd();
-	}
-}
-} // namespace
-
 extern "C" int port_coop_view_rect(int view, float* r); // ext/coop: a player's part of the screen
-void drawScopeOf(JDrama::TGraphics* graphics, int player, OSTime since);
-OSTime s_scopeSinceOf[2]; // each player's (co-op)
-// Drawn with each view (co-op: once for each player's half, the game running as that player):
-// the scope of the player whose view it is
-void PortHeldFluddDrawScope(JDrama::TGraphics* graphics)
-{
-	const int p = PortPlayerNow();
-	if (!(s_held[p].zoomFlags & 2) || !graphics) { // SMS_ZOOM_SCOPE
-		s_scopeSinceOf[p] = 0;
-		return;
-	}
-	if (!s_scopeSinceOf[p])
-		s_scopeSinceOf[p] = OSGetTime();
-	drawScopeOf(graphics, p, s_scopeSinceOf[p]);
-}
 
-// a player's scope over their view (co-op: their half, the picture squeezed into it, so the
-// sight is made as much wider or taller to look round)
-void drawScopeOf(JDrama::TGraphics* graphics, int player, OSTime s_scopeSince)
+// SMS_EV_DRAW_UNDER_HUD: the mods' shapes for this view (co-op: this player's half), drawn into it
+// here, after the scene and before the HUD. Their canvas is the view's, 480 high, its units square as
+// seen (its picture's aspect, side by side halves half as wide).
+void drawUnderHud(JDrama::TGraphics* graphics)
 {
-	const OSTime now = OSGetTime();
-	f32 in = (f32)OSTicksToMilliseconds(now - s_scopeSince) / 1000.0f / kScopeIn;
-	in     = in < 0.0f ? 0.0f : in > 1.0f ? 1.0f : in;
-	if (in < 0.05f)
-		return;
 	const JDrama::TRect& vp = graphics->getViewport();
 	const f32 w = (f32)(vp.x2 - vp.x1), h = (f32)(vp.y2 - vp.y1);
 	if (w <= 0.0f || h <= 0.0f)
+		return;
+	const int player = PortPlayerNow();
+	f32 cw = 640.0f, ch = 480.0f;
+	GXPC_ModLayerCanvas(&cw, &ch);
+	float part[4];
+	f32 aspect = cw / ch;
+	if (port_coop_view_rect(player, part) && part[2] > 0.01f && part[3] > 0.01f)
+		aspect *= part[2] / part[3];
+	const f32 vw = 480.0f * aspect, vh = 480.0f;
+	static u32 s_frame;
+	const GXPCModVertex* v = nullptr;
+	const int n            = modh_draw_under(vw, vh, player, ++s_frame, &v);
+	if (n < 3 || !v)
 		return;
 	J2DOrthoGraph graph(vp);
 	graph.setPort();
 	graph.setup2D();
 	PortMenu::wholeScreen(w, h); // to the last row too (the game's 2D port leaves it out)
-	// the picture's x units to its y units as seen (the frame 448 rows high shown at its aspect,
-	// widescreen 4:3 units centred and past the edges), so the sight looks round
-	f32 cw = 640.0f, ch = 480.0f;
-	GXPC_ModLayerCanvas(&cw, &ch);
-	const f32 wide = GXPC_GetWidescreen() > 0.0f ? GXPC_GetWidescreen() : 1.0f;
-	const f32 seen = (cw / ch) * h / (w * wide); // one x unit's width over one y unit's height
-	f32 sx         = seen > 0.1f ? 1.0f / seen : 1.0f;
-	GXPC_SetWide2D(1);
 	GXSetNumChans(1);
 	GXSetNumTevStages(1);
 	GXSetNumTexGens(0);
@@ -310,36 +254,23 @@ void drawScopeOf(JDrama::TGraphics* graphics, int player, OSTime s_scopeSince)
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
 	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
-
-	float part[4];
-	if (port_coop_view_rect(player, part) && part[2] > 0.01f && part[3] > 0.01f)
-		sx *= part[3] / part[2]; // (side by side: half as wide a picture, its x units twice as wide)
-	const f32 x = w * 0.5f, y = h * 0.5f, rad = h * 0.46f;
-	const u8 a    = (u8)(255.0f * in);
-	const f32 outer = (w * wide + h) * 2.0f; // past every edge, widescreen's too
-	scopeRing(x, y, rad, outer, sx, 0, 0, 0, a);             // all round the sight
-	scopeRing(x, y, rad - h * 0.006f, rad + h * 0.006f, sx, 20, 20, 20, a); // its rim
-	const u8 ha  = (u8)(230.0f * in);
-	const f32 t  = h * 0.00125f, gap = h * 0.02f, rx = rad * sx;
-	scopeBox(x - rx, y - t, x - gap * sx, y + t, 0, 0, 0, ha); // the cross hairs, open in the middle
-	scopeBox(x + gap * sx, y - t, x + rx, y + t, 0, 0, 0, ha);
-	scopeBox(x - t * sx, y - rad, x + t * sx, y - gap, 0, 0, 0, ha);
-	scopeBox(x - t * sx, y + gap, x + t * sx, y + rad, 0, 0, 0, ha);
-	scopeBox(x - rx, y - 3 * t, x - rx * 0.55f, y + 3 * t, 0, 0, 0, ha); // thicker at the edge
-	scopeBox(x + rx * 0.55f, y - 3 * t, x + rx, y + 3 * t, 0, 0, 0, ha);
-	scopeBox(x - 3 * t * sx, y + rad * 0.55f, x + 3 * t * sx, y + rad, 0, 0, 0, ha);
-	for (int i = 1; i <= 4; i++) { // the marks
-		const f32 d = rad * 0.1f * (f32)i, m = h * 0.008f;
-		scopeBox(x - d * sx - t * sx, y - m, x - d * sx + t * sx, y + m, 0, 0, 0, ha);
-		scopeBox(x + d * sx - t * sx, y - m, x + d * sx + t * sx, y + m, 0, 0, 0, ha);
-		scopeBox(x - m * sx, y + d - t, x + m * sx, y + d + t, 0, 0, 0, ha);
+	const f32 kx = w / vw, ky = h / vh;
+	for (int at = 0; at + 3 <= n;) {
+		int k = n - at > 60000 ? 60000 : n - at;
+		k -= k % 3;
+		GXBegin(GX_TRIANGLES, GX_VTXFMT0, (u16)k);
+		for (int i = 0; i < k; i++) {
+			const GXPCModVertex& q = v[at + i];
+			GXPosition3f32(q.x * kx, q.y * ky, 0.0f);
+			GXColor4u8(q.rgba[0], q.rgba[1], q.rgba[2], q.rgba[3]);
+		}
+		GXEnd();
+		at += k;
 	}
-	scopeRing(x, y, 0.0f, h * 0.003f, sx, 230, 30, 30, a); // the red dot
-	GXPC_SetWide2D(0);
 }
 
-// The scope's place in the game's last list, after the characters and before the HUD
-// (MarDirectorInitECT.cpp): drawn there each frame.
+// The mods' place in the game's last list, after the characters and before the HUD
+// (MarDirectorInitECT.cpp): their under-HUD draws there each frame.
 namespace {
 class TScopeObj : public JDrama::TViewObj {
 public:
@@ -349,7 +280,8 @@ public:
 	}
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics)
 	{
-		(void)cue, (void)graphics; // (a mod draws a scope itself now: draw->*)
+		if ((cue & 0x8) && graphics) // CUE_DRAW: the mods' draws under the HUD (SMS_EV_DRAW_UNDER_HUD)
+			drawUnderHud(graphics);
 	}
 };
 TScopeObj s_scopeObj;
