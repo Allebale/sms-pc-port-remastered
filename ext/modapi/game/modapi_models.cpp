@@ -90,12 +90,16 @@ bool s_haveView[2];
 // the mods' pictures (models->texture_create): as given (FLUDD's dress), and in the GameCube's
 // RGBA8 layout for GX (4x4 blocks: alpha and red, then green and blue)
 const int kTextures = 32;
+} // namespace
+extern "C" void* port_low_alloc(unsigned long size);
+namespace {
 struct Tex {
 	SmsMod* mod;
 	int w, h;
 	u8* rgba;
 	u8* tiled;
-	void* block; // (tiled's allocation, 32-aligned within)
+	void* block; // tiled's memory: below 4 GiB, as GX keeps its address in 32 bits; kept for the
+	size_t cap;  // slot's next picture (port_low_alloc's is never given back), and its size
 	GXTexObj obj;
 };
 Tex s_textures[kTextures];
@@ -507,14 +511,17 @@ extern "C" SmsTexture modg_models_texture_create(SmsMod* mod, const uint8_t* rgb
 		Tex& t = s_textures[i];
 		if (t.rgba)
 			continue;
-		t.rgba  = (u8*)malloc((size_t)w * h * 4);
-		t.block = malloc((size_t)w * h * 4 + 32);
-		if (!t.rgba || !t.block) {
-			free(t.rgba), free(t.block);
-			t.rgba = 0, t.block = 0;
-			return 0;
+		const size_t bytes = (size_t)w * h * 4;
+		if (!t.block || t.cap < bytes) {
+			void* low = port_low_alloc((unsigned long)bytes); // (64 KiB aligned)
+			if (!low)
+				return 0;
+			t.block = low, t.cap = bytes;
 		}
-		t.tiled = (u8*)(((uintptr_t)t.block + 31) & ~(uintptr_t)31);
+		t.rgba = (u8*)malloc(bytes);
+		if (!t.rgba)
+			return 0;
+		t.tiled = (u8*)t.block;
 		t.mod = mod, t.w = w, t.h = h;
 		memcpy(t.rgba, rgba, (size_t)w * h * 4);
 		tile(t);
@@ -550,8 +557,11 @@ extern "C" void modg_models_texture_destroy(SmsMod* mod, SmsTexture texture)
 	for (int i = 0; i < s_batchCount; i++) // (not drawn this tick after all)
 		if (s_batches[i].texture == texture)
 			s_batches[i].count = 0;
-	free(t->rgba), free(t->block);
+	free(t->rgba);
+	void* block      = t->block;
+	const size_t cap = t->cap;
 	memset(t, 0, sizeof *t);
+	t->block = block, t->cap = cap;
 }
 
 // ------------------------------------------------------------------ FLUDD in a mod's picture
