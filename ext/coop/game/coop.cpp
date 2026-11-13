@@ -48,6 +48,8 @@
 #include <Player/MarioAccess.hpp>
 #include <Player/MarioCap.hpp>
 #include <Player/WaterGun.hpp>
+#include <Player/ModelWaterManager.hpp>
+#include <Enemy/Enemy.hpp>
 #include <Strategic/LiveActor.hpp>
 #include <Strategic/Strategy.hpp>
 #include <System/Application.hpp>
@@ -1727,6 +1729,20 @@ TMario* playerFor(THitActor* a)
 	                                                                                                  : s_p1.mario;
 }
 
+// An enemy chasing one player (its goal the player's own actor, set when it found them or was
+// reset) goes after the player it plays with this move instead: it looks the way it walks.
+void retarget(THitActor* a, TMario* to)
+{
+	TSpineEnemy* e = dynamic_cast<TSpineEnemy*>(a);
+	if (!e)
+		return;
+	TMario* other = to == s_p1.mario ? s_p2.mario : s_p1.mario;
+	if (e->unkF4.unk0 == (THitActor*)other)
+		e->unkF4.unk0 = (THitActor*)to;
+	if (e->unk104.unk0 == (THitActor*)other)
+		e->unk104.unk0 = (THitActor*)to;
+}
+
 void objectMove(void* object, int after)
 {
 	if (after) {
@@ -1743,7 +1759,11 @@ void objectMove(void* object, int after)
 		return;
 	// any object the hit check knows (a TLiveActor, a gate's TTakeActor...), not the players
 	THitActor* a = dynamic_cast<THitActor*>(static_cast<JDrama::TViewObj*>(object));
-	if (!a || dynamic_cast<TMario*>(a) || s_p2.mario->checkFlag(MARIO_FLAG_GAME_OVER) || playerFor(a) != s_p2.mario)
+	if (!a || dynamic_cast<TMario*>(a))
+		return;
+	TMario* with = s_p2.mario->checkFlag(MARIO_FLAG_GAME_OVER) ? s_p1.mario : playerFor(a);
+	retarget(a, with);
+	if (with != s_p2.mario)
 		return;
 	s_swapCount++;
 	Swap& w        = s_swaps[s_swapDepth++];
@@ -1755,6 +1775,14 @@ void objectMove(void* object, int after)
 	SMS_SetMarioAccessParams();
 	gpCamera = s_p2.cam; // what is in sight of the player it plays with (an NPC awake beside player 2)
 }
+
+// Whose each FLUDD drop is (the water manager's slots: 1 player 2's), and a drop's hit taken
+// with its player's globals in force: the game's push reads Mario's place and facing.
+unsigned char s_dropOwner[TModelWaterManager::SLOT_NUM];
+struct DropHit {
+	TMario* mario;
+	CPolarSubCamera* cam;
+} s_dropHit;
 
 // A test's player 2 input (SMS_COOP_TEST_PAD=stick x:y@frame+frames,...;
 // "a@frame+frames" presses A; frames since they joined): what controller 2 reads.
@@ -2007,6 +2035,54 @@ extern "C" THitActor* port_coop_player1_actor(void)
 	if (!s_inP2 || !s_p1.mario)
 		return s_inP2 ? nullptr : gpMarioOriginal;
 	return s_p1.mario;
+}
+
+// a drop made in a water manager slot: whose (the player whose globals are in force)
+extern "C" void port_coop_drop_made(int slot)
+{
+	if (slot >= 0 && slot < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[slot] = s_active && s_p2.mario && gpMarioOriginal == s_p2.mario ? 1 : 0;
+}
+
+// a drop made for a player whatever the game runs as (a mod's, api->water->emit)
+extern "C" void port_coop_drop_set_owner(int slot, int player)
+{
+	if (slot >= 0 && slot < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[slot] = s_active && player == 1 ? 1 : 0;
+}
+
+extern "C" void port_coop_drop_moved(int to, int from)
+{
+	if (to >= 0 && to < TModelWaterManager::SLOT_NUM && from >= 0 && from < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[to] = s_dropOwner[from];
+}
+
+// a drop reaching something: a drop of player 2's with player 2's globals in force (1), to its end
+extern "C" int port_coop_drop_hit_begin(THitActor* from)
+{
+	if (!s_active || s_inP2 || !s_p1.mario || !s_p2.mario || gpMarioOriginal != s_p1.mario || !gpModelWaterManager)
+		return 0;
+	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(from);
+	if (!drop || drop->mParticleIndex < 0 || drop->mParticleIndex >= TModelWaterManager::SLOT_NUM
+	    || drop->mParticleIndex >= (int)gpModelWaterManager->mParticleCount || s_dropOwner[drop->mParticleIndex] != 1)
+		return 0;
+	s_dropHit.mario = gpMarioOriginal;
+	s_dropHit.cam   = gpCamera;
+	gpMarioOriginal = s_p2.mario;
+	gpMarioAddress  = s_p2.mario;
+	SMS_SetMarioAccessParams();
+	gpCamera = s_p2.cam;
+	return 1;
+}
+
+extern "C" void port_coop_drop_hit_end(int began)
+{
+	if (!began)
+		return;
+	gpMarioOriginal = s_dropHit.mario;
+	gpMarioAddress  = s_dropHit.mario;
+	SMS_SetMarioAccessParams();
+	gpCamera = s_dropHit.cam;
 }
 // decomp-patches/zzzzzz-coop-07: player 2 for the wire manager
 extern "C" TTakeActor* port_coop_wire_player2(void) { return playingP2(); }

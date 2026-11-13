@@ -3,7 +3,7 @@
 //
 // Each water manager slot keeps a mod's number for its drop (its tag) and the player whose FLUDD
 // made it, kept as the manager makes drops and moves them down as others end
-// (port_water_drop_made/moved, patch zzzzzzzzzz-mod-water-drops).
+// (port_water_drop_made/moved, patch zzzzzzzzzz-coop-water-owner).
 
 #include "../modapi_bridge.h"
 #include "port_ext.h"
@@ -44,6 +44,9 @@
 int PortPlayers();                   // modapi_game.cpp: 2 while co-op's player 2 plays
 TMario* PortPlayerMario(int player); // ...each player's Mario
 extern "C" int port_cheat_infinite_fludd;
+extern "C" void port_coop_drop_made(int slot); // ext/coop: whose drop it is (co-op's own)
+extern "C" void port_coop_drop_moved(int to, int from);
+extern "C" void port_coop_drop_set_owner(int slot, int player);
 extern "C" void port_clip_play(const short* pcm, int frames, int rate, float gain); // platform/audio/port_clips.cpp
 
 namespace {
@@ -168,6 +171,9 @@ extern "C" void port_water_drop_made(int slot)
 	s_dropTag[slot]    = s_modEmitting ? s_emitTag : s_tagging ? s_tagNow : 0;
 	s_dropUnseen[slot] = s_modEmitting ? s_emitUnseen : s_tagging && s_unseenNow;
 	s_dropPlayer[slot] = (s8)(s_modEmitting ? s_emitPlayer : playerNow());
+	port_coop_drop_made(slot);
+	if (s_modEmitting) // (a mod's drop for a player: theirs, whoever the game runs as)
+		port_coop_drop_set_owner(slot, s_emitPlayer);
 }
 
 // a drop moved down to another slot as those before it ended (garbageCollect)
@@ -178,6 +184,7 @@ extern "C" void port_water_drop_moved(int to, int from)
 	s_dropTag[to]    = s_dropTag[from];
 	s_dropUnseen[to] = s_dropUnseen[from];
 	s_dropPlayer[to] = s_dropPlayer[from];
+	port_coop_drop_moved(to, from);
 }
 
 // Patch zzzzzzzzz-mod-drops: a drop left out of the water's drawing (a mod draws it itself)
