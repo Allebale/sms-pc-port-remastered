@@ -1,0 +1,37 @@
+Reason: a mod's model sizes (api->actor->set_model_scale, ext/modapi/game/modapi_world.cpp): an actor's model scaled as it is posed each frame (port_live_actor_posed, which does nothing unless a mod asked for one: an enemy swelling and popping, say). Nothing else changes.
+
+--- a/src/Strategic/liveactor.cpp
++++ b/src/Strategic/liveactor.cpp
+@@ -384,6 +384,12 @@
+ 	mMActor->entry();
+ }
+ 
++#ifdef TARGET_PC
++// port: a live actor's model posed for this frame, a mod's size for it (api->actor->set_model_scale,
++// ext/modapi/game/modapi_world.cpp)
++extern "C" void port_live_actor_posed(TLiveActor* actor);
++#endif
++
+ void TLiveActor::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
+ #ifdef TARGET_PC
+@@ -435,6 +441,9 @@
+ 			if (cue & CUE_CALC_ANIM) {
+ 				calcRootMatrix();
+ 				mMActor->calc();
++#ifdef TARGET_PC
++				port_live_actor_posed(this);
++#endif
+ #ifdef VERSION_GMSP01
+ 				if (mLiveFlag & LIVE_FLAG_CALC_INT_FRAME)
+ 					mMActor->getFrameCtrl(0)->setFrame(frame);
+@@ -464,6 +473,9 @@
+ 		if (param_1 & CUE_CALC_ANIM) {
+ 			calcRootMatrix();
+ 			mMActor->calc();
++#ifdef TARGET_PC
++			port_live_actor_posed(this);
++#endif
+ 		}
+ 
+ 		if (param_1 & CUE_CALC_VIEW)

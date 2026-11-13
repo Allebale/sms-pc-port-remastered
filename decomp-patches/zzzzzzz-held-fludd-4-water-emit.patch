@@ -1,0 +1,26 @@
+Reason: the mod API's water (ext/modapi/game/modapi_world.cpp): every request for drops (emitRequest) of a player's FLUDD is told to mods first (SMS_EV_WATER_EMIT), who may cancel it (a mod's own shots) or tag its drops (a mod's own look); asked there, not in the nozzle, which Super Mario Eclipse's engine replaces. Without a mod listening, nothing changes.
+
+--- a/src/Player/ModelWaterManager.cpp
++++ b/src/Player/ModelWaterManager.cpp
+@@ -341,8 +341,21 @@
+ 	unk2514[mParticleCount] = nullptr;
+ }
+ 
++#ifdef TARGET_PC
++// the mod API's water (ext/modapi/game/modapi_world.cpp)
++bool PortWaterRequest(const TWaterEmitInfo& asked, int* made);
++#endif
++
+ u8 TModelWaterManager::emitRequest(const TWaterEmitInfo& param_1)
+ {
++#ifdef TARGET_PC
++	{
++		// told to mods first: they may cancel it (their own drops instead) or tag its drops
++		int made;
++		if (PortWaterRequest(param_1, &made))
++			return (u8)made;
++	}
++#endif
+ 	int particlesToSpawn = param_1.mNum.get();
+ 	if (particlesToSpawn == 0)
+ 		return 0;

@@ -581,6 +581,44 @@ void drawEnd()
 
 bool drawing() { return s_drawing; }
 
+} // namespace modhost
+
+// SMS_EV_DRAW_UNDER_HUD (API 1.8): a view's own draws, as the game draws it before its HUD
+// (modapi_held_fludd.cpp's place in its last list): the mods' shapes in the view's canvas
+// (`cw` x `ch`), their corners handed back (x, y in the canvas, colour) for the game to draw
+// there itself; images and clips left out. 0 when nothing was drawn.
+extern "C" int modh_draw_under(float cw, float ch, int player, uint32_t frame, const GXPCModVertex** out)
+{
+	static std::vector<GXPCModVertex> s_under;
+	s_under.clear();
+	if (s_drawing || !modh_wants(SMS_EV_DRAW_UNDER_HUD))
+		return 0;
+	const float w = s_w, h = s_h;
+	s_w = cw, s_h = ch;
+	s_v.clear();
+	s_b.clear();
+	s_clips.clear();
+	s_drawing = true;
+	SmsEvDrawUnder e;
+	e.canvas_w = cw;
+	e.canvas_h = ch;
+	e.player   = player;
+	e.frame    = frame;
+	modh_dispatch(SMS_EV_DRAW_UNDER_HUD, &e, sizeof e);
+	s_drawing = false;
+	for (size_t i = 0; i < s_b.size(); i++)
+		if (!s_b[i].image)
+			s_under.insert(s_under.end(), s_v.begin() + s_b[i].first, s_v.begin() + s_b[i].first + s_b[i].count);
+	s_v.clear();
+	s_b.clear();
+	s_clips.clear();
+	s_w = w, s_h = h;
+	*out = s_under.data();
+	return (int)s_under.size();
+}
+
+namespace modhost {
+
 void drawCanvas(float* w, float* h)
 {
 	if (!s_drawing)

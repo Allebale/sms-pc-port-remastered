@@ -1,4 +1,4 @@
-Reason: the FLUDD weapons' rifle scope (a weapons mod, api->held_fludd set_zoom's SMS_ZOOM_SCOPE) is drawn by the game in its last list (GX Post) after the characters' draw buffers and before its 2D (the HUD's counters, talk boxes, the news ticker), not over everything as a mod's own drawing is. Without such a mod, it draws nothing.
+Reason: mods drawing under the HUD (SMS_EV_DRAW_UNDER_HUD, ext/modapi/game/modapi_held_fludd.cpp): their shapes are drawn in the game's last list (GX Post) after the characters' draw buffers and before its 2D (the HUD's counters, talk boxes, the news ticker), not over everything as a mod's own drawing is. Without such a mod, it draws nothing.
 
 --- a/src/System/MarDirectorInitECT.cpp
 +++ b/src/System/MarDirectorInitECT.cpp
@@ -7,7 +7,7 @@ Reason: the FLUDD weapons' rifle scope (a weapons mod, api->held_fludd set_zoom'
  // rogue includes
  #include <M3DUtil/InfectiousStrings.hpp>
 +#ifdef TARGET_PC
-+JDrama::TViewObj* PortHeldFluddScopeObj(); // the FLUDD weapons' rifle scope (ext/modapi/game/modapi_held_fludd.cpp)
++JDrama::TViewObj* PortUnderHudObj(); // mods' draws under the HUD (ext/modapi/game/modapi_held_fludd.cpp)
 +#endif
  
  // Parked helper for a JDRNameRefGen.hpp item: the ROM's
@@ -17,9 +17,9 @@ Reason: the FLUDD weapons' rifle scope (a weapons mod, api->held_fludd set_zoom'
  	param_1->push_back(drawBufChrOpa, CUE_DRAW);
  	param_1->push_back(drawBufChrXlu, CUE_DRAW);
 +#ifdef TARGET_PC
-+	// the FLUDD weapons' rifle scope: over the stage and its characters, under the HUD
++	// mods' draws under the HUD (SMS_EV_DRAW_UNDER_HUD): over the stage and its characters
 +	// (ext/modapi/game/modapi_held_fludd.cpp)
-+	param_1->push_back(PortHeldFluddScopeObj(), CUE_DRAW);
++	param_1->push_back(PortUnderHudObj(), CUE_DRAW);
 +#endif
  
  	JDrama::TOrthoProj* ortho3 = new JDrama::TOrthoProj(

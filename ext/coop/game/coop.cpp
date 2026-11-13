@@ -447,6 +447,42 @@ void dressOwn(TMario* m, bool luigi)
 			}
 }
 
+// Player 2's FLUDD (body and nozzles) with textures of its own: they share Mario's, so a look given
+// to one FLUDD's textures (a mod's dress, held_fludd->dress, port_coop_own_fludd_textures) showed on
+// both. Made when first asked for, once for each player 2.
+TMario* s_ownFluddFor;
+// a model's textures its own: its data's, its material packets' (each keeps the one it was made
+// with) and its display lists made again with them
+void retexture(J3DModel* md)
+{
+	J3DModelData* d = md->getModelData();
+	J3DTexture* own = ownTextures(d->getTexture(), nullptr);
+	if (!own || own == d->getTexture())
+		return;
+	d->setTexture(own);
+	const bool locked = d->getMaterialNum() && md->getMatPacket(0)->isLocked();
+	for (u16 i = 0; i < d->getMaterialNum(); i++)
+		md->getMatPacket(i)->setTexture(own);
+	if (locked) {
+		md->unlock();
+		SMS_MakeDLAndLock(md);
+	} else
+		md->makeDL();
+}
+void ownFluddTextures(TMario* m)
+{
+	TWaterGun* g = m ? m->mWaterGun : nullptr;
+	if (!g || s_ownFluddFor == m)
+		return;
+	s_ownFluddFor = m;
+	if (g->mFluddModel && g->mFluddModel->getModel())
+		retexture(g->mFluddModel->getModel());
+	for (int n = 0; n < 6; n++)
+		if (g->mNozzleList[n] && g->mNozzleList[n]->getMActor() && g->mNozzleList[n]->getMActor()->getModel())
+			retexture(g->mNozzleList[n]->getMActor()->getModel());
+	fprintf(stderr, "[coop] player 2's FLUDD has textures of its own\n");
+}
+
 // ------------------------------------------------------------ player 2 and camera 2
 
 TMario* p1() { return s_p1.mario; }
@@ -574,6 +610,7 @@ void sceneLoaded()
 	coop_character::stageStart();
 	TCoopMario* m = new TCoopMario;
 	s_p2.mario    = m;
+	s_ownFluddFor = nullptr; // (a new player 2: their FLUDD's textures Mario's until asked)
 	JSUMemoryInputStream body((void*)record, size);
 	m->load(body); // as player 2 (InP2): its parameters, models and FLUDD
 	m->setGamePad(gpMarDirector->getGamePad(1));
@@ -1971,11 +2008,47 @@ static TMario* playingP2()
 }
 extern "C" THitActor* port_coop_player2_actor(void) { return playingP2(); }
 
+// A player's half of the screen while it is split (x, y, w, h as parts of it, 0 to 1; player 1
+// left or top): 1, else 0 (one view, the whole screen)
+extern "C" int port_coop_view_rect(int view, float* r)
+{
+	if (!s_split || !playingP2()) {
+		r[0] = r[1] = 0.0f, r[2] = r[3] = 1.0f;
+		return 0;
+	}
+	viewRect(view ? 1 : 0, r);
+	return 1;
+}
+// Player 2's FLUDD given textures of its own (a mod dressing each FLUDD apart): 1 done
+extern "C" int port_coop_own_fludd_textures(void* mario)
+{
+	TMario* m = (TMario*)mario;
+	if (!m || !s_made || m != s_p2.mario)
+		return 0;
+	ownFluddTextures(m);
+	return 1;
+}
+
+// player 1's Mario, whoever the game runs as now (its globals player 2's while they run)
+extern "C" THitActor* port_coop_player1_actor(void)
+{
+	if (!s_inP2 || !s_p1.mario)
+		return s_inP2 ? nullptr : gpMarioOriginal;
+	return s_p1.mario;
+}
+
 // a drop made in a water manager slot: whose (the player whose globals are in force)
 extern "C" void port_coop_drop_made(int slot)
 {
 	if (slot >= 0 && slot < TModelWaterManager::SLOT_NUM)
 		s_dropOwner[slot] = s_active && s_p2.mario && gpMarioOriginal == s_p2.mario ? 1 : 0;
+}
+
+// a drop made for a player whatever the game runs as (a mod's, api->water->emit)
+extern "C" void port_coop_drop_set_owner(int slot, int player)
+{
+	if (slot >= 0 && slot < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[slot] = s_active && player == 1 ? 1 : 0;
 }
 
 extern "C" void port_coop_drop_moved(int to, int from)
