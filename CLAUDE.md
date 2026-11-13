@@ -36,7 +36,7 @@ Read this first. It is what earlier sessions learned working with Allebale on th
 | Safety copies | `fallback`, `fallback-2`, `fallback-3` (older versions of the main build). Make a new `fallback-N` before big changes. |
 | Kept-aside experiments | `ambient-occlusion`, `hanging-things` (Swaying Hanging Things, removed), `ao-thin-option` (local only, never pushed), `character-ambient-occlusion` (Character Ambient Occlusion: None to Full shade on people and enemies, against blocky patches on low-poly ones; for Allebale to try later, not on `remastered-test`) |
 | First Person mod | `Allebale/sms-first-person-mod` (the launcher uses its GitHub releases) |
-| SDK fork | `Allebale/sms-mod-sdk-modtesting`, branch `remastered` (Chase's SDK plus `reflections`; `combined-plus` is older and also carries the goop weapons' SDK) |
+| SDK fork | `Allebale/sms-mod-sdk-modtesting`, branch `combined-plus` |
 | Chase's port (upstream, read only) | `chasem-dev/sms-pc-port`, branch `main` (the launcher's Beta builds the newest commit there) |
 
 ### Moving test to main
@@ -52,7 +52,7 @@ conflicts by **keeping both** Chase's change and the fork's, compile-check, push
 before it goes to `remastered`.
 
 If the `sdk` submodule conflicts (Chase moved to a new SDK), merge Chase's SDK commit into
-`Allebale/sms-mod-sdk-modtesting` `remastered` (keep the fork's `reflections` as the last `SmsApi`
+`Allebale/sms-mod-sdk-modtesting` `combined-plus` (keep the fork's `reflections` as the last `SmsApi`
 member), push it, and point `sdk` at that merge (`git update-index --cacheinfo 160000,<sha>,sdk`).
 Then dry-run every `decomp-patches/*.patch` in C-locale name order on a copy of `decomp/`: Chase's
 patch numbers can collide with the fork's (both had `ext-31` and `ext-32`); different names still apply.

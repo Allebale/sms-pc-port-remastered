@@ -426,17 +426,17 @@ int callHandler(Sub& s, SmsEvent* ev)
 	return r;
 }
 
-// A Shine's or a coin's model a handler named relative to its mod's folder, made a full
+// A Shine's model a handler named relative to its mod's folder, made a full
 // path (kept until the next one).
 std::string s_shineModel;
-void modelPath(SmsMod* m, const char** model)
+void shineModelPath(SmsMod* m, SmsEvShineSetup* p)
 {
-	if (!*model || !(*model)[0] || *model == s_shineModel.c_str())
+	if (!p || !p->model || !p->model[0] || p->model == s_shineModel.c_str())
 		return;
-	const char* n   = *model;
+	const char* n   = p->model;
 	const bool full = n[0] == '/' || n[0] == '\\' || (n[0] && n[1] == ':');
 	s_shineModel    = full ? std::string(n) : m->dir + "/" + n;
-	*model          = s_shineModel.c_str();
+	p->model        = s_shineModel.c_str();
 }
 
 int dispatchTo(uint32_t type, void* data, uint32_t size, SmsMod* only)
@@ -459,9 +459,7 @@ int dispatchTo(uint32_t type, void* data, uint32_t size, SmsMod* only)
 			continue;
 		const int r = callHandler(s, &ev);
 		if (type == SMS_EV_SHINE_SETUP)
-			modelPath(s.mod, &((SmsEvShineSetup*)data)->model);
-		else if (type == SMS_EV_ITEM_SETUP)
-			modelPath(s.mod, &((SmsEvItemSetup*)data)->model);
+			shineModelPath(s.mod, (SmsEvShineSetup*)data);
 		if (r != SMS_CANCEL)
 			continue;
 		if (canConsume) {
@@ -774,26 +772,6 @@ void dropRegistrations(SmsMod* m)
 		m->aims = false;
 		modg_player_set_aim(0, 0.0f, 0.0f);
 	}
-	if (m->holdsFludd) { // FLUDD back on his back
-		m->holdsFludd = false;
-		modg_held_fludd_set(0, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
-	}
-	if (m->armsFludd) { // the normal spray, the game's own numbers, no zoom
-		m->armsFludd = false;
-		modg_spray_weapon_set(SMS_SPRAY_NORMAL, 0);
-		for (int w = SMS_SPRAY_NORMAL; w <= SMS_SPRAY_SMG; w++) {
-			modg_spray_weapon_stats(w, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // the game's own numbers again
-			modg_spray_view_distance(w, 0.0f);
-		}
-		modg_spray_rocket_jump(0.0f);
-		modg_spray_far_scale(1.0f);
-		modg_spray_shadow_damage(1.0f);
-		modg_held_fludd_zoom(0.0f, 0);
-	}
-	if (m->setsView) {
-		m->setsView = false;
-		modg_held_fludd_view(0);
-	}
 	if (m->hiddenParts) { // what it hid of him is drawn again (unless another mod hides it)
 		m->hiddenParts = 0;
 		applyHiddenParts();
@@ -1041,7 +1019,7 @@ const SmsGameApi s_game = {
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
-	modg_object_set_color, modg_object_set_tint,
+	modg_object_set_color,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -1158,92 +1136,6 @@ int apiReflectSet(SmsMod* mod, int option, int value)
 
 const SmsReflectionsApi s_reflections = {sizeof(SmsReflectionsApi), apiReflectSet, port_reflect_option_get,
                                          port_reflect_option_range};
-
-// ------------------------------------------------------------------ FLUDD held in view (first person)
-// ext/modapi/game/modapi_held_fludd.cpp and modapi_spray_weapons.cpp: the mod that holds it, so
-// it goes back (and the normal spray with it) when that one unloads
-
-int apiHeldFluddSet(int on, float right, float down, float forward, float scale, float aim)
-{
-	if (SmsMod* m = current())
-		m->holdsFludd = on != 0;
-	return modg_held_fludd_set(on, right, down, forward, scale, aim);
-}
-
-int apiSprayWeaponSet(int weapon, int flags)
-{
-	if (SmsMod* m = current())
-		m->armsFludd = m->armsFludd || weapon != SMS_SPRAY_NORMAL || flags != 0;
-	return modg_spray_weapon_set(weapon, flags);
-}
-
-int apiSprayWeaponStats(int weapon, const SmsSprayStats* st)
-{
-	if (SmsMod* m = current())
-		m->armsFludd = m->armsFludd || st != nullptr;
-	// each weapon's hold distance in first person, and long range (from mods that set them)
-	modg_spray_view_distance(weapon, st && st->size >= offsetof(SmsSprayStats, view_distance) + sizeof(float) ? st->view_distance : 0.0f);
-	if (st && st->size >= offsetof(SmsSprayStats, far_scale) + sizeof(float))
-		modg_spray_far_scale(st->far_scale);
-	if (st && st->size >= offsetof(SmsSprayStats, shadow_damage) + sizeof(float))
-		modg_spray_shadow_damage(st->shadow_damage);
-	if (weapon == SMS_SPRAY_BAZOOKA) // its rocket jump: only from a mod that sets it
-		modg_spray_rocket_jump(st && st->size >= offsetof(SmsSprayStats, self_jump) + sizeof(float) ? st->self_jump : 0.0f);
-	if (!st || st->size < offsetof(SmsSprayStats, lift))
-		return modg_spray_weapon_stats(weapon, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-	const float lift = st->size >= offsetof(SmsSprayStats, lift) + sizeof(float) ? st->lift : -1.0f; // older mods: with the push
-	const float drop = st->size >= offsetof(SmsSprayStats, drop_size) + sizeof(float) ? st->drop_size : 1.0f;
-	return modg_spray_weapon_stats(weapon, 1, st->every, st->push, st->range, st->to_defeat, st->water, st->hit_size, st->burst,
-	                               lift, drop);
-}
-
-int apiHeldFluddView(int on)
-{
-	if (SmsMod* m = current())
-		m->setsView = m->setsView || on != 0;
-	return modg_held_fludd_view(on);
-}
-
-int apiHeldFluddZoom(float fovy, int flags)
-{
-	if (SmsMod* m = current())
-		m->armsFludd = m->armsFludd || fovy > 0.0f;
-	return modg_held_fludd_zoom(fovy, flags);
-}
-
-int apiHeldFluddState(SmsHeldFluddState* st)
-{
-	if (!st || st->size < offsetof(SmsHeldFluddState, zoom_flags) + sizeof(int))
-		return 0;
-	int fp = 0, held = 0, weapon = 0, flags = 0;
-	float fovy = 0.0f;
-	modg_held_fludd_state(&fp, &held, &weapon, &fovy, &flags);
-	st->first_person = fp;
-	st->held         = held;
-	st->weapon       = weapon;
-	st->zoom_fovy    = fovy;
-	st->zoom_flags   = flags;
-	if (st->size >= offsetof(SmsHeldFluddState, game_scope) + sizeof(int))
-		st->game_scope = 1; // this game draws SMS_ZOOM_SCOPE's scope itself, under its HUD
-	return 1;
-}
-
-// mouse look (platform/pad/pad.cpp)
-extern "C" int port_mouse_take_look(float* dx, float* dy);
-int apiHeldFluddTakeMouse(float* dx, float* dy)
-{
-	float x = 0.0f, y = 0.0f;
-	const int on = port_mouse_take_look(&x, &y);
-	if (dx)
-		*dx = on ? x : 0.0f;
-	if (dy)
-		*dy = on ? y : 0.0f;
-	return on;
-}
-
-const SmsHeldFluddApi s_heldFludd = {sizeof(SmsHeldFluddApi), SMS_HELD_FLUDD_MAGIC, apiHeldFluddSet, apiSprayWeaponSet,
-                                     apiSprayWeaponStats, apiHeldFluddView, apiHeldFluddZoom, apiHeldFluddState,
-                                     apiHeldFluddTakeMouse};
 
 // ------------------------------------------------------------------ the API: multiplayer
 
@@ -1786,8 +1678,7 @@ namespace modhost {
 const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
-	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
-	&s_heldFludd,   &s_reflections,
+	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files, &s_reflections,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)

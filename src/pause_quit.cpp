@@ -414,8 +414,6 @@ const ResTIMG* render(const Ink& word, int scale, float outline, const ResTIMG& 
 	}
 	memcpy(buf, &like, 0x20);
 	ResTIMG* t         = (ResTIMG*)buf;
-	if (!t->alphaEnabled)
-		t->alphaEnabled = 1; // its outline round the letters, the rest clear
 	t->format          = scale == 1 ? GX_TF_IA4 : GX_TF_IA8;
 	t->width           = (u16)w;
 	t->height          = (u16)h;
@@ -468,30 +466,6 @@ const ResTIMG* render(const Ink& word, int scale, float outline, const ResTIMG& 
 	}
 	free(ia);
 	return t;
-}
-
-// When none of that can be made (a mod's own pause menu or file select pictures, such as Super Mario
-// Eclipse's: the log says which was missing), the word is drawn from letters kept here, in the Super
-// Mario 256 font, in the same style (white, in the menu's outline), at 4 times the size (sharp).
-#include "pause_quit_fallback.inc"
-
-const ResTIMG* renderFallback(int* layoutW, const ResTIMG* like)
-{
-	ResTIMG plain;
-	memset(&plain, 0, sizeof plain);
-	plain.format       = GX_TF_IA4;
-	plain.alphaEnabled = 1;
-	plain.minFilter = GX_LINEAR;
-	plain.magFilter = GX_LINEAR;
-	Ink word;
-	if (!inkNew(word, kFallbackPixW, kFallbackPixH))
-		return nullptr;
-	for (int i = 0; i < kFallbackPixW * kFallbackPixH; i++)
-		word.v[i] = ((kFallback[i / 2] >> (i & 1 ? 0 : 4)) & 15) / 15.0f;
-	const ResTIMG* art = render(word, kFallbackScale, kOutline * kFallbackScale, like ? *like : plain);
-	inkFree(word);
-	*layoutW = art ? kFallbackW : 0;
-	return art;
 }
 
 struct Art {
@@ -559,26 +533,11 @@ const ResTIMG* make(bool pack, int* layoutW)
 	free(quitFile);
 	free(monoFile);
 	*layoutW = art ? w / in.scale : 0;
-	if (!art) {
-		OSReport("[pause] QUIT GAME: the disc's letters not usable (menu words %s%s, file select's QUIT %s, MONO %s, "
-		         "letters %s, EXIT AREA's picture %s): its own letters\n",
-		         tx1.img ? "CONTINUE" : "no CONTINUE", tx3.img ? " EXIT AREA" : " no EXIT AREA",
-		         quit.img ? "found" : "missing", mono.img ? "found" : "missing", ok ? "read" : "not read",
-		         like ? "found" : "missing");
-		if (!like)
-			gamePicture("pause_tx_1", &like); // CONTINUE's picture's settings, as the menu's words have
-		art = renderFallback(layoutW, like);
-		w   = *layoutW * kFallbackScale;
-		in.scale = kFallbackScale;
-		outline  = kOutline * kFallbackScale;
-	}
-	const bool font = art && !us && w == kFallbackW * kFallbackScale;
 	OSReport("[pause] QUIT GAME item: %s, %d x %d, outline %.2f%s\n",
 	         !art             ? "no picture"
-	         : font           ? "QUIT GAME (in the Super Mario 256 font)"
 	         : us             ? "QUIT GAME"
 	                          : "the file select's QUIT",
-	         w, kH * in.scale, outline, art && in.scale > 1 && !font ? " (from the texture pack's)" : "");
+	         w, kH * in.scale, outline, art && in.scale > 1 ? " (from the texture pack's)" : "");
 	return art;
 }
 

@@ -44,9 +44,6 @@ struct SmsMod {
 	uint32_t hudHidden = 0; // game->set_hud_hidden: the HUD's parts this mod hides (SMS_HUD_*)
 	bool reflects = false;  // reflections->set: it set the port's puddle and water effects
 	bool aims = false;      // player->set_aim: it turns Mario's body
-	bool holdsFludd = false; // held_fludd->set: FLUDD held in view (first person)
-	bool armsFludd  = false; // held_fludd->set_weapon, set_weapon_stats, set_zoom: FLUDD's weapons
-	bool setsView   = false; // held_fludd->set_view: a first-person camera on
 	uint32_t hiddenParts = 0; // player->set_hidden_parts: the parts of Mario it hides (SMS_PLAYER_PART_*)
 };
 

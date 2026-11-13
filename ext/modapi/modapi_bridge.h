@@ -47,7 +47,6 @@ int modg_object_position(SmsObject obj, SmsVec3* out);
 int modg_object_set_position(SmsObject obj, const SmsVec3* pos);
 uint32_t modg_object_type(SmsObject obj);
 int modg_object_set_color(SmsObject obj, int which, SmsColor color);
-int modg_object_set_tint(SmsObject obj, SmsColor color);
 // The running disc's game code and maker ("GMSE01"), into out[7].
 void modg_game_code(char* out);
 int modg_object_health(SmsObject obj, int* max);
@@ -68,17 +67,6 @@ int modg_player_set_outfit(int shirt, int sunglasses, int helmet);
 int modg_player_set_yaw(float degrees); // API 1.5 beta 8
 int modg_player_set_aim(int on, float yaw, float pitch); // API 1.5 beta 8
 int modg_player_set_hidden_parts(uint32_t parts);        // API 1.5 beta 8
-int modg_held_fludd_set(int on, float right, float down, float forward, float scale, float aim); // first person
-int modg_spray_weapon_set(int weapon, int flags); // first person
-int modg_spray_rocket_jump(float strength);
-int modg_spray_view_distance(int weapon, float distance);
-int modg_spray_far_scale(float scale);
-int modg_spray_shadow_damage(float scale);
-int modg_held_fludd_view(int on);
-int modg_held_fludd_zoom(float fovy, int flags);
-int modg_held_fludd_state(int* firstPerson, int* held, int* weapon, float* zoomFovy, int* zoomFlags);
-int modg_spray_weapon_stats(int weapon, int has, float every, float push, float range, int toDefeat, int water, float hit,
-                           float burst, float lift, float dropSize);
 
 int modg_camera_get(SmsCamera* out);
 
