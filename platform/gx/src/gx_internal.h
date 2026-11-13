@@ -441,6 +441,7 @@ struct ShaderProgram {
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
         uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc, uShell;
     int uGoopRef;  // a goop layer's colours (GXPC_SetGoopTint): -1 for every other program
+    int uObjTint;  // one object's colour (GXPC_SetObjectTint): -1 for every other program
     mutable UniformCache uc;
 };
 bool shaderHasEarlyFragmentTests();
@@ -470,6 +471,8 @@ const int kShadowUnit = 10;
 // The texture map whose goop layer the current state's program tints
 // (GXPC_SetGoopTint), as the last shaderForCurrentState saw it; -1 none.
 int goopMapNow();
+// The colour GXPC_SetObjectTint set for the draws now (0xRRGGBBAA), 0 none.
+uint32_t objectTintNow();
 // The texture unit a goop layer's tint map is bound on (beside u_tex's eight). Shared with
 // kGrassMaskUnit: each binds its own texture there right before it is used (bindGoopTint
 // directly, the AO trace directly), so the two never meet.
