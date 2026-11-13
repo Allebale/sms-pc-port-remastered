@@ -38,7 +38,7 @@ Read this first. It is what earlier sessions learned working with Allebale on th
 | First Person beta | branch `first-person-beta`: Chase's beta and only the First Person mod's game side (FLUDD held in view, FLUDD weapons), no Remastered features (its four `zzzzzzz-held-fludd*` patches are made against Chase's own patches; its sdk is the SDK fork's `first-person-beta` branch: Chase's SDK with only `held_fludd`, right after `files`; nothing Remastered in it. `combined-plus` has `held_fludd` in that same place, `reflections` after it, so the First Person mod (built with that SDK in its `sdk/`) finds it the one way, `SMS_API_HAS` and its magic, on both builds; Chase's beta is what matters most). Bring Chase's updates in as for `remastered-test` |
 | First Person mod | `Allebale/sms-first-person-mod` (the launcher uses its GitHub releases; work on branch `split`, also pushed to `fludd-gun` for CI), version 1.2.0 |
 | FLUDD Weapons mod | `Allebale/fludd-weapons` (its own repository since Nov 2026, version 1.0.0; a release only on a `v*` tag). The two mods talk through `held_fludd`'s `set_view`, `set_zoom`, `get_state`, `take_mouse` |
-| SDK fork | `Allebale/sms-mod-sdk-modtesting`, branch `combined-plus` |
+| SDK fork | `Allebale/sms-mod-sdk-modtesting`: branch `remastered-test` for this branch (combined-plus as it was here, plus Chase's newer SDKs); `combined-plus` itself also carries the goop weapons' SDK |
 | Chase's port (upstream, read only) | `chasem-dev/sms-pc-port`, branch `main` (the launcher's Beta builds the newest commit there) |
 
 ### Moving test to main
@@ -54,7 +54,7 @@ conflicts by **keeping both** Chase's change and the fork's, compile-check, push
 before it goes to `remastered`.
 
 If the `sdk` submodule conflicts (Chase moved to a new SDK), merge Chase's SDK commit into
-`Allebale/sms-mod-sdk-modtesting` `combined-plus` (keep the fork's `reflections` as the last `SmsApi`
+`Allebale/sms-mod-sdk-modtesting` `remastered-test` (keep the fork's `reflections` as the last `SmsApi`
 member), push it, and point `sdk` at that merge (`git update-index --cacheinfo 160000,<sha>,sdk`).
 Then dry-run every `decomp-patches/*.patch` in C-locale name order on a copy of `decomp/`: Chase's
 patch numbers can collide with the fork's (both had `ext-31` and `ext-32`); different names still apply.
