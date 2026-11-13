@@ -257,12 +257,12 @@ void ModelsPacket::draw()
 			continue;
 		Mtx world, viewModel;
 		if (d.frame == SMS_FRAME_WORLD)
-			MTXCopy(d.place, world);
+			MTXCopy((MtxPtr)d.place, world);
 		else {
 			const Frame& f = s_frames[d.player][view][d.frame];
 			if (!fresh(f))
 				continue;
-			MTXConcat(f.m, d.place, world);
+			MTXConcat((MtxPtr)f.m, (MtxPtr)d.place, world);
 		}
 		MTXConcat(s_viewOf[view], world, viewModel);
 		GXLoadPosMtxImm(viewModel, GX_PNMTX0);
@@ -412,7 +412,7 @@ extern "C" int modg_models_draw(SmsMesh mesh, int frame, int player, const float
 			const Frame& f = s_frames[player][s_sceneView][frame];
 			if (!fresh(f))
 				return 0;
-			MTXConcat(f.m, (MtxPtr)place, world);
+			MTXConcat((MtxPtr)f.m, (MtxPtr)place, world);
 		}
 		MTXConcat(s_viewOf[s_sceneView], world, viewModel);
 		setup();
