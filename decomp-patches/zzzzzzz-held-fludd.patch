@@ -1,0 +1,66 @@
+Reason: api->held_fludd (First Person SDK): a first-person camera's FLUDD held in view like a gun (ext/modapi/game/modapi_held_fludd.cpp). As FLUDD is calculated for the view, it is moved in front of the camera; the water goes from its nozzle there to the middle of the view; and it is drawn even with Mario's models left out. Without a mod asking, nothing changes.
+
+--- a/src/Player/MarioMain.cpp
++++ b/src/Player/MarioMain.cpp
+@@ -5,6 +5,9 @@
+ #include <Player/MarioCap.hpp>
+ #include <Player/WaterGun.hpp>
+ #ifdef TARGET_PC
++bool PortFluddHeld(TMario* mario); // FLUDD held in view (ext/modapi/game/modapi_held_fludd.cpp)
++#endif
++#ifdef TARGET_PC
+ void PortCharacterFluddPlace(TMario* mario, TWaterGun* fludd, MtxPtr chest);
+ #endif
+ #include <Player/Yoshi.hpp>
+@@ -232,8 +235,10 @@
+ 			// result (it reads this from r31) replaces the FLUDD flag test.
+ 			// an extension may draw the player its own way (port_ext.h): FLUDD
+ 			// goes with him, whatever a mod's isYoshiMaintainFluddModel says
+-			if (!port_ext_hide_player_model(this)
+-			    && !(port_ext_hidden_player_parts(this) & PORT_PLAYER_PART_FLUDD)
++			// FLUDD held in view (api->held_fludd) is drawn whatever is left out
++			if ((PortFluddHeld(this)
++			     || (!port_ext_hide_player_model(this)
++			         && !(port_ext_hidden_player_parts(this) & PORT_PLAYER_PART_FLUDD)))
+ 			    && (SMS_MOD_SITE(0x8024D68C)
+ 			        ? (SMS_MOD_GPR(31, this),
+ 			           ((bool (*)())SMS_MOD_SITE(0x8024D68C))())
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -6,6 +6,8 @@
+ #include <Player/Mario.hpp>
+ #ifdef TARGET_PC
+ #include "port_ext.h"
++void PortFluddHeldPlace(TWaterGun* g, JDrama::TGraphics* graphics);
++bool PortFluddHeldWay(TWaterGun* g, const JGeometry::TVec3<f32>& from, JGeometry::TVec3<f32>* way);
+ #endif
+ 
+ #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+@@ -1957,6 +1959,11 @@
+ 		calcAnimation(graphics);
+ 	}
+ 
++#ifdef TARGET_PC
++	// FLUDD held in view (api->held_fludd): moved in front of the camera, now placed for the frame
++	if ((cue & CUE_CALC_VIEW) != 0)
++		PortFluddHeldPlace(this, graphics);
++#endif
+ 	mFluddModel->perform(cue, graphics);
+ 
+ 	if ((cue & CUE_CALC_ANIM) != 0) {
+@@ -2066,6 +2073,15 @@
+ {
+ 	MtxPtr nozzleEmitMtx = getEmitMtx(index);
+ 	pos->set(mEmitPos[index]);
++#ifdef TARGET_PC
++	// held in view: the water goes to the middle of the view
++	if (PortFluddHeldWay(this, *pos, dir)) {
++		speed->x = mMario->mVel.x * 0.125f;
++		speed->y = 0.0f;
++		speed->z = mMario->mVel.z * 0.125f;
++		return;
++	}
++#endif
+ 
+ 	if (nozzleEmitMtx != nullptr) {
+ 		dir->x = nozzleEmitMtx[0][0];

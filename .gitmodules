@@ -5,4 +5,4 @@
 [submodule "sdk"]
 	path = sdk
 	url = https://github.com/Allebale/sms-mod-sdk-modtesting.git
-	branch = combined-plus
+	branch = remastered
