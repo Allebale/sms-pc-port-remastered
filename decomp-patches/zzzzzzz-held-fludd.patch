@@ -1,4 +1,4 @@
-Reason: api->held_fludd (combined-plus SDK): a first-person camera's FLUDD held in view like a gun (ext/modapi/game/modapi_held_fludd.cpp). As FLUDD is calculated for the view, it is moved in front of the camera; the water goes from its nozzle there to the middle of the view; and it is drawn even with Mario's models left out. Without a mod asking, nothing changes.
+Reason: api->held_fludd (First Person SDK): a first-person camera's FLUDD held in view like a gun (ext/modapi/game/modapi_held_fludd.cpp). As FLUDD is calculated for the view, it is moved in front of the camera; the water goes from its nozzle there to the middle of the view; and it is drawn even with Mario's models left out. Without a mod asking, nothing changes.
 
 --- a/src/Player/MarioMain.cpp
 +++ b/src/Player/MarioMain.cpp

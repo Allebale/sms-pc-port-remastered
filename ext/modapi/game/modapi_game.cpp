@@ -43,9 +43,50 @@
 #include <Strategic/ObjModel.hpp>
 #include <dolphin/dvd.h>
 
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+// ------------------------------------------------------------------ the players (split-screen co-op)
+// Co-op (ext/coop) runs player 2's move, camera and view with the game's player globals theirs
+// (gpMarioOriginal is Luigi then). For mods, each player is told apart: player 1 (index 0) and
+// player 2 (index 1). The player the game runs as now, or one a mod picked (held_fludd's
+// select_player), is "the player" of the mod API (api->player and held_fludd).
+extern "C" THitActor* port_coop_player2_actor(void);
+extern "C" THitActor* port_coop_player1_actor(void);
+extern "C" int port_coop_second_entry; // player 2's view is being entered (ext/coop)
+
+int s_selectedPlayer = -1; // a mod's select_player, -1 none
+
+// 2 while a second player plays, else 1
+int PortPlayers() { return port_coop_player2_actor() ? 2 : 1; }
+// a player's Mario (0 player 1, 1 player 2), or null
+TMario* PortPlayerMario(int i)
+{
+	return i == 1 ? (TMario*)port_coop_player2_actor() : i == 0 ? (TMario*)port_coop_player1_actor() : 0;
+}
+// which player this Mario is (0 for anything not player 2's)
+int PortPlayerIndex(const void* m) { return m && m == (const void*)port_coop_player2_actor() ? 1 : 0; }
+// the player now: the one a mod picked, else the one the game runs as
+int PortPlayerNow()
+{
+	if (s_selectedPlayer == 0 || (s_selectedPlayer == 1 && port_coop_player2_actor()))
+		return s_selectedPlayer;
+	return PortPlayerIndex(gpMarioOriginal);
+}
+// whose view is being made now (calculated and entered for drawing): player 2's while co-op enters
+// it again for its half of the screen, else player 1's
+int PortViewer() { return port_coop_second_entry ? 1 : 0; }
+
+extern "C" void modg_select_player(int i) { s_selectedPlayer = i == 0 || i == 1 ? i : -1; }
+extern "C" int modg_player_now(void) { return PortPlayerNow(); }
+extern "C" int modg_players(void) { return PortPlayers(); }
+extern "C" int port_coop_view_rect(int view, float* r);
+extern "C" int modg_player_view(int player, float* r) { return port_coop_view_rect(player, r); }
+
+void PortWorldTick();       // modapi_world.cpp: each tick (the water drops kept as far as asked)
+void PortWorldStageSetup(); // ...a new stage (its actors' model scales gone)
 
 namespace {
 
@@ -64,7 +105,11 @@ JDrama::TNameRef* ref(SmsObject o) { return (JDrama::TNameRef*)o; }
 
 TMario* mario()
 {
-	return s_stageReady ? gpMarioOriginal : 0;
+	if (!s_stageReady)
+		return 0;
+	if (s_selectedPlayer >= 0) // a player a mod picked (player 1's whatever the game runs as now)
+		return s_selectedPlayer == 1 ? PortPlayerMario(1) : PortPlayerMario(0) ? PortPlayerMario(0) : gpMarioOriginal;
+	return gpMarioOriginal;
 }
 
 int gameMode()
@@ -133,11 +178,13 @@ void afterMovement()
 	ev.tick             = s_tick++;
 	ev.ticks_per_second = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
 	ev.dt               = 1.0f / (float)ev.ticks_per_second;
+	PortWorldTick();
 	modh_dispatch(SMS_EV_TICK, &ev, sizeof ev);
 }
 
 void stageSetup()
 {
+	PortWorldStageSetup();
 	s_stageReady  = true;
 	s_tick        = 0;
 	s_started     = false;
@@ -342,20 +389,29 @@ int allowSaveStates()
 
 const char* saveStatesOffReason() { return modh_save_state_reason(); }
 
-// player->set_aim (modg_player_set_aim): whether Mario's body is turned, and which way
-bool s_aimOn;
-s16 s_aim, s_aimTilt;
-uint32_t s_hiddenParts; // player->set_hidden_parts: every mod's, ORed (SMS_PLAYER_PART_*)
+// player->set_aim (modg_player_set_aim): whether Mario's body is turned, and which way (each
+// player's)
+bool s_aimOn[2];
+s16 s_aim[2], s_aimTilt[2];
+uint32_t s_hiddenParts[2]; // player->set_hidden_parts: every mod's, ORed (SMS_PLAYER_PART_*), each player's
 
-// SMS_PLAYER_PART_* are PORT_PLAYER_PART_*
-unsigned hiddenPlayerParts(void* m) { return m == (void*)mario() ? s_hiddenParts : 0; }
+// SMS_PLAYER_PART_* are PORT_PLAYER_PART_*. A player's parts are left out only in their own view
+// (co-op: the other player sees all of them).
+unsigned hiddenPlayerParts(void* m)
+{
+	const int i = PortPlayerIndex(m);
+	if (!m || m != (void*)PortPlayerMario(i) || i != PortViewer())
+		return 0;
+	return s_hiddenParts[i];
+}
 
 int playerAim(void* m, short* yaw, short* tilt)
 {
-	if (!s_aimOn || m != (void*)mario())
+	const int i = PortPlayerIndex(m);
+	if (!s_aimOn[i] || !m || m != (void*)PortPlayerMario(i))
 		return 0;
-	*yaw  = s_aim;
-	*tilt = s_aimTilt;
+	*yaw  = s_aim[i];
+	*tilt = s_aimTilt[i];
 	return 1;
 }
 
@@ -363,6 +419,8 @@ int hidePlayerModel(void* m)
 {
 	if (!modh_wants(SMS_EV_HIDE_PLAYER_MODEL))
 		return 0;
+	if (PortPlayers() == 2 && PortPlayerIndex(m) != PortViewer())
+		return 0; // co-op: a player's model is left out (a first-person camera) only in their own view
 	SmsEvObject ev;
 	ev.object = obj((TMario*)m);
 	return modh_dispatch(SMS_EV_HIDE_PLAYER_MODEL, &ev, sizeof ev);
@@ -428,12 +486,15 @@ int objectStomp(void* object, void* m) { return objectHit(object, m, HIT_MESSAGE
 // camera's mFovy takes the mod's (the culling and the screen effects read it
 // too, not only the projection), and gets its own back the next tick unless
 // the camera set a new one itself (cutscenes keep theirs from tick to tick).
-f32 s_fovyGiven, s_fovyOwn;
+f32 s_fovyGivenOf[2], s_fovyOwnOf[2]; // each player's camera's (co-op)
 
 void camera(void* cam, float* eye, float* at, float* fovy)
 {
 	if (cam != (void*)gpCamera)
 		return;
+	const int who  = PortPlayerIndex(gpMarioOriginal);
+	f32& s_fovyGiven = s_fovyGivenOf[who];
+	f32& s_fovyOwn   = s_fovyOwnOf[who];
 	CPolarSubCamera* c = (CPolarSubCamera*)cam;
 	if (s_fovyGiven != 0.0f) {
 		if (c->mFovy == s_fovyGiven)
@@ -836,8 +897,16 @@ int objectHitNote(void* object, void* sender, unsigned)
 	return 0; // only noted: modapi's objectHit sends SMS_EV_OBJECT_HIT
 }
 
-void objectHitDone(void* object, void* sender, unsigned message, int)
+void objectHitDone(void* object, void* sender, unsigned message, int result)
 {
+	if (object && modh_wants(SMS_EV_OBJECT_HIT_DONE)) {
+		SmsEvHitDone done;
+		done.object  = obj((THitActor*)object);
+		done.sender  = sender ? obj((THitActor*)sender) : 0;
+		done.message = message;
+		done.result  = result;
+		modh_dispatch(SMS_EV_OBJECT_HIT_DONE, &done, sizeof done);
+	}
 	if (!object || !modh_wants(SMS_EV_ACTOR_DAMAGE))
 		return;
 	THitActor* h   = (THitActor*)object;
@@ -1548,11 +1617,45 @@ extern "C" int modg_player_get(SmsPlayer* out)
 			s.sunglasses = m->mCap->isModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES) ? 1 : 0;
 			s.helmet     = m->mCap->isModelActive(TMarioCap::E_CAP_MODEL_HELMET) ? 1 : 0;
 		}
+		s.gravity        = m->mJumpParams.mGravity.get();
+		s.intended_yaw   = (float)m->mIntendedYaw * (360.0f / 65536.0f);
+		s.intended_speed = m->mIntendedMag / 32.0f > 1.0f ? 1.0f : m->mIntendedMag / 32.0f;
+		s.invincible     = m->isInvincible() ? 1 : 0;
 	}
 	const uint32_t n = out->size && out->size < sizeof s ? out->size : (uint32_t)sizeof s;
 	memcpy(out, &s, n);
 	out->size = n;
 	return s.valid;
+}
+
+extern "C" int modg_player_set_fall_start(float y)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	m->unk104 = y; // (where the game counts his fall from: a landing below it stuns)
+	return 1;
+}
+
+extern "C" int modg_player_burn(void)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	const u32 before = m->mStatus;
+	m->checkGraffitoFire(); // as the game's fire goop: burning, a point of health
+	return m->mStatus == MARIO_STATUS_FIRE_DOWN && before != MARIO_STATUS_FIRE_DOWN;
+}
+
+extern "C" int modg_player_hurt(int points)
+{
+	TMario* m = mario();
+	if (!m || points <= 0)
+		return 0;
+	if (m->getHealth() <= 0)
+		return 1;
+	m->decHP(points); // the game's own damage, so 0 health loses a life
+	return 1;
 }
 
 extern "C" int modg_player_set_position(const SmsVec3* pos)
@@ -1648,12 +1751,13 @@ extern "C" int modg_player_set_yaw(float degrees)
 // each tick's control (playerAim), whichever way he moves.
 extern "C" int modg_player_set_aim(int on, float yaw, float pitch)
 {
-	s_aimOn = on != 0;
-	s_aim   = (s16)(int)(yaw * (65536.0f / 360.0f));
+	const int i = PortPlayerNow();
+	s_aimOn[i]  = on != 0;
+	s_aim[i]    = (s16)(int)(yaw * (65536.0f / 360.0f));
 	// FLUDD's gun angle: negative tilts it up; within straight up and down
-	pitch     = pitch > 89.0f ? 89.0f : pitch < -89.0f ? -89.0f : pitch;
-	s_aimTilt = (s16)(int)(-pitch * (65536.0f / 360.0f));
-	if (!s_aimOn) {
+	pitch        = pitch > 89.0f ? 89.0f : pitch < -89.0f ? -89.0f : pitch;
+	s_aimTilt[i] = (s16)(int)(-pitch * (65536.0f / 360.0f));
+	if (!s_aimOn[i]) {
 		if (TMario* m = mario())
 			m->mModelFaceAngle = m->mFaceAngle.y; // facing the way he moves again
 	}
@@ -1663,8 +1767,121 @@ extern "C" int modg_player_set_aim(int on, float yaw, float pitch)
 // player->set_hidden_parts (API 1.5 beta 8): parts of him left out, the rest drawn
 extern "C" int modg_player_set_hidden_parts(uint32_t parts)
 {
-	s_hiddenParts = parts;
+	s_hiddenParts[PortPlayerNow()] = parts;
 	return mario() ? 1 : 0;
+}
+// ...a given player's (a mod unloading: each player's parts again)
+extern "C" int modg_player_set_hidden_parts_of(int player, uint32_t parts)
+{
+	if (player == 0 || player == 1)
+		s_hiddenParts[player] = parts;
+	return 1;
+}
+
+// A player's head left out (player->set_hidden_parts) is shrunk to a point as his pose is made
+// (MarioHeadCtrl, patch zzzzz-ext-30), alone; with two players (co-op) each one's head is left out
+// only in their own view, so it is shrunk as each view is worked out instead (port_player_view_parts)
+extern "C" int port_player_head_in_calc(void* m)
+{
+	if (PortPlayers() == 2)
+		return 0;
+	return (hiddenPlayerParts(m) & PORT_PLAYER_PART_HEAD) ? 1 : 0;
+}
+
+// Co-op, as a player's model is worked out for a view (TMario::calcView, patch
+// zzzzzzzzzz-coop-heads): before (after 0), in the view of the player whose head is left out, the
+// head and all that hangs from it (face, hair, cap's joints) shrunk to a point about the head's
+// joint, as MarioHeadCtrl would, and the skin's matrices made again from them; after (1), put back.
+namespace {
+const int kMostHeadJoints = 128, kMostEnvelopes = 512;
+Mtx s_headSaved[kMostHeadJoints];
+u16 s_headJoint[kMostHeadJoints];
+int s_headCount = -1; // saved now, or -1
+Mtx s_envSaved[kMostEnvelopes];
+int s_envCount;
+J3DModel* s_headModel;
+
+void collectHead(J3DNode* n, bool first)
+{
+	for (; n; n = first ? 0 : n->getYounger()) {
+		if (n->getType() == 'NJNT' && s_headCount < kMostHeadJoints)
+			s_headJoint[s_headCount++] = static_cast<J3DJoint*>(n)->getJntNo();
+		collectHead(n->getChild(), false);
+		if (first)
+			break;
+	}
+}
+} // namespace
+
+bool PortFluddHeld(TMario* mario); // modapi_held_fludd.cpp
+
+// Alone (one player): FLUDD held in view shrinks his right arm as his pose is made (patch
+// zzzzzzz-held-fludd-2-arm); with two, in his own view only (port_player_view_parts)
+extern "C" int port_player_alone(void) { return PortPlayers() == 1 ? 1 : 0; }
+
+namespace {
+// the joints from `root` down, added to the saved list
+void collectFrom(J3DModel* md, int root)
+{
+	J3DModelData* data = md->getModelData();
+	const int first    = s_headCount;
+	collectHead(data->getJointNodePointer((u16)root), true);
+	// the shrink about the root's joint: root * scale * root^-1
+	Mtx at, inv, scale, shrink, tmp;
+	MTXCopy(md->getAnmMtx(root), at);
+	if (!MTXInverse(at, inv)) {
+		s_headCount = first;
+		return;
+	}
+	MTXScale(scale, 0.001f, 0.001f, 0.001f);
+	MTXConcat(at, scale, tmp);
+	MTXConcat(tmp, inv, shrink);
+	for (int i = first; i < s_headCount; i++) {
+		MTXCopy(md->getAnmMtx(s_headJoint[i]), s_headSaved[i]);
+		Mtx moved;
+		MTXConcat(shrink, md->getAnmMtx(s_headJoint[i]), moved);
+		md->setAnmMtx(s_headJoint[i], moved);
+	}
+}
+} // namespace
+
+// Co-op, as a player's model is worked out for a view (TMario::calcView, patch
+// zzzzzzzzzz-coop-heads): before (after 0), in the player's own view, his head left out (and all
+// that hangs from it: face, hair, the cap's joints) and, with FLUDD held in view, his right arm,
+// each shrunk to a point about its joint as MarioHeadCtrl would, the skin's matrices made again
+// from them; after (1), put back. The other player sees all of him.
+extern "C" void port_player_view_parts(void* m, void* model, int headJoint, int armJoint, int after)
+{
+	J3DModel* md = (J3DModel*)model;
+	if (after) {
+		if (s_headCount < 0 || md != s_headModel)
+			return;
+		for (int i = 0; i < s_headCount; i++)
+			md->setAnmMtx(s_headJoint[i], s_headSaved[i]);
+		for (int i = 0; i < s_envCount; i++)
+			md->setWeightAnmMtx(i, s_envSaved[i]);
+		s_headCount = -1;
+		return;
+	}
+	s_headCount = -1;
+	if (!md || PortPlayers() != 2)
+		return;
+	const int who   = PortPlayerIndex(m);
+	const bool head = (hiddenPlayerParts(m) & PORT_PLAYER_PART_HEAD) != 0;
+	const bool arm  = who == PortViewer() && m == (void*)PortPlayerMario(who) && PortFluddHeld((TMario*)m);
+	J3DModelData* data = md->getModelData();
+	if ((!head && !arm) || !data || data->getWEvlpMtxNum() > kMostEnvelopes)
+		return;
+	s_headCount = 0;
+	s_headModel = md;
+	s_envCount  = data->getWEvlpMtxNum();
+	for (int i = 0; i < s_envCount; i++)
+		MTXCopy(md->getWeightAnmMtx(i), s_envSaved[i]);
+	if (head && headJoint >= 0 && headJoint < data->getJointNum())
+		collectFrom(md, headJoint);
+	if (arm && armJoint >= 0 && armJoint < data->getJointNum())
+		collectFrom(md, armJoint);
+	md->calcWeightEnvelopeMtx();
 }
 
 extern "C" int modg_player_set_outfit(int shirt, int sunglasses, int helmet)

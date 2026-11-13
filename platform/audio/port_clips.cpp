@@ -1,9 +1,9 @@
 // Short sound clips of the port's own (not the game's sound engine's): 16-bit mono PCM at any rate,
 // played on top of the game's mix as each audio DMA block starts (platform/audio/ai.cpp, next to
 // the streamed music), at the sound effects' volume (dsp_mixer.h). A few at once; a new one when
-// all are busy takes the place of the oldest. Used by FLUDD's spray weapons for Mario's cries as
-// a rocket jump hurts him (ext/modapi/game/modapi_spray_weapons.cpp). Nothing plays until one is
-// asked for, so without them the mix is untouched.
+// all are busy takes the place of the oldest. Played for mods (audio->play_clip,
+// ext/modapi/game/modapi_world.cpp). Nothing plays until one is asked for, so without them the
+// mix is untouched.
 #include "port_compat.h"
 #include "dsp_mixer.h"
 

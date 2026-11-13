@@ -48,6 +48,8 @@
 #include <Player/MarioAccess.hpp>
 #include <Player/MarioCap.hpp>
 #include <Player/WaterGun.hpp>
+#include <Player/ModelWaterManager.hpp>
+#include <Enemy/Enemy.hpp>
 #include <Strategic/LiveActor.hpp>
 #include <Strategic/Strategy.hpp>
 #include <System/Application.hpp>
@@ -445,6 +447,42 @@ void dressOwn(TMario* m, bool luigi)
 			}
 }
 
+// Player 2's FLUDD (body and nozzles) with textures of its own: they share Mario's, so a look given
+// to one FLUDD's textures (a mod's dress, held_fludd->dress, port_coop_own_fludd_textures) showed on
+// both. Made when first asked for, once for each player 2.
+TMario* s_ownFluddFor;
+// a model's textures its own: its data's, its material packets' (each keeps the one it was made
+// with) and its display lists made again with them
+void retexture(J3DModel* md)
+{
+	J3DModelData* d = md->getModelData();
+	J3DTexture* own = ownTextures(d->getTexture(), nullptr);
+	if (!own || own == d->getTexture())
+		return;
+	d->setTexture(own);
+	const bool locked = d->getMaterialNum() && md->getMatPacket(0)->isLocked();
+	for (u16 i = 0; i < d->getMaterialNum(); i++)
+		md->getMatPacket(i)->setTexture(own);
+	if (locked) {
+		md->unlock();
+		SMS_MakeDLAndLock(md);
+	} else
+		md->makeDL();
+}
+void ownFluddTextures(TMario* m)
+{
+	TWaterGun* g = m ? m->mWaterGun : nullptr;
+	if (!g || s_ownFluddFor == m)
+		return;
+	s_ownFluddFor = m;
+	if (g->mFluddModel && g->mFluddModel->getModel())
+		retexture(g->mFluddModel->getModel());
+	for (int n = 0; n < 6; n++)
+		if (g->mNozzleList[n] && g->mNozzleList[n]->getMActor() && g->mNozzleList[n]->getMActor()->getModel())
+			retexture(g->mNozzleList[n]->getMActor()->getModel());
+	fprintf(stderr, "[coop] player 2's FLUDD has textures of its own\n");
+}
+
 // ------------------------------------------------------------ player 2 and camera 2
 
 TMario* p1() { return s_p1.mario; }
@@ -572,6 +610,7 @@ void sceneLoaded()
 	coop_character::stageStart();
 	TCoopMario* m = new TCoopMario;
 	s_p2.mario    = m;
+	s_ownFluddFor = nullptr; // (a new player 2: their FLUDD's textures Mario's until asked)
 	JSUMemoryInputStream body((void*)record, size);
 	m->load(body); // as player 2 (InP2): its parameters, models and FLUDD
 	m->setGamePad(gpMarDirector->getGamePad(1));
@@ -1690,6 +1729,20 @@ TMario* playerFor(THitActor* a)
 	                                                                                                  : s_p1.mario;
 }
 
+// An enemy chasing one player (its goal the player's own actor, set when it found them or was
+// reset) goes after the player it plays with this move instead: it looks the way it walks.
+void retarget(THitActor* a, TMario* to)
+{
+	TSpineEnemy* e = dynamic_cast<TSpineEnemy*>(a);
+	if (!e)
+		return;
+	TMario* other = to == s_p1.mario ? s_p2.mario : s_p1.mario;
+	if (e->unkF4.unk0 == (THitActor*)other)
+		e->unkF4.unk0 = (THitActor*)to;
+	if (e->unk104.unk0 == (THitActor*)other)
+		e->unk104.unk0 = (THitActor*)to;
+}
+
 void objectMove(void* object, int after)
 {
 	if (after) {
@@ -1706,7 +1759,11 @@ void objectMove(void* object, int after)
 		return;
 	// any object the hit check knows (a TLiveActor, a gate's TTakeActor...), not the players
 	THitActor* a = dynamic_cast<THitActor*>(static_cast<JDrama::TViewObj*>(object));
-	if (!a || dynamic_cast<TMario*>(a) || s_p2.mario->checkFlag(MARIO_FLAG_GAME_OVER) || playerFor(a) != s_p2.mario)
+	if (!a || dynamic_cast<TMario*>(a))
+		return;
+	TMario* with = s_p2.mario->checkFlag(MARIO_FLAG_GAME_OVER) ? s_p1.mario : playerFor(a);
+	retarget(a, with);
+	if (with != s_p2.mario)
 		return;
 	s_swapCount++;
 	Swap& w        = s_swaps[s_swapDepth++];
@@ -1718,6 +1775,14 @@ void objectMove(void* object, int after)
 	SMS_SetMarioAccessParams();
 	gpCamera = s_p2.cam; // what is in sight of the player it plays with (an NPC awake beside player 2)
 }
+
+// Whose each FLUDD drop is (the water manager's slots: 1 player 2's), and a drop's hit taken
+// with its player's globals in force: the game's push reads Mario's place and facing.
+unsigned char s_dropOwner[TModelWaterManager::SLOT_NUM];
+struct DropHit {
+	TMario* mario;
+	CPolarSubCamera* cam;
+} s_dropHit;
 
 // A test's player 2 input (SMS_COOP_TEST_PAD=stick x:y@frame+frames,...;
 // "a@frame+frames" presses A; frames since they joined): what controller 2 reads.
@@ -1942,6 +2007,83 @@ static TMario* playingP2()
 	return m;
 }
 extern "C" THitActor* port_coop_player2_actor(void) { return playingP2(); }
+
+// A player's half of the screen while it is split (x, y, w, h as parts of it, 0 to 1; player 1
+// left or top): 1, else 0 (one view, the whole screen)
+extern "C" int port_coop_view_rect(int view, float* r)
+{
+	if (!s_split || !playingP2()) {
+		r[0] = r[1] = 0.0f, r[2] = r[3] = 1.0f;
+		return 0;
+	}
+	viewRect(view ? 1 : 0, r);
+	return 1;
+}
+// Player 2's FLUDD given textures of its own (a mod dressing each FLUDD apart): 1 done
+extern "C" int port_coop_own_fludd_textures(void* mario)
+{
+	TMario* m = (TMario*)mario;
+	if (!m || !s_made || m != s_p2.mario)
+		return 0;
+	ownFluddTextures(m);
+	return 1;
+}
+
+// player 1's Mario, whoever the game runs as now (its globals player 2's while they run)
+extern "C" THitActor* port_coop_player1_actor(void)
+{
+	if (!s_inP2 || !s_p1.mario)
+		return s_inP2 ? nullptr : gpMarioOriginal;
+	return s_p1.mario;
+}
+
+// a drop made in a water manager slot: whose (the player whose globals are in force)
+extern "C" void port_coop_drop_made(int slot)
+{
+	if (slot >= 0 && slot < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[slot] = s_active && s_p2.mario && gpMarioOriginal == s_p2.mario ? 1 : 0;
+}
+
+// a drop made for a player whatever the game runs as (a mod's, api->water->emit)
+extern "C" void port_coop_drop_set_owner(int slot, int player)
+{
+	if (slot >= 0 && slot < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[slot] = s_active && player == 1 ? 1 : 0;
+}
+
+extern "C" void port_coop_drop_moved(int to, int from)
+{
+	if (to >= 0 && to < TModelWaterManager::SLOT_NUM && from >= 0 && from < TModelWaterManager::SLOT_NUM)
+		s_dropOwner[to] = s_dropOwner[from];
+}
+
+// a drop reaching something: a drop of player 2's with player 2's globals in force (1), to its end
+extern "C" int port_coop_drop_hit_begin(THitActor* from)
+{
+	if (!s_active || s_inP2 || !s_p1.mario || !s_p2.mario || gpMarioOriginal != s_p1.mario || !gpModelWaterManager)
+		return 0;
+	TWaterHitActor* drop = dynamic_cast<TWaterHitActor*>(from);
+	if (!drop || drop->mParticleIndex < 0 || drop->mParticleIndex >= TModelWaterManager::SLOT_NUM
+	    || drop->mParticleIndex >= (int)gpModelWaterManager->mParticleCount || s_dropOwner[drop->mParticleIndex] != 1)
+		return 0;
+	s_dropHit.mario = gpMarioOriginal;
+	s_dropHit.cam   = gpCamera;
+	gpMarioOriginal = s_p2.mario;
+	gpMarioAddress  = s_p2.mario;
+	SMS_SetMarioAccessParams();
+	gpCamera = s_p2.cam;
+	return 1;
+}
+
+extern "C" void port_coop_drop_hit_end(int began)
+{
+	if (!began)
+		return;
+	gpMarioOriginal = s_dropHit.mario;
+	gpMarioAddress  = s_dropHit.mario;
+	SMS_SetMarioAccessParams();
+	gpCamera = s_dropHit.cam;
+}
 // decomp-patches/zzzzzz-coop-07: player 2 for the wire manager
 extern "C" TTakeActor* port_coop_wire_player2(void) { return playingP2(); }
 
