@@ -88,6 +88,31 @@ struct XMap {
     float a = 1, b = 0, clip = 1;
 };
 static XMap s_xmap;
+// Draw Shadows Together (GXPC_ShadowTogether): solid batches' casts into the sun's maps are kept
+// and drawn in one go (shadowReplay), not each right after its batch: the framebuffer, program and
+// state are then switched once, not twice a batch. Each needs only what its vertex shader reads:
+// the batch's XF block and vertices (in the stream or the arena, drawn before either starts over)
+// and its default matrices.
+struct CastRange {
+    GLuint vao;
+    size_t iOff;
+    GLsizei count;
+    GLint base;
+};
+struct CastRec {
+    const struct ShaderProgram* csp;
+    size_t xfOffset;
+    uint32_t mtx[3];
+    uint32_t first, count;  // its ranges in s_castRanges
+    bool vtxMtx, nearOnly;
+};
+static std::vector<CastRec> s_castRecs;
+static std::vector<CastRange> s_castRanges;
+static bool s_castTogether, s_castReplay;
+static void shadowReplay();
+static const size_t kXfBlockWords = 736;
+static size_t s_xfOffset = 0;                         // the stream's XF block bound now
+static uint32_t s_defMtxSet[3] = {~0u, ~0u, ~0u};     // attribute 14's constant, as set
 // GXPC_SetSplitView (split-screen co-op): while on, everything drawn lands in
 // a part of the frame, as if that part were the whole: viewports, scissors,
 // EFB copies and their clears, and peeks are moved and scaled into it, after
@@ -234,6 +259,15 @@ struct StreamBuffer {
     void fenceThrough(size_t last) {
         for (size_t sg = unfenced; sg <= last && sg < kSegments; sg++)
             if (!fence[sg]) fence[sg] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    }
+    // Draws just issued read data written before the fences there are (Draw Shadows Together):
+    // those fences made again, after them
+    void fenceAgain() {
+        for (size_t sg = 0; sg < kSegments; sg++)
+            if (fence[sg]) {
+                glDeleteSync(fence[sg]);
+                fence[sg] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            }
     }
     void waitSegment(size_t seg) {
         if (!fence[seg]) return;
@@ -1579,6 +1613,7 @@ bool arenaUpload(const uint8_t* verts, uint32_t n, uint32_t stride, const uint32
     if (!s_ready || need > kArenaBytes / 8) return false;
     if (s_arenaPos + need > kArenaBytes) {  // start over, once nothing drawn from the arena is pending
         flushBatch();
+        shadowReplay();  // Draw Shadows Together: the casts kept may read the arena
         GLsync done = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         glClientWaitSync(done, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
         glDeleteSync(done);
@@ -1954,6 +1989,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     // a cast-only draw (Water Shadows' drops): its alpha is how much of the sun it takes, drawn into
     // the map as a fine scatter of points (the soft edges' filtering makes it a lighter shadow)
     if (g.shadowCastOnly) shadow[45] = 2.0f;
+    if (s_castReplay) shadow[45] = 0.0f;  // Draw Shadows Together: a solid batch's cast, drawn later
     // Mario's own draw: looked up from a little toward the sun, so that he takes no shadow of
     // himself (his cap's on his nose) but still the world's (a tree's, a building's) on him
     shadow[46] = g.shadowTag ? kMarioSelfShadowSkip : 0.0f;
@@ -1989,7 +2025,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     UNI(uPlight, plight, plight, glUniform4fv(sp->uPlight, 17, plight));
     float sway[44];
     memcpy(sway, g.sway, sizeof sway);
-    sway[3] = g.swayDraw && g.swayActive ? 1.0f : 0.0f;
+    sway[3] = g.swayDraw && g.swayActive && !s_castReplay ? 1.0f : 0.0f;
     sway[8] = g.swayShape[0];
     sway[9] = g.swayShape[1];
     UNI(uSway, sway, sway, glUniform4fv(sp->uSway, 11, sway));
@@ -3876,6 +3912,7 @@ extern "C" void GXPC_ShadowSoftness(float units) { s_shadowSoft = units > 0.0f ?
 extern "C" void GXPC_ShadowFrame(const float view[3][4], const float sun[3], const float focus[3], float strength,
                                  float half, float reach) {
     flushBatch();
+    shadowReplay();  // Draw Shadows Together: the last view's casts, before the maps and rows change
     if (strength <= 0.0f || !view || !sun || !focus) {
         g.shadow[36] = 0.0f;
         g.shadowArmed = g.shadowMain = false;
@@ -3943,11 +3980,8 @@ extern "C" void GXPC_ShadowFrame(const float view[3][4], const float sun[3], con
     g.shadowMain = true;
 }
 
-// The batch again, into each cascade of the sun's shadow map, then the EFB's state back.
-template <typename Ranges>
-static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* sp, float texW[8], float texH[8]) {
-    const ShaderProgram* csp = shaderForCurrentState(2, false);
-    glcUseProgram(csp->prog);
+// The GL state a cast into the sun's shadow map is drawn with
+static void shadowCastState() {
     GlCache& c = g_glc;
     const GLuint fbo = s_shadowFbo[s_shadowWrite];
     if (c.fbo != fbo) {
@@ -3984,8 +4018,90 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
     }
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(1.5f, 4.0f);
+}
+
+// Draw Shadows Together: the casts kept, into each cascade, then the EFB's state back
+static void shadowReplay() {
+    if (s_castRecs.empty()) return;
+    shadowCastState();
+    s_castReplay = true;
+    float texW[8] = {0}, texH[8] = {0};
+    size_t xf = ~size_t(0);
+    for (int cascade = 0; cascade < 2; cascade++) {
+        memcpy(g.shadow + 24, s_shadowWriteRows[cascade], 12 * sizeof(float));
+        g.shadow[44] = float(cascade);
+        for (const CastRec& r : s_castRecs) {
+            if (cascade && r.nearOnly) continue;
+            glcUseProgram(r.csp->prog);
+            uploadUniforms(r.csp, texW, texH);
+            if (r.xfOffset != xf) {
+                xf = r.xfOffset;
+                glBindBufferRange(GL_UNIFORM_BUFFER, 0, s_stream.buf, GLintptr(xf), kXfBlockWords * 4);
+            }
+            if (!r.vtxMtx && memcmp(r.mtx, s_defMtxSet, 12) != 0) {
+                memcpy(s_defMtxSet, r.mtx, 12);
+                glVertexAttribI4ui(14, r.mtx[0], r.mtx[1], r.mtx[2], 0);
+            }
+            for (uint32_t i = r.first; i < r.first + r.count; i++) {
+                const CastRange& cr = s_castRanges[i];
+                glcBindVertexArray(cr.vao);
+                glDrawElementsBaseVertex(GL_TRIANGLES, cr.count, GL_UNSIGNED_INT,
+                                         reinterpret_cast<const void*>(cr.iOff), cr.base);
+            }
+        }
+    }
+    s_castReplay = false;
+    s_stream.fenceAgain();
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    g_glc.uniformBuffer = ~0u;  // the next batch binds its XF block again
+    s_shadowFilled[s_shadowWrite] = true;
+    s_castRecs.clear();
+    s_castRanges.clear();
+    s_xmap = drawXMap();
+    applyGlState();
+}
+extern "C" void GXPC_ShadowTogether(int on) {
+    if (s_castTogether == (on != 0)) return;
+    flushBatch();
+    shadowReplay();
+    s_castTogether = on != 0;
+}
+
+// The batch again, into each cascade of the sun's shadow map, then the EFB's state back.
+template <typename Ranges>
+static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* sp, float texW[8], float texH[8]) {
+    const ShaderProgram* csp = shaderForCurrentState(2, false);
     // the far cascade: not while it is last frame's, and with The Level Only not what moves
     const bool nearOnly = s_shadowFarKept || (g.shadowFarLevel && (g.shadowTag || g.shadowNoCast || g.shadowCastOnly));
+    // Draw Shadows Together: a solid batch's (no blend, no alpha test: every pixel of it casts),
+    // still, kept for later
+    const uint32_t ac = g.bp[BP_ALPHACOMPARE];
+    if (s_castTogether && mode == GL_TRIANGLES && !(g.bp[BP_CMODE0] & 1) && ((ac >> 16) & 7) == 7
+        && ((ac >> 19) & 7) == 7 && !g.shadowCastOnly && !(g.swayDraw && g.swayActive)) {
+        CastRec rec;
+        rec.csp      = csp;
+        rec.xfOffset = s_xfOffset;
+        const uint32_t matA = g.xfReg[XFR_MATIDX_A], matB = g.xfReg[XFR_MATIDX_B];
+        const uint8_t def[12] = {
+            uint8_t(matA & 63), uint8_t((matA >> 6) & 63), uint8_t((matA >> 12) & 63), uint8_t((matA >> 18) & 63),
+            uint8_t((matA >> 24) & 63), uint8_t(matB & 63), uint8_t((matB >> 6) & 63), uint8_t((matB >> 12) & 63),
+            uint8_t((matB >> 18) & 63), 0, 0, 0,
+        };
+        memcpy(rec.mtx, def, 12);
+        rec.vtxMtx   = (s_bfmt & VF_MTX) != 0;
+        rec.nearOnly = nearOnly;
+        rec.first    = uint32_t(s_castRanges.size());
+        for (const auto& r : ranges) s_castRanges.push_back(CastRange{r.vao, r.iOff, r.count, r.base});
+        rec.count = uint32_t(s_castRanges.size()) - rec.first;
+        s_castRecs.push_back(rec);
+        if (s_castRecs.size() >= 16384) {  // never without end
+            shadowReplay();
+            glcUseProgram(sp->prog);
+        }
+        return;
+    }
+    glcUseProgram(csp->prog);
+    shadowCastState();
     for (int cascade = 0; cascade < (nearOnly ? 1 : 2); cascade++) {
         memcpy(g.shadow + 24, s_shadowWriteRows[cascade], 12 * sizeof(float));
         g.shadow[44] = float(cascade);
@@ -4237,6 +4353,10 @@ void flushBatch() {
         resetBatch();
         return;
     }
+    // Draw Shadows Together: the casts kept read the stream; drawn before it starts over
+    if (!s_castRecs.empty()
+        && s_stream.wouldWrap(kXfBlockWords * 4 + size_t(s_uboAlign) + s_bdata.size + s_bstride + s_bidx.size * 4 + 4))
+        shadowReplay();
     GxTimer timer;
     GxTimer tf(&g_flushSeconds);
     s_xmap = drawXMap();
@@ -4283,17 +4403,15 @@ void flushBatch() {
         uint8_t((matB >> 18) & 63), 0, 0, 0,
     };
     if (!(s_bfmt & VF_MTX)) {  // the batch's default matrix indices, as a constant attribute
-        static uint32_t cur[3] = {~0u, ~0u, ~0u};
         uint32_t m[3];
         memcpy(m, defMtx, 12);  // the shader unpacks the bytes little-endian
-        if (memcmp(m, cur, 12) != 0) {
-            memcpy(cur, m, 12);
+        if (memcmp(m, s_defMtxSet, 12) != 0) {
+            memcpy(s_defMtxSet, m, 12);
             glVertexAttribI4ui(14, m[0], m[1], m[2], 0);
         }
     }
     // this batch's XF block (when it changed), vertices and indices, in one map
-    static uint32_t xfBlock[736];
-    static size_t s_xfOffset = 0;
+    static uint32_t xfBlock[kXfBlockWords];
     StreamPiece pc[3];
     int np = 0;
     size_t worst = sizeof(xfBlock) + size_t(s_uboAlign) + s_bdata.size + s_bstride + s_bidx.size * 4 + 4;

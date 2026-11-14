@@ -78,6 +78,9 @@ int port_shadows_map_size(void);
 // (levelOnly: Mario, characters, enemies and water cast near Mario only)
 void GXPC_ShadowFar(int halfRate, int levelOnly);
 int port_shadows_far_half_rate(void);
+// Draw Shadows Together: solid shapes' shadows are drawn into the sun's maps in one go
+void GXPC_ShadowTogether(int on);
+int port_shadows_together(void);
 // Skip Off-Screen Objects: shapes out of the view are not drawn (still cast their shadows)
 void GXPC_SkipOffScreen(int on);
 int port_skip_off_screen(void);

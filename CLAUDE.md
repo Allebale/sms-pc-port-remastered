@@ -136,6 +136,12 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   with Real Shadows where its shadow may be seen (inside the far shadow map's box), drawn only into the sun's maps
   (`g.viewHidden`). Skinned lists (Mario, characters) and swaying plants are never skipped. 3D Grass tiles out of
   the view are skipped too (`GXPC_BoxOffScreen`). The log tells how much it skips every 30 seconds or so.
+- Draw Shadows Together (`GXPC_ShadowTogether`, `shadowReplay` in `gx_render.cpp`): the GL cache (`gx_glcache.h`)
+  already drops repeated texture, program and state binds; what was left was Real Shadows hopping to the shadow
+  map's framebuffer and back after every batch. On, a solid batch's cast (no blend, no alpha test, not swaying) is
+  kept (`s_castRecs`: its XF block's place in the stream, default matrices, ranges) and all are drawn in one go as
+  the next view's shadows begin (`GXPC_ShadowFrame`), or before the stream or the arena starts over. Blended and
+  alpha-tested batches (Mario, leaves, fences) are cast at once as before.
 - Ambient Occlusion is already traced at a half, a third or a quarter of the picture each way (Ambient Occlusion
   Quality, `kAoDivs`), and 3D Grass is already instanced a tile at a time.
 - Round Shadows Under Characters: characters', enemies' and Yoshi's display lists are registered at
