@@ -38,7 +38,7 @@ Read this first. It is what earlier sessions learned working with Allebale on th
 | First Person beta | branch `first-person-beta`: Chase's beta and only the First Person mod's game side (FLUDD held in view, FLUDD weapons), no Remastered features (its four `zzzzzzz-held-fludd*` patches are made against Chase's own patches; its sdk is the SDK fork's `first-person-beta` branch: Chase's SDK with only `held_fludd`, right after `files`; nothing Remastered in it. `combined-plus` has `held_fludd` in that same place, `reflections` after it, so the First Person mod (built with that SDK in its `sdk/`) finds it the one way, `SMS_API_HAS` and its magic, on both builds; Chase's beta is what matters most). Bring Chase's updates in as for `remastered-test` |
 | First Person mod | `Allebale/sms-first-person-mod` (the launcher uses its GitHub releases; work on branch `split`, also pushed to `fludd-gun` for CI), version 1.2.0 |
 | FLUDD Weapons mod | `Allebale/fludd-weapons` (its own repository since Nov 2026, version 1.0.0; a release only on a `v*` tag). The two mods talk through `held_fludd`'s `set_view`, `set_zoom`, `get_state`, `take_mouse` |
-| SDK fork | `Allebale/sms-mod-sdk-modtesting`, branch `remastered-test`: Chase's SDK plus `reflections` (last in `SmsApi`), nothing else. The fork has no weapons or first-person code of its own any more: those are Chase's general tools and the FLUDD Weapons and First Person mods |
+| SDK fork | `Allebale/sms-mod-sdk-modtesting`, branch `remastered-test`: Chase's SDK plus `reflections` and then `grass` (last in `SmsApi`), nothing else. The fork has no weapons or first-person code of its own any more: those are Chase's general tools and the FLUDD Weapons and First Person mods |
 | Chase's port (upstream, read only) | `chasem-dev/sms-pc-port`, branch `main` (the launcher's Beta builds the newest commit there) |
 
 ### Moving test to main
@@ -142,6 +142,10 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   kept (`s_castRecs`: its XF block's place in the stream, default matrices, ranges) and all are drawn in one go as
   the next view's shadows begin (`GXPC_ShadowFrame`), or before the stream or the arena starts over. Blended and
   alpha-tested batches (Mario, leaves, fences) are cast at once as before.
+- **`api->grass`** (the SDK fork's last `SmsApi` member, after `reflections`; `SMS_GRASS_MAGIC`): a mod presses 3D
+  Grass flat or burns it, fire running on through the grass (`port_grass_goop` and the rest in `port_grass.cpp`,
+  the flat map's alpha being how much of the blades is left). Only the mod API calls them. The FLUDD Weapons mod
+  (built with Chase's SDK) finds the table two pointers after `models` and checks its magic (`src/grass.h` there).
 - **Stutters in a stage's first minute** (Nov 2026, the `hitch:` lines): on Allebale's AMD card a shader compiled as
   a draw needs it takes about 125 ms (and the next frame about 90 ms), while the warm-up's parallel compiles are far
   quicker. A stage's load only makes what fits in its second (the fork's big programs: about 64 a load), so hundreds

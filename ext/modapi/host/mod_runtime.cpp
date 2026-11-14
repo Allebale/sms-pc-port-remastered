@@ -8,6 +8,7 @@
 #include "mod_host.h"
 #include "../../multiplayer/mp_game_api.h"
 
+#include "port_grass.h"
 #include "port_puddles.h"
 #include "port_warp.h"
 #include "sms_gx/gx_pc.h"
@@ -1195,6 +1196,16 @@ int apiReflectSet(SmsMod* mod, int option, int value)
 const SmsReflectionsApi s_reflections = {sizeof(SmsReflectionsApi), apiReflectSet, port_reflect_option_get,
                                          port_reflect_option_range};
 
+// ------------------------------------------------------------------ grass (Allebale's fork)
+// 3D Grass pressed flat or burnt by a mod (ext/core/game/port_grass.cpp). Nothing in the game calls
+// these: without a mod that does, that code never runs.
+
+void apiGrassPress(float x, float y, float z, float r) { port_grass_goop(x, y, z, r, 0, 0); }
+void apiGrassBurn(float x, float y, float z, float r, int ms) { port_grass_goop(x, y, z, r, 1, ms < 0 ? 0 : ms > 200 ? 200 : ms); }
+
+const SmsGrassApi s_grass = {sizeof(SmsGrassApi), SMS_GRASS_MAGIC, apiGrassPress,        apiGrassBurn,
+                             port_grass_burning,  port_grass_fires, port_grass_extinguish};
+
 // ------------------------------------------------------------------ FLUDD held in view (first person)
 // ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one
 // unloads
@@ -1844,6 +1855,7 @@ const SmsApi g_api = {
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
 	&s_heldFludd,       &s_water,          &s_actor,          &s_models,
 	&s_reflections,
+	&s_grass,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)

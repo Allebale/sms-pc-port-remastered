@@ -31,6 +31,8 @@ The events of API 1.5 beta 2 (Mario's actions, actors, Shines, flags, sound, tal
 `SMS_EV_ACTOR_DAMAGE` compares an enemy's health (`TSpineEnemy`) before the player's hit (`objectHit`, `objectStomp`) with after it (`objectHitDone`); the same notes give `SMS_EV_ACTOR_DEATH` the last of the player's hits on it.
 `SMS_EV_PAUSE` and `SMS_EV_MODE_CHANGED` are the director's state and the game mode compared from one frame's top to the next; `SmsEvDamage.source` is what `TMario::damageExec` names as it takes his health (`port_ext_damage_source`), his own floor actor reported as none.
 
+Grass (`api->grass`, Allebale's fork, last in `SmsApi` with a magic): a mod presses 3D Grass flat or burns it (`port_grass_goop`, `port_grass_burning`, `port_grass_fires`, `port_grass_extinguish` in ext/core/game/port_grass.cpp). Nothing in the game calls them: without a mod that does, that code never runs. The FLUDD Weapons mod's electric and fire goop use it.
+
 Reflections (`api->reflections`, Allebale's fork) are the port's puddle and water effects (ext/core/game/port_reflections.cpp, port_water_reflections.cpp, the `zzzzz-ext-24` and `-25` decomp patches): the host half calls `port_reflect_option_set` (platform/misc/port_puddle_options.cpp, `port_puddles.h`), whose options are `SMS_REFLECT_*` in their order. Each starts as the original game has it; when a mod that set any unloads, all go back so (`port_reflect_option_reset`). The game has no menu of its own for them: a mod gives the player its options in the Mods menu.
 
 Ownership: every subscription, service, key binding, option, image and the input capture is recorded against its mod, so unloading a mod (exit, the Mods menu, hot reload) drops all of it before the library is closed.

@@ -25,6 +25,15 @@ int port_grass_mario(void);
 // From port_draw_footprints (TModelWaterManager::perform, as the stage's ground is drawn): the
 // blades near Mario. view: the camera's (world to view).
 void port_grass_draw(float (*view)[4]);
+// A mod's own effects on the grass (api->grass, ext/modapi/host/mod_runtime.cpp; nothing in the
+// game calls these). kind 0: the blades within r pressed flat; kind 1: burnt away (`ms` since the
+// last call), and the grass at its edge set alight
+void port_grass_goop(float x, float y, float z, float r, int kind, int ms);
+// grass on fire there (the fire running through it); the burning places, at most `most`
+int port_grass_burning(float x, float z);
+int port_grass_fires(float* out, int most);
+// the grass fire round (x, z) put out
+void port_grass_extinguish(float x, float z, float r);
 
 #ifdef __cplusplus
 }
