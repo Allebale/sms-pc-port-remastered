@@ -84,6 +84,23 @@ f32 seconds()
 // ------------------------------------------------------------------ the leafy materials
 // Plants by their materials' names (lower case): leaves, palms, flowers, bushes, trees, ivy, potted
 // grass; not what is only near them (trunks, bark, shadows, walls, the ground, rock, sand).
+// Ground cover painted on a stage's own mesh: grass (kusa), ivy (tuta) and where they meet the rock
+// (sakai). On the level's mesh these are the cliffs and slopes themselves (Noki Bay's cliffs are all
+// of them), not plants standing apart, so they never sway there.
+bool groundCover(const char* name)
+{
+	char low[64];
+	int n = 0;
+	for (; name && name[n] && n < 63; n++)
+		low[n] = (char)(name[n] >= 'A' && name[n] <= 'Z' ? name[n] + 32 : name[n]);
+	low[n] = 0;
+	static const char* const kCover[] = {"kusa", "tuta", "ivy", "vine", "sakai", "grass", "moss", "koke"};
+	for (unsigned i = 0; i < sizeof kCover / sizeof kCover[0]; i++)
+		if (strstr(low, kCover[i]))
+			return true;
+	return false;
+}
+
 bool plantName(const char* name)
 {
 	char low[64];
@@ -198,7 +215,7 @@ void port_veg_model(J3DModelData* data)
 	if (!names)
 		return;
 	char line[512];
-	int len = 0, found = 0;
+	int len = 0, found = 0, skipped = 0;
 	for (u16 i = 0; i < data->getMaterialNum(); i++) {
 		const char* name = names->getName(i);
 		if (!name || !plantName(name))
@@ -208,6 +225,11 @@ void port_veg_model(J3DModelData* data)
 		if (!shape)
 			continue;
 		const ShapeBounds* b = (const ShapeBounds*)shape;
+		// no height of its own: part of a stage's mesh, where grass and ivy are the ground and cliffs
+		if (b->max.y - b->min.y <= 1.0f && groundCover(name)) {
+			skipped++;
+			continue;
+		}
 		for (u32 g = 0; g < shape->getMtxGroupNum(); g++) {
 			J3DShapeDraw* draw = shape->getShapeDraw((u16)g);
 			if (draw && draw->getDisplayList())
@@ -220,6 +242,8 @@ void port_veg_model(J3DModelData* data)
 	}
 	if (found)
 		fprintf(stderr, "[vegetation] a model's plants:%s\n", line);
+	if (skipped)
+		fprintf(stderr, "[vegetation] %d ground cover materials of a stage's mesh (grass, ivy) kept still\n", skipped);
 }
 
 void port_veg_model_named(J3DModelData* data, const char* path)
