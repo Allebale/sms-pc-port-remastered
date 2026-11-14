@@ -27,6 +27,8 @@ extern "C" void GXPC_GrassBegin(const float view[3][4], const float* params, con
                                 const float* strength, int count);
 extern "C" void GXPC_GrassDraw(unsigned buf, int blades, int segments, int pressed);
 extern "C" void GXPC_GrassEnd(void);
+// Skip Off-Screen Objects: whether none of a box (world space) shows in the view (0 while it is off)
+extern "C" int GXPC_BoxOffScreen(const float view[3][4], const float lo[3], const float hi[3]);
 // The flattened grass (rgba: size by size cells, x0/z0 the first's corner, span across; null: none).
 extern "C" void GXPC_GrassFlatMap(const unsigned char* rgba, int size, float x0, float z0, float span);
 
@@ -702,6 +704,13 @@ void drawGrass(float (*view)[4])
 		const f32 vz = view[2][0] * cx + view[2][1] * cy + view[2][2] * cz + view[2][3];
 		if (vz > kTile)
 			continue;
+		// Skip Off-Screen Objects: out of the view to a side (its blades' reach as a margin)
+		{
+			const f32 lo[3] = {tile.tx * kTile - 150.0f, tile.minY - 100.0f, tile.tz * kTile - 150.0f};
+			const f32 hi[3] = {(tile.tx + 1) * kTile + 150.0f, tile.maxY + 400.0f, (tile.tz + 1) * kTile + 150.0f};
+			if (GXPC_BoxOffScreen(view, lo, hi))
+				continue;
+		}
 		// whether anything that presses reaches it
 		bool pressed = false;
 		for (int k = 0; k < n && !pressed; k++) {

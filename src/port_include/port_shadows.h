@@ -78,6 +78,9 @@ int port_shadows_map_size(void);
 // (levelOnly: Mario, characters, enemies and water cast near Mario only)
 void GXPC_ShadowFar(int halfRate, int levelOnly);
 int port_shadows_far_half_rate(void);
+// Skip Off-Screen Objects: shapes out of the view are not drawn (still cast their shadows)
+void GXPC_SkipOffScreen(int on);
+int port_skip_off_screen(void);
 int port_shadows_far_level_only(void);
 float port_shadows_softness(void);
 // Around Mario's own draw (port_wet_mario_draw): for the log, whether his batches cast.

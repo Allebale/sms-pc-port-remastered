@@ -123,6 +123,9 @@ struct State {
     // Far Shadows From, The Level Only (GXPC_ShadowFar): Mario's and the characters' draws are
     // told apart (shadowTag, shadowNoCast) and left out of the far cascade
     bool shadowFarLevel;
+    // Skip Off-Screen Objects (GXPC_SkipOffScreen). viewHidden: the batch is of a display list that
+    // is out of the view but may cast into the sun's maps: nothing of it is drawn in the view
+    bool skipOffScreen, viewHidden;
     // Ambient Occlusion Near Grass's All But Characters: Mario's and the characters' draws are drawn
     // again into a depth map of their own (charCast), so the shade knows them
     bool charMask;
@@ -468,6 +471,9 @@ const ShaderProgram* shaderForCurrentState(int depthOnly = 0, bool lines = false
 void aoApply();
 bool swayLookup(const void* list, uint32_t size, float* minY, float* maxY);
 bool characterLookup(const void* list, uint32_t size);  // Round Shadows Under Characters
+// Skip Off-Screen Objects: a model-space box drawn with the current position matrix and projection.
+// 0 some of it may show; 1 none of it shows, but it may cast into the sun's maps; 2 nothing of it
+int boxOffScreen(const float lo[3], const float hi[3]);
 bool ladderLookup(const void* list, uint32_t size, float back[3]);  // 3D Ladders
 // The texture unit the sun's shadow map is bound on (gx_render.cpp), past the game's eight.
 const int kShadowUnit = 10;

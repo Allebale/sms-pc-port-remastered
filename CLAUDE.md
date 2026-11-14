@@ -131,6 +131,13 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   the next (`s_shadowFarKept`, a depth blit of the right half, with the box it was drawn for). Far Shadows From
   (The Level Only, `g.shadowFarLevel`): Mario's, the registered characters' and the water's draws go into the near
   cascade only. Both `GXPC_ShadowFar`; on in the Performance presets, off in Remastered until Allebale has tested.
+- Skip Off-Screen Objects (`GXPC_SkipOffScreen`, `boxHidden` in `gx_render.cpp`): a cached display list of plain
+  triangles with one matrix keeps its corners' box (`DlEntry::boxed`); out of a perspective view it is left out, or,
+  with Real Shadows where its shadow may be seen (inside the far shadow map's box), drawn only into the sun's maps
+  (`g.viewHidden`). Skinned lists (Mario, characters) and swaying plants are never skipped. 3D Grass tiles out of
+  the view are skipped too (`GXPC_BoxOffScreen`). The log tells how much it skips every 30 seconds or so.
+- Ambient Occlusion is already traced at a half, a third or a quarter of the picture each way (Ambient Occlusion
+  Quality, `kAoDivs`), and 3D Grass is already instanced a tile at a time.
 - Round Shadows Under Characters: characters', enemies' and Yoshi's display lists are registered at
   stage setup (`GXPC_ShadowCharacter`) and cast no sun shadow while it is on; Mario's draw is known by `g.shadowTag`.
 - Keep shaders small: big shaders caused stutters. Mario-only code goes only into Mario's program.

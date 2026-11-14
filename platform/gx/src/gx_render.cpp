@@ -4001,6 +4001,86 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
     applyGlState();
 }
 
+// ------------------------------------------------------------------ Skip Off-Screen Objects
+// A box's corners taken to the view by `m` (3 rows of 4) and on as the vertex shader does it
+// (genVS: the projection, the viewport, the whole EFB): hidden when all eight are past one edge of
+// the picture, or behind the eye. Only a perspective view's (the HUD and the like are left alone).
+// Out of the view, with Real Shadows in the main camera's view: 1 while the box is inside the far
+// shadow map's (it may cast a shadow that is seen), else 2.
+static uint32_t s_skipSeen, s_skipCast, s_skipGone;
+static int boxHidden(const float* m, const float lo[3], const float hi[3]) {
+    if (g.xfReg[XFR_PROJ + 6] & 1) return 0;
+    const XMap kept = s_xmap;  // the batch's, set again as it is drawn
+    s_xmap = drawXMap();
+    float vp[8];
+    drawViewport(vp);
+    s_xmap = kept;
+    const float p0 = xff(XFR_PROJ), p1 = xff(XFR_PROJ + 1), p2 = xff(XFR_PROJ + 2), p3 = xff(XFR_PROJ + 3);
+    const float sx = 2.0f / float(s_efbW), sy = 2.0f / float(EFB_H);
+    // a margin round the box: what moves a corner a little in the shader (a ladder's layers)
+    float a[3], b[3];
+    for (int i = 0; i < 3; i++) {
+        const float pad = (hi[i] - lo[i]) * 0.02f + 12.0f;
+        a[i] = lo[i] - pad;
+        b[i] = hi[i] + pad;
+    }
+    float v[8][3];
+    bool left = true, right = true, below = true, above = true, behind = true;
+    for (int c = 0; c < 8; c++) {
+        const float x = c & 1 ? b[0] : a[0], y = c & 2 ? b[1] : a[1], z = c & 4 ? b[2] : a[2];
+        for (int r = 0; r < 3; r++) v[c][r] = m[r * 4] * x + m[r * 4 + 1] * y + m[r * 4 + 2] * z + m[r * 4 + 3];
+        const float w = -v[c][2];
+        const float cx = p0 * v[c][0] + p1 * v[c][2], cy = p2 * v[c][1] + p3 * v[c][2];
+        const float gx = ((vp[4] - 342.0f) * w + vp[0] * cx) * sx - w;
+        const float gy = ((vp[5] - 342.0f) * w + vp[1] * cy) * sy - w;
+        left   = left && gx < -w;
+        right  = right && gx > w;
+        below  = below && gy < -w;
+        above  = above && gy > w;
+        behind = behind && w <= 0.0f;
+    }
+    if (!(left || right || below || above || behind)) return 0;
+    if (!(g.shadowArmed && g.shadowMain) || g.shadowCastOnly) return 2;
+    // the far shadow map's box (view space to its clip space: this frame's rows)
+    const float* s = s_shadowWriteRows[1];
+    for (int r = 0; r < 2; r++) {
+        bool under = true, over = true;
+        for (int c = 0; c < 8; c++) {
+            const float t = s[r * 4] * v[c][0] + s[r * 4 + 1] * v[c][1] + s[r * 4 + 2] * v[c][2] + s[r * 4 + 3];
+            under = under && t < -1.0f;
+            over  = over && t > 1.0f;
+        }
+        if (under || over) return 2;
+    }
+    return 1;
+}
+int boxOffScreen(const float lo[3], const float hi[3]) {
+    float m[12];
+    memcpy(m, &g.xfMem[(g.xfReg[XFR_MATIDX_A] & 63) * 4], sizeof m);
+    const int r = boxHidden(m, lo, hi);
+    (r == 0 ? s_skipSeen : r == 1 ? s_skipCast : s_skipGone)++;
+    return r;
+}
+extern "C" void GXPC_SkipOffScreen(int on) {
+    // the log, every 30 seconds or so while on: how much it skips
+    static uint32_t s_told;
+    const uint32_t frame = GXPC_FrameCount();
+    if (g.skipOffScreen && frame - s_told >= 3600) {
+        s_told = frame;
+        logmsg("skip off-screen: of the last %u shapes checked, %u left out, %u drawn only as shadows",
+               s_skipSeen + s_skipCast + s_skipGone, s_skipGone, s_skipCast);
+        s_skipSeen = s_skipCast = s_skipGone = 0;
+    }
+    if (g.skipOffScreen == (on != 0)) return;
+    flushBatch();
+    g.skipOffScreen = on != 0;
+}
+// A world-space box seen through `view` (the grass's tiles): whether none of it shows
+extern "C" int GXPC_BoxOffScreen(const float view[3][4], const float lo[3], const float hi[3]) {
+    if (!g.skipOffScreen || !view) return 0;
+    return boxHidden(&view[0][0], lo, hi) != 0;
+}
+
 // Ambient Occlusion Near Grass's All But Characters: a batch of Mario's (his own draw) or of a
 // character's (a registered display list, drawn on its own), in the main camera's view, drawn again
 // with its own program into a depth map of the picture (no colour): the shade then knows which
@@ -4261,8 +4341,8 @@ void flushBatch() {
             else ranges.push_back(Range{vaoForFormat(s_bfmt), iOff + size_t(sg.first) * 4, GLsizei(sg.count), streamBase});
         }
     }
-    if (g.shadowCastOnly) {
-        // only a shadow (GXPC_ShadowCastOnly): nothing drawn in the view, cast below
+    if (g.shadowCastOnly || g.viewHidden) {
+        // only a shadow (GXPC_ShadowCastOnly; Skip Off-Screen Objects): nothing drawn in the view, cast below
     } else if (earlyFallback) {
         const ShaderProgram* depthSp = shaderForCurrentState(true, s_bclass == PRIM_LINES);
         glcUseProgram(depthSp->prog);
@@ -4323,10 +4403,10 @@ void flushBatch() {
     }
     if (s_probeArmed && s_bclass == PRIM_TRIS) probeBatch();  // the grab log
     // 3D Ladders by texture: a ladder's draw again behind itself (not its reflection, not a layer's)
-    if (g.ladders3D && !g.shellOn && s_bclass == PRIM_TRIS && !g.userClipOn && !(g.xfReg[XFR_PROJ + 6] & 1)
-        && ladderTexture())
+    if (g.ladders3D && !g.shellOn && !g.viewHidden && s_bclass == PRIM_TRIS && !g.userClipOn
+        && !(g.xfReg[XFR_PROJ + 6] & 1) && ladderTexture())
         ladderLayers(ranges, mode, sp, texW, texH);
-    if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn) charCast(ranges, mode, sp);
+    if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn && !g.viewHidden) charCast(ranges, mode, sp);
     if (g.shadowArmed && s_bclass == PRIM_TRIS && !g.shellOn) {  // a ladder's layers: its card casts once
         const char* why = g.shadowCastOnly ? (g.shadowMain ? nullptr : "not the main camera's view")
                           : g.shadowMain ? shadowNoCast() : "not the main camera's view";

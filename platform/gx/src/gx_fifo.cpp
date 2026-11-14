@@ -1038,6 +1038,9 @@ struct DlEntry {
     uint32_t vat[8][3];
     uint8_t vatMask = 0, lastVat = 0;
     bool usesMtx = false;
+    // Skip Off-Screen Objects: its corners' box (model space), when it is all triangles of one matrix
+    bool boxed = false;
+    float lo[3], hi[3];
     uint32_t verts = 0;
     size_t bytes = 0;
     std::vector<DlArray> arrays;
@@ -1311,6 +1314,22 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size) {
             e.misses = 0;
             return;
         }
+        // Skip Off-Screen Objects: out of the view. Left out; or, where its shadow may be seen,
+        // drawn only into the sun's maps (a batch of its own; small ones are drawn as ever)
+        int hidden = 0;
+        if (g.skipOffScreen && e.boxed && !g.swayDraw) {
+            hidden = boxOffScreen(e.lo, e.hi);
+            if (hidden == 2) {
+                g_traceLastVat = e.lastVat;
+                e.misses = 0;
+                return;
+            }
+            if (hidden == 1 && e.verts < 96) hidden = 0;
+        }
+        if (hidden) {
+            flushBatch();
+            g.viewHidden = true;
+        }
         const bool arena = arenaEnabled() && !traceFile();  // traces list the batch's own vertices
         for (DlRun& r : e.runs) {
             const uint32_t nidx = uint32_t(r.idx.size());
@@ -1321,6 +1340,10 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size) {
                 appendArena(r.cls, r.fmt, r.stride, r.arena, r.nverts, nidx, r.verts.data());
             else
                 appendDecoded(r.cls, r.fmt, r.stride, r.verts.data(), r.nverts, r.idx.data(), nidx);
+        }
+        if (hidden) {
+            flushBatch();
+            g.viewHidden = false;
         }
         s_vertsLoaded += e.verts;
         g_traceLastVat = e.lastVat;
@@ -1388,6 +1411,20 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size) {
         e.arrays.push_back(a);
     }
     for (const DlRun& r : e.runs) e.bytes += r.verts.size() + r.idx.size() * 4;
+    e.boxed = !e.stateOnly && !e.usesMtx && e.verts > 0;
+    for (int i = 0; i < 3; i++) e.lo[i] = 1e30f, e.hi[i] = -1e30f;
+    for (const DlRun& r : e.runs) {
+        if (r.cls != PRIM_TRIS || r.stride < 12) e.boxed = false;
+        for (uint32_t v = 0; e.boxed && v < r.nverts; v++) {
+            float p[3];
+            memcpy(p, r.verts.data() + size_t(v) * r.stride, sizeof p);
+            for (int i = 0; i < 3; i++) {
+                if (!(p[i] > -1e9f && p[i] < 1e9f)) e.boxed = false;
+                if (p[i] < e.lo[i]) e.lo[i] = p[i];
+                if (p[i] > e.hi[i]) e.hi[i] = p[i];
+            }
+        }
+    }
     e.bytes += e.ops.size() * sizeof(StateOp) + e.words.size() * 4;
     s_dlCacheBytes += e.bytes;
     e.valid = true;
