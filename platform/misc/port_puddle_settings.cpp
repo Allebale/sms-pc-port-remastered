@@ -100,6 +100,7 @@ int s_shadowsRound = 0;   // Round Shadows Under Characters, with Real Shadows: 
 int s_shadowsDistance = 2;  // Shadow Distance: into kShadowDistances
 int s_shadowsMap = 2;       // Shadow Size: 0 low (1024), 1 medium (2048), 2 high (4096, as it was)
 int s_skipOffScreen = 0;    // Skip Off-Screen Objects: 1 shapes out of the view are not drawn
+int s_shaderPriming = 0;    // Shader Priming: 1 each shader drawn once while a level loads
 int s_shaderBackground = 0; // Background Shader Compiling: 1 the known shaders are compiled while playing
 int s_shadowsTogether = 0;  // Draw Shadows Together: 1 solid shapes' shadows drawn in one go
 int s_shadowsFarHalf = 0;   // Far Shadows Update Rate: 0 every frame, 1 every other frame
@@ -322,6 +323,8 @@ void load() {
             s_shadowsMap = value < 0 ? 0 : value > 2 ? 2 : value;
         } else if (sscanf(line, " skipoffscreen = %d", &value) == 1) {
             s_skipOffScreen = value != 0;
+        } else if (sscanf(line, " shaderpriming = %d", &value) == 1) {
+            s_shaderPriming = value != 0;
         } else if (sscanf(line, " shaderbackground = %d", &value) == 1) {
             s_shaderBackground = value != 0;
         } else if (sscanf(line, " shadowstogether = %d", &value) == 1) {
@@ -480,6 +483,8 @@ void save() {
     fprintf(f, "shadowsize = %d\n", s_shadowsMap);
     fprintf(f, "# skipoffscreen: 1 shapes and grass out of the view are not drawn (faster), 0 everything is.\n");
     fprintf(f, "skipoffscreen = %d\n", s_skipOffScreen);
+    fprintf(f, "# shaderpriming: 1 each shader made is drawn once while a level loads (fewer stutters in play).\n");
+    fprintf(f, "shaderpriming = %d\n", s_shaderPriming);
     fprintf(f, "# shaderbackground: 1 shaders not made yet are compiled while playing (fewer stutters), needs Shader Warm-up.\n");
     fprintf(f, "shaderbackground = %d\n", s_shaderBackground);
     fprintf(f, "# shadowstogether: 1 Real Shadows are drawn in one go, not a little after each shape (faster).\n");
@@ -846,6 +851,18 @@ int skipOffScreenSet(int i) {
     s_skipOffScreen = i;
     save();
     port_log("[graphics] Skip Off-Screen Objects changed: %s\n", i ? "on" : "off");
+    return 1;
+}
+int shaderPrimingGet() {
+    load();
+    return s_shaderPriming;
+}
+int shaderPrimingSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_shaderPriming = i;
+    save();
+    port_log("[graphics] Shader Priming changed: %s\n", i ? "on" : "off");
     return 1;
 }
 int shaderBackgroundGet() {
@@ -1346,6 +1363,7 @@ const EffectValue kEffects[] = {
     {"Shadow Size", {"High", "High", "Medium", "Low"}},
     {"Skip Off-Screen Objects", {"Off", "Off", "On", "On"}},
     {"Background Shader Compiling", {"Off", "Off", "On", "On"}},
+    {"Shader Priming", {"Off", "Off", "Off", "Off"}},
     {"Draw Shadows Together", {"Off", "Off", "On", "On"}},
     {"Far Shadows Update Rate", {"Every Frame", "Every Frame", "Every Other Frame", "Every Other Frame"}},
     {"Far Shadows From", {"Everything", "Everything", "The Level Only", "The Level Only"}},
@@ -1570,6 +1588,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 121, "Background Shader Compiling",
      "With Shader Warm-up, the rest of the shaders are made while you play.", 0, nullptr,
      offOnCount, offOnName, shaderBackgroundGet, shaderBackgroundSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 122, "Shader Priming",
+     "Each shader is drawn once while a level loads. Longer loads, fewer stutters.", 0, nullptr,
+     offOnCount, offOnName, shaderPrimingGet, shaderPrimingSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Draw Shadows Together",
      "Real Shadows are drawn in one go, with fewer switches. Faster, looks the same.", 0, nullptr,
      offOnCount, offOnName, shadowsTogetherGet, shadowsTogetherSet},
@@ -1835,6 +1856,10 @@ int port_shadows_map_size(void) {
 int port_skip_off_screen(void) {
     load();
     return s_skipOffScreen;
+}
+int port_shader_priming(void) {
+    load();
+    return s_shaderPriming;
 }
 int port_shader_background(void) {
     load();

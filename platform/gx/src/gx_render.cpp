@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include <algorithm>
+#include <chrono>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -4119,6 +4120,40 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
     applyGlState();
 }
 
+// ------------------------------------------------------------------ Shader Priming
+// GL thread, while a stage loads: each program drawn once into the EFB with the last batch's
+// vertex format and the GL state as it is, as a triangle of one point (all three corners vertex
+// 0: nothing is drawn). A driver that finishes a program only as it is first drawn (AMD's) does
+// that work now, not in play. Returns how many it drew before `budgetMs` ran out.
+static uint32_t s_lastFmt = ~0u;  // the last batch's vertex format (flushBatch)
+int primePrograms(const unsigned* progs, int n, double budgetMs) {
+    if (!s_ready || !s_efbFbo || s_lastFmt == ~0u || n <= 0) return 0;
+    static GLuint s_zeros;  // three indices, all 0
+    if (!s_zeros) {
+        const GLuint z[3] = {0, 0, 0};
+        glGenBuffers(1, &s_zeros);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, s_zeros);
+        glBufferData(GL_COPY_WRITE_BUFFER, sizeof z, z, GL_STATIC_DRAW);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
+    const auto start = std::chrono::steady_clock::now();
+    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    const GLuint vao = vaoForFormat(s_lastFmt);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_zeros);
+    glBindBufferRange(GL_UNIFORM_BUFFER, 0, s_stream.buf, GLintptr(s_xfOffset), kXfBlockWords * 4);
+    int done = 0;
+    for (; done < n; done++) {
+        if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() > budgetMs) break;
+        glUseProgram(progs[done]);
+        glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, nullptr);
+    }
+    glFinish();  // the driver's work done here, in the load
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_stream.buf);  // the VAO's own again
+    glcInvalidate();
+    return done;
+}
+
 // ------------------------------------------------------------------ Skip Off-Screen Objects
 // A box's corners taken to the view by `m` (3 rows of 4) and on as the vertex shader does it
 // (genVS: the projection, the viewport, the whole EFB): hidden when all eight are past one edge of
@@ -4362,6 +4397,7 @@ void flushBatch() {
     GxTimer timer;
     GxTimer tf(&g_flushSeconds);
     s_xmap = drawXMap();
+    if (s_bclass == PRIM_TRIS) s_lastFmt = s_bfmt;  // Shader Priming draws with it
     if (s_bclass == PRIM_LINES && s_segs.empty() && !platformGeometryShaders()) widenLines();
     const ShaderProgram* sp = shaderForCurrentState(false, s_bclass == PRIM_LINES);
     glcUseProgram(sp->prog);

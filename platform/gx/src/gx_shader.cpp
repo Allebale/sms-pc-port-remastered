@@ -1235,6 +1235,11 @@ struct Warmed {
     ShaderProgram sp;
     bool ok;
 };
+// Shader Priming: the warm-up's programs not drawn yet (GXPC_ShaderPriming)
+static std::vector<GLuint> s_toPrime;
+static bool s_priming;
+uint32_t g_statPrimed = 0;
+extern "C" void GXPC_ShaderPriming(int on) { s_priming = on != 0; }
 static std::vector<WarmJob*> s_inFlight;
 static std::vector<Warmed> s_warmed;
 // Background Shader Compiling: s_warmed is filled by the GL thread while the game's runs
@@ -1334,6 +1339,7 @@ static void warmDrain() {
             continue;
         }
         s_programs.emplace(w.key, w.sp);
+        s_toPrime.push_back(w.sp.prog);
         s_warmMade++;
     }
 }
@@ -1466,6 +1472,16 @@ void shaderPrepareStage(int stage) {
     if (s_warmMade != before)
         logmsg("shader warm-up: compiled %u programs for stage %d and %u others in %.1f ms%s", own, s_stage,
                s_warmMade - before - own, elapsed(), s_warmNext < s_warmKeys.size() ? "" : " (all known programs made)");
+    // Shader Priming: the programs made so far (this load's and the background's), each drawn once
+    if (s_priming && !s_toPrime.empty()) {
+        const auto p0 = std::chrono::steady_clock::now();
+        int done = 0;
+        glt::sync([&] { done = primePrograms(s_toPrime.data(), int(s_toPrime.size()), 3000.0); });
+        s_toPrime.erase(s_toPrime.begin(), s_toPrime.begin() + done);
+        g_statPrimed += uint32_t(done);
+        logmsg("shader priming: %d programs drawn once in %.1f ms, %zu left for the next load", done,
+               std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - p0).count(), s_toPrime.size());
+    }
 }
 
 // Background Shader Compiling: once a frame while playing, the known programs not made yet (a
@@ -1997,6 +2013,7 @@ void shaderShutdown() {
     s_warmKeys.clear();
     s_stageKeys.clear();
     s_warmIssued.clear();
+    s_toPrime.clear();
     s_warmNext = 0;
     s_parallel = false;
     if (s_cacheOut) fclose(s_cacheOut);
