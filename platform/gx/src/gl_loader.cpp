@@ -120,6 +120,44 @@ template <typename R, typename... A> struct Px<R (*)(A...)> {
             return r;
         }
     }
+    // a draw (its arguments values here: index offsets), timed as one for the stutter log
+    template <R (**Real)(A...)> static R draw(A... a) {
+        if (glt::onGlThread()) {
+            glt::noteDraw();
+            return (*Real)(a...);
+        }
+        R (*fn)(A...) = *Real;
+        glt::post([=] {
+            glt::noteDraw();
+            fn(a...);
+        });
+    }
+    // calls on the GL thread that say what they are (the stutter log)
+    template <int K, R (**Real)(A...)> static R kind(A... a) {
+        if (glt::onGlThread()) {
+            glt::g_cmdKind = K;
+            return (*Real)(a...);
+        }
+        if constexpr (std::is_void<R>::value && !(std::is_pointer<A>::value || ...)) {
+            R (*fn)(A...) = *Real;
+            glt::post([=] {
+                glt::g_cmdKind = K;
+                fn(a...);
+            });
+        } else if constexpr (std::is_void<R>::value) {
+            glt::sync([&] {
+                glt::g_cmdKind = K;
+                (*Real)(a...);
+            });
+        } else {
+            R r{};
+            glt::sync([&] {
+                glt::g_cmdKind = K;
+                r = (*Real)(a...);
+            });
+            return r;
+        }
+    }
     // pointer arguments that are values here (buffer offsets, sync objects)
     template <R (**Real)(A...)> static R callValues(A... a) {
         static_assert(std::is_void<R>::value, "only calls without results are queued");
@@ -146,6 +184,29 @@ template <void (**Real)(GLsizei, const GLuint*)> void deleteNames(GLsizei n, con
     auto fn = *Real;
     glt::postData(names, size_t(n) * sizeof(GLuint),
                   [=](const uint8_t* d) { fn(n, reinterpret_cast<const GLuint*>(d)); });
+}
+
+void pxUseProgram(GLuint p) {
+    if (glt::onGlThread()) {
+        glt::noteProgram(p);
+        return real_glUseProgram(p);
+    }
+    auto fn = real_glUseProgram;
+    glt::post([=] {
+        glt::noteProgram(p);
+        fn(p);
+    });
+}
+void pxBindVertexArray(GLuint v) {
+    if (glt::onGlThread()) {
+        glt::noteVao(v);
+        return real_glBindVertexArray(v);
+    }
+    auto fn = real_glBindVertexArray;
+    glt::post([=] {
+        glt::noteVao(v);
+        fn(v);
+    });
 }
 
 void pxBindBuffer(GLenum target, GLuint buffer) {
@@ -197,7 +258,7 @@ void pxTexImage2D(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsizei h, 
     if (!pixels) return glt::post([=] { fn(target, level, ifmt, w, h, border, format, type, nullptr); });
     size_t n = uploadBytes(w, h, format, type);
     if (!n) return glt::sync([&] { fn(target, level, ifmt, w, h, border, format, type, pixels); });
-    glt::postData(pixels, n, [=](const uint8_t* d) { fn(target, level, ifmt, w, h, border, format, type, d); });
+    glt::postData(pixels, n, [=](const uint8_t* d) { glt::g_cmdKind = glt::KIND_UPLOAD; fn(target, level, ifmt, w, h, border, format, type, d); });
 }
 
 void pxTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type,
@@ -206,7 +267,7 @@ void pxTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GL
     auto fn = real_glTexSubImage2D;
     size_t n = pixels ? uploadBytes(w, h, format, type) : 0;
     if (!n) return glt::sync([&] { fn(target, level, x, y, w, h, format, type, pixels); });
-    glt::postData(pixels, n, [=](const uint8_t* d) { fn(target, level, x, y, w, h, format, type, d); });
+    glt::postData(pixels, n, [=](const uint8_t* d) { glt::g_cmdKind = glt::KIND_UPLOAD; fn(target, level, x, y, w, h, format, type, d); });
 }
 
 void pxCompressedTexImage2D(GLenum target, GLint level, GLenum ifmt, GLsizei w, GLsizei h, GLint border,
@@ -214,21 +275,24 @@ void pxCompressedTexImage2D(GLenum target, GLint level, GLenum ifmt, GLsizei w, 
     if (glt::onGlThread()) return real_glCompressedTexImage2D(target, level, ifmt, w, h, border, bytes, data);
     auto fn = real_glCompressedTexImage2D;
     if (!data) return glt::post([=] { fn(target, level, ifmt, w, h, border, bytes, nullptr); });
-    glt::postData(data, size_t(bytes), [=](const uint8_t* d) { fn(target, level, ifmt, w, h, border, bytes, d); });
+    glt::postData(data, size_t(bytes), [=](const uint8_t* d) { glt::g_cmdKind = glt::KIND_UPLOAD; fn(target, level, ifmt, w, h, border, bytes, d); });
 }
 
 void pxCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,
                                GLsizei bytes, const void* data) {
     if (glt::onGlThread()) return real_glCompressedTexSubImage2D(target, level, x, y, w, h, format, bytes, data);
     auto fn = real_glCompressedTexSubImage2D;
-    glt::postData(data, size_t(bytes), [=](const uint8_t* d) { fn(target, level, x, y, w, h, format, bytes, d); });
+    glt::postData(data, size_t(bytes), [=](const uint8_t* d) { glt::g_cmdKind = glt::KIND_UPLOAD; fn(target, level, x, y, w, h, format, bytes, d); });
 }
 
 void pxReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, void* pixels) {
     if (glt::onGlThread()) return real_glReadPixels(x, y, w, h, format, type, pixels);
     auto fn = real_glReadPixels;
     if (s_packBuffer) return glt::post([=] { fn(x, y, w, h, format, type, pixels); });  // into a buffer: an offset
-    glt::sync([&] { fn(x, y, w, h, format, type, pixels); });
+    glt::sync([&] {
+        glt::g_cmdKind = glt::KIND_READBACK;
+        fn(x, y, w, h, format, type, pixels);
+    });
 }
 
 // Sync objects: glFenceSync returns at once a handle whose fence the GL thread
@@ -250,7 +314,10 @@ GLsync pxFenceSync(GLenum condition, GLbitfield flags) {
 GLenum pxClientWaitSync(GLsync s, GLbitfield flags, GLuint64 timeout) {
     if (glt::onGlThread()) return real_glClientWaitSync(realSync(s), flags, timeout);
     GLenum r = GL_WAIT_FAILED;
-    glt::sync([&] { r = real_glClientWaitSync(realSync(s), flags, timeout); });
+    glt::sync([&] {
+        glt::g_cmdKind = glt::KIND_FENCE;
+        r = real_glClientWaitSync(realSync(s), flags, timeout);
+    });
     return r;
 }
 
@@ -285,6 +352,7 @@ void pxMultiDrawElementsBaseVertex(GLenum mode, const GLsizei* count, GLenum typ
         const void* const* ind = reinterpret_cast<const void* const*>(d);
         const GLsizei* cnt = reinterpret_cast<const GLsizei*>(d + n * sizeof(void*));
         const GLint* bv = reinterpret_cast<const GLint*>(d + n * (sizeof(void*) + sizeof(GLsizei)));
+        glt::noteDraw();
         fn(mode, cnt, type, ind, GLsizei(n), bv);
     });
 }
@@ -300,8 +368,18 @@ void gx::glt::installProxies() {
 #undef SMS_GX_PROXY
     gx_glVertexAttribPointer = &Px<PFNGLVERTEXATTRIBPOINTERPROC>::callValues<&real_glVertexAttribPointer>;
     gx_glVertexAttribIPointer = &Px<PFNGLVERTEXATTRIBIPOINTERPROC>::callValues<&real_glVertexAttribIPointer>;
-    gx_glDrawElements = &Px<PFNGLDRAWELEMENTSPROC>::callValues<&real_glDrawElements>;
-    gx_glDrawElementsBaseVertex = &Px<PFNGLDRAWELEMENTSBASEVERTEXPROC>::callValues<&real_glDrawElementsBaseVertex>;
+    gx_glDrawElements = &Px<PFNGLDRAWELEMENTSPROC>::draw<&real_glDrawElements>;
+    gx_glDrawElementsBaseVertex = &Px<PFNGLDRAWELEMENTSBASEVERTEXPROC>::draw<&real_glDrawElementsBaseVertex>;
+    gx_glDrawArrays = &Px<PFNGLDRAWARRAYSPROC>::draw<&real_glDrawArrays>;
+    gx_glDrawArraysInstanced = &Px<PFNGLDRAWARRAYSINSTANCEDPROC>::draw<&real_glDrawArraysInstanced>;
+    gx_glUseProgram = &pxUseProgram;
+    gx_glBindVertexArray = &pxBindVertexArray;
+    gx_glFinish = &Px<PFNGLFINISHPROC>::kind<glt::KIND_FENCE, &real_glFinish>;
+    gx_glLinkProgram = &Px<PFNGLLINKPROGRAMPROC>::kind<glt::KIND_SHADER, &real_glLinkProgram>;
+    gx_glCompileShader = &Px<PFNGLCOMPILESHADERPROC>::kind<glt::KIND_SHADER, &real_glCompileShader>;
+    gx_glGetProgramiv = &Px<PFNGLGETPROGRAMIVPROC>::kind<glt::KIND_SHADER, &real_glGetProgramiv>;
+    gx_glBlitFramebuffer = &Px<PFNGLBLITFRAMEBUFFERPROC>::kind<glt::KIND_READBACK, &real_glBlitFramebuffer>;
+    gx_glMapBufferRange = &Px<PFNGLMAPBUFFERRANGEPROC>::kind<glt::KIND_BUFFER, &real_glMapBufferRange>;
     gx_glFenceSync = &pxFenceSync;
     gx_glClientWaitSync = &pxClientWaitSync;
     gx_glDeleteSync = &pxDeleteSync;

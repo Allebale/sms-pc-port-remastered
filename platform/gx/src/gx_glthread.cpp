@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <pthread.h>
@@ -14,6 +15,55 @@
 
 namespace gx {
 namespace glt {
+// ---------------------------------------------------------------- the stutter log
+int g_cmdKind = KIND_OTHER;
+unsigned g_cmdProg = 0;
+bool g_cmdFirst = false, g_cmdFirstPair = false;
+namespace {
+unsigned s_prog = 0, s_vao = 0;
+std::unordered_set<unsigned> s_drawn;
+std::unordered_set<uint64_t> s_drawnPairs;
+const char* s_label = "the game's draws";  // GL thread: the last mark run
+struct FrameStats {
+    double busy = 0, kinds[KINDS] = {};
+    double slowest = 0;
+    int slowKind = KIND_OTHER;
+    unsigned slowProg = 0;
+    bool slowFirst = false, slowFirstPair = false;
+    const char* slowLabel = "";
+    int commands = 0, firstDraws = 0;
+    double firstDrawTime = 0;
+};
+FrameStats s_frame;
+const char* const kKindNames[KINDS] = {"other", "draws", "texture uploads", "copies and reading back", "waiting for the GPU",
+                                       "shader work", "presenting", "buffer writes"};
+}  // namespace
+void noteProgram(unsigned p) { s_prog = p; }
+void noteVao(unsigned v) { s_vao = v; }
+void noteDraw() {
+    g_cmdKind = KIND_DRAW;
+    g_cmdProg = s_prog;
+    g_cmdFirst = s_drawn.insert(s_prog).second;
+    g_cmdFirstPair = s_drawnPairs.insert(uint64_t(s_prog) << 32 | s_vao).second;
+}
+static void noteCommand(double dt) {
+    FrameStats& f = s_frame;
+    f.busy += dt;
+    f.kinds[g_cmdKind] += dt;
+    f.commands++;
+    if (g_cmdKind == KIND_DRAW && g_cmdFirst) {
+        f.firstDraws++;
+        f.firstDrawTime += dt;
+    }
+    if (dt > f.slowest) {
+        f.slowest = dt;
+        f.slowKind = g_cmdKind;
+        f.slowProg = g_cmdKind == KIND_DRAW ? g_cmdProg : 0;
+        f.slowFirst = g_cmdKind == KIND_DRAW && g_cmdFirst;
+        f.slowFirstPair = g_cmdKind == KIND_DRAW && g_cmdFirstPair;
+        f.slowLabel = s_label;
+    }
+}
 
 namespace {
 
@@ -125,7 +175,12 @@ void threadMain(void (*bind)(void*), void* arg, std::atomic<int>* ready) {
         }
         while (tail != pub) {
             Header* h = reinterpret_cast<Header*>(s_ring + tail % kRing);
-            if (h->fn) h->fn(reinterpret_cast<uint8_t*>(h) + 16);
+            if (h->fn) {
+                g_cmdKind = KIND_OTHER;
+                const double t0 = monoSeconds();
+                h->fn(reinterpret_cast<uint8_t*>(h) + 16);
+                noteCommand(monoSeconds() - t0);
+            }
             tail += h->size;
             s_tail.store(tail, std::memory_order_release);
         }
@@ -148,6 +203,37 @@ bool enabled() {
 void stopAtExit() { stop(); }
 
 }  // namespace
+
+void mark(const char* label) {
+    static const char* s_last = nullptr;  // game thread
+    if (!active() || label == s_last) return;
+    s_last = label;
+    post([label] { s_label = label; });
+}
+void frameMark(uint32_t frame) {
+    if (!active()) return;
+    post([frame] {
+        static int told = 0;
+        FrameStats& f = s_frame;
+        if ((f.busy >= 0.045 || f.slowest >= 0.030) && told++ < 400) {
+            char what[160] = "";
+            if (f.slowKind == KIND_DRAW)
+                snprintf(what, sizeof what, "a draw (program %u, %s; %s; %s)", f.slowProg, programOrigin(f.slowProg),
+                         f.slowFirst ? "its first draw" : "drawn before",
+                         f.slowFirstPair ? "first with this vertex format" : "with this vertex format before");
+            else
+                snprintf(what, sizeof what, "%s", kKindNames[f.slowKind]);
+            logmsg("GL frame %u: %.1f ms busy, %d commands (draws %.1f, first draws %d taking %.1f, uploads %.1f, "
+                   "copies %.1f, GPU waits %.1f, shader work %.1f, presenting %.1f, buffer writes %.1f, other %.1f); "
+                   "slowest %.1f ms: %s, in %s",
+                   frame, f.busy * 1000.0, f.commands, f.kinds[KIND_DRAW] * 1000.0, f.firstDraws, f.firstDrawTime * 1000.0,
+                   f.kinds[KIND_UPLOAD] * 1000.0, f.kinds[KIND_READBACK] * 1000.0, f.kinds[KIND_FENCE] * 1000.0,
+                   f.kinds[KIND_SHADER] * 1000.0, f.kinds[KIND_PRESENT] * 1000.0, f.kinds[KIND_BUFFER] * 1000.0,
+                   f.kinds[KIND_OTHER] * 1000.0, f.slowest * 1000.0, what, f.slowLabel);
+        }
+        s_frame = FrameStats();
+    });
+}
 
 bool active() { return s_running.load(std::memory_order_relaxed); }
 double waitedSeconds() { return s_waited; }

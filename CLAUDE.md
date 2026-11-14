@@ -156,6 +156,12 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - **Shader Priming** (branch `remastered-test-stutter-fix` only, an experiment): `primePrograms` in `gx_render.cpp`
   draws each warm-up program once as a stage loads (a triangle of one point, into the EFB, the last batch's vertex
   format), so a driver that finishes a program on its first draw (AMD) does it in the load. Up to 3 s a load.
+- **The GL frame log** (branch `remastered-test-stutter-fix`): the GL thread times every command it runs
+  (`gx_glthread.cpp`, `noteCommand`); commands say what they are (`g_cmdKind`, set by the proxies in `gl_loader.cpp`:
+  draws with their program and whether it is its first draw, or first with that VAO; uploads, copies, fences, shader
+  work, presenting) and the game's thread marks what they were queued for (`glt::mark`). A frame of 45 ms or more,
+  or one with a command of 30 ms or more, is logged as `GL frame N` with its slowest command and the program's
+  origin (`programOrigin` in `gx_shader.cpp`).
 - **A new build's first play** (`firstPlayNotice` in `gx_shader.cpp`): the build (the commit, told by `GXPC_SetGameBuild`
   from `sms_game_build.h`, in `window_title.cpp`) is compared with `<cache>/played-build.txt` beside the shader
   cache; when it is new, the extensions' notice panel says the shaders are building, for 60 seconds.

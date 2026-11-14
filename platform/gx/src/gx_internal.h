@@ -489,7 +489,9 @@ const int kGoopUnit = 8;
 void shaderWarmFrame();  // Background Shader Compiling: once a frame
 void firstPlayNotice();
 // Shader Priming (gx_render.cpp, on the GL thread): programs drawn once, as a triangle of one point
-int primePrograms(const unsigned* progs, int n, double budgetMs);  // a new build's first play: the shaders-building notice, for a minute
+int primePrograms(const unsigned* progs, int n, double budgetMs);
+// The stutter log: where a GL program came from (gx_shader.cpp), for the GL frame lines
+const char* programOrigin(unsigned prog);  // a new build's first play: the shaders-building notice, for a minute
 extern uint32_t g_statWarmBackground;
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)
 

@@ -104,6 +104,24 @@ template <class F> void postData(const void* data, size_t n, const F& f) {
 // Installs the proxies over the loaded GL entry points (gl_loader.cpp).
 void installProxies();
 
+// ---------------------------------------------------------------- the stutter log
+// The GL thread times each command it runs. What a command is, it says itself as it runs (the
+// proxies and the GL-thread code below set these); what the game's thread queued it for is the
+// last mark(). At each frameMark() a frame whose commands took long, or one of whose commands
+// did, is logged as "GL frame N" with where the time went and its slowest command.
+enum Kind { KIND_OTHER, KIND_DRAW, KIND_UPLOAD, KIND_READBACK, KIND_FENCE, KIND_SHADER, KIND_PRESENT, KIND_BUFFER, KINDS };
+extern int g_cmdKind;          // GL thread: the command running now (KIND_*)
+extern unsigned g_cmdProg;     // GL thread: a draw's program
+extern bool g_cmdFirst;        // GL thread: the program's first draw
+extern bool g_cmdFirstPair;    // GL thread: its first draw with this vertex format (VAO)
+void noteDraw();               // GL thread: the command is a draw with the program bound now
+void noteProgram(unsigned p);  // GL thread: glUseProgram
+void noteVao(unsigned v);      // GL thread: glBindVertexArray
+// Game thread: what the commands queued from now on are for (a string that lives for ever), and
+// the end of a frame's.
+void mark(const char* label);
+void frameMark(uint32_t frame);
+
 }  // namespace glt
 }  // namespace gx
 

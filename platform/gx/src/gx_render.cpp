@@ -2643,6 +2643,7 @@ extern "C" unsigned GXPC_GrassBuffer(unsigned buf, const float* data, int blades
 extern "C" void GXPC_GrassBegin(const float view[3][4], const float* params, const float* press,
                                 const float* strength, int count) {
     flushBatch();
+    glt::mark("3D grass");
     grassCopyGround();
     s_grassSp = grassProgram(&s_grassU);
     s_grassDrawn.clear();
@@ -3291,6 +3292,7 @@ static void grassMask() {
 }
 
 void aoApply() {
+    glt::mark("ambient occlusion");
     if (!s_ready || (s_aoMode <= 0 && s_aoView <= 0)) return;
     // the main view's projection and depth range (the XF's, still the main camera's)
     if (g.xfReg[XFR_PROJ + 6] & 1) return;  // orthographic: not a 3D view
@@ -4026,6 +4028,7 @@ static void shadowCastState() {
 // Draw Shadows Together: the casts kept, into each cascade, then the EFB's state back
 static void shadowReplay() {
     if (s_castRecs.empty()) return;
+    glt::mark("shadows drawn together");
     shadowCastState();
     s_castReplay = true;
     float texW[8] = {0}, texH[8] = {0};
@@ -4073,6 +4076,7 @@ extern "C" void GXPC_ShadowTogether(int on) {
 // The batch again, into each cascade of the sun's shadow map, then the EFB's state back.
 template <typename Ranges>
 static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* sp, float texW[8], float texH[8]) {
+    glt::mark("shadow casts");
     const ShaderProgram* csp = shaderForCurrentState(2, false);
     // the far cascade: not while it is last frame's, and with The Level Only not what moves
     const bool nearOnly = s_shadowFarKept || (g.shadowFarLevel && (g.shadowTag || g.shadowNoCast || g.shadowCastOnly));
@@ -4396,6 +4400,7 @@ void flushBatch() {
         shadowReplay();
     GxTimer timer;
     GxTimer tf(&g_flushSeconds);
+    glt::mark("the game's draws");
     s_xmap = drawXMap();
     if (s_bclass == PRIM_TRIS) s_lastFmt = s_bfmt;  // Shader Priming draws with it
     if (s_bclass == PRIM_LINES && s_segs.empty() && !platformGeometryShaders()) widenLines();
@@ -5110,6 +5115,7 @@ static void copyEfb(uint32_t ctrl) {
         hitchFrame();
         shaderWarmFrame();
         firstPlayNotice();
+        glt::frameMark(g_displayFrames);
         s_lastFrameStats = s_stats;
         s_stats.draws = s_stats.vertices = s_stats.efbCopies = 0;
     }
@@ -5118,6 +5124,7 @@ static void copyEfb(uint32_t ctrl) {
 void executeCopy(uint32_t ctrl) {
     if (!s_ready) return;
     flushBatch();
+    glt::mark("picture copies");
     glcInvalidate();  // copies, clears and write-backs set GL state directly
     pixMetricPause();
     struct Resume { ~Resume() { pixMetricResume(); } } resume;

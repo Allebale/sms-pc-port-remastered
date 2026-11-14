@@ -905,6 +905,23 @@ static GLuint compile(GLenum type, const std::string& src) {
 
 // The program cache key: the shader key plus the indirect scale factors,
 // which are baked into the code. Compared as bytes (buildKey zero-fills).
+// The stutter log: where each program came from (programOrigin, read on the GL thread)
+enum { ORIGIN_CACHE = 1, ORIGIN_WARM, ORIGIN_BACKGROUND, ORIGIN_DRAW };
+static std::mutex s_originLock;
+static std::unordered_map<unsigned, int> s_origin;
+static bool s_drainingBackground;  // warmDrain from shaderWarmFrame
+static void noteOrigin(unsigned prog, int o) {
+    std::lock_guard<std::mutex> lock(s_originLock);
+    s_origin[prog] = o;
+}
+const char* programOrigin(unsigned prog) {
+    std::lock_guard<std::mutex> lock(s_originLock);
+    auto it = s_origin.find(prog);
+    const int o = it == s_origin.end() ? 0 : it->second;
+    return o == ORIGIN_CACHE ? "from the shader cache" : o == ORIGIN_WARM ? "made by a load's warm-up"
+           : o == ORIGIN_BACKGROUND ? "made in the background" : o == ORIGIN_DRAW ? "made as a draw needed it"
+           : "one of the renderer's own";
+}
 struct ProgramKey {
     ShaderKey k;
     uint32_t indScale[2];
@@ -1141,6 +1158,7 @@ static void programCacheLoad() {
                 ShaderProgram& sp = s_programs[key];
                 sp.id = 0;
                 setupProgram(p, sp);
+                noteOrigin(p, ORIGIN_CACHE);
                 loaded++;
                 if (loaded == kTimed && binarySecs / kTimed > kSlow) {
                     s_slowBinaries = true;
@@ -1339,6 +1357,7 @@ static void warmDrain() {
             continue;
         }
         s_programs.emplace(w.key, w.sp);
+        noteOrigin(w.sp.prog, s_drainingBackground ? ORIGIN_BACKGROUND : ORIGIN_WARM);
         s_toPrime.push_back(w.sp.prog);
         s_warmMade++;
     }
@@ -1497,7 +1516,9 @@ void shaderWarmFrame() {
         glt::post(Poll{});
     }
     const uint32_t before = s_warmMade;
+    s_drainingBackground = true;
     warmDrain();
+    s_drainingBackground = false;
     g_statWarmBackground += s_warmMade - before;
     static bool s_toldAll;
     if (s_warmNext >= s_warmKeys.size()) {
@@ -1706,6 +1727,7 @@ const ShaderProgram* shaderForCurrentState(int depthOnly, bool lines) {
             if (FILE* f = fopen(path, "w")) { fputs(fs.c_str(), f); fclose(f); }
         }
         setupProgram(p, sp);
+        noteOrigin(p, ORIGIN_DRAW);
         if (ok) programCacheStore(key, sourceHash(vs, fs), p);
     });
     s_lastKey = key;

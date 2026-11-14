@@ -1336,6 +1336,7 @@ void GXPC_Present(const void* xfb) {
         bool shown = true;
         const double waited0 = glt::waitedSeconds();
         glt::sync([&] {
+            glt::g_cmdKind = glt::KIND_PRESENT;
             t0 = nowSeconds();
             if (hdr && !(hdrReady && hdrFrameBegin())) {  // minimised: nothing to show
                 shown = false;
@@ -1360,7 +1361,10 @@ void GXPC_Present(const void* xfb) {
 #ifdef SMS_GX_HAVE_VULKAN
             else if (s_vulkan) glvk::present();
 #endif
-            else SDL_GL_SwapWindow(s_window);
+            else {
+                glt::g_cmdKind = glt::KIND_PRESENT;  // the stutter log: what this command spent its time on
+                SDL_GL_SwapWindow(s_window);
+            }
             tSwapped = nowSeconds();
         });
         {  // the wait for the frame's queued work counts as GX's, the rest is presenting
