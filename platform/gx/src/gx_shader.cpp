@@ -1504,16 +1504,20 @@ void shaderWarmFrame() {
 // shader cache is the last build's), so its first minutes stutter while they are. A notice says
 // so for a minute, near the top of the window. The build last played is kept in
 // <cache>/played-build.txt beside the shader cache.
-extern "C" const char* port_game_build(void) __attribute__((weak));  // platform/misc/window_title.cpp
+static std::string s_gameBuild;  // GXPC_SetGameBuild (platform/misc/window_title.cpp, at start)
+extern "C" void GXPC_SetGameBuild(const char* build) { s_gameBuild = build ? build : ""; }
 void firstPlayNotice() {
     static int s_state = 0;  // 0 not checked, 1 showing, 2 done
     static std::chrono::steady_clock::time_point s_since;
     if (s_state == 2) return;
     if (s_state == 0) {
         s_state = 2;
-        const char* build = port_game_build ? port_game_build() : nullptr;
+        const char* build = s_gameBuild.c_str();
         const std::string dir = userCacheDir();
-        if (!build || !*build || !strcmp(build, "unknown") || dir.empty()) return;
+        if (!*build || !strcmp(build, "unknown") || dir.empty()) {
+            logmsg("first play notice: no build to tell by (\"%s\")", build);
+            return;
+        }
         const std::string path = dir + "/played-build.txt";
         char last[128] = "";
         if (FILE* in = fopen(path.c_str(), "rb")) {
@@ -1522,7 +1526,10 @@ void firstPlayNotice() {
             fclose(in);
         }
         last[strcspn(last, "\r\n")] = 0;
-        if (!strcmp(last, build)) return;  // played before
+        if (!strcmp(last, build)) {  // played before
+            logmsg("first play notice: build %s played before", build);
+            return;
+        }
         if (FILE* out = fopen(path.c_str(), "wb")) {
             fprintf(out, "%s\n", build);
             fclose(out);
