@@ -2109,7 +2109,7 @@ static void hitchFrame() {
     if (limit <= 0) return;
     const double now = nowSeconds(), waited = glt::waitedSeconds();
     static int told = 0;
-    if (last > 0 && now - last > limit && (getenv("SMS_GX_HITCH_MS") || told++ < 300))
+    if (last > 0 && now - last > limit && (getenv("SMS_GX_HITCH_MS") || told++ < 3000))
         logmsg("hitch: frame %u took %.1f ms: %u shader compiles, %u texture uploads (%.1f MiB from the texture pack), "
                "%.1f ms in batches, %.1f ms waiting for the GL thread, %u programs from the background",
                g_displayFrames, (now - last) * 1000.0, g_statShaderCompiles - compiles0, g_statTexUploads - uploads0,

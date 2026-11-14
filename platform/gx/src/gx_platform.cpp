@@ -125,6 +125,7 @@ void* vkGetProc(const char* name) { return glvk::getProc(name); }
 #ifdef SMS_GX_HAVE_SDL2
 SDL_Window* s_window = nullptr;
 SDL_GLContext s_glctx = nullptr;
+SDL_GLContext s_compileCtx = nullptr;  // shares s_glctx's objects: the shader compiler's thread
 void (*s_eventCb)(const SDL_Event*) = nullptr;
 // The controllers open, with what the button prompts need kept from opening:
 // asking SDL takes its joystick lock, which a rumble send holds.
@@ -779,6 +780,12 @@ bool openWindow(float scale, bool vulkan) {
         if (glt::start([](void*) {}, nullptr)) glt::installProxies();
         return true;
     }
+    // a second context sharing its objects, for compiling shaders on a thread of their own
+    // (gx_shader.cpp's background compiler); made while the first is current
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+    s_compileCtx = SDL_GL_CreateContext(s_window);
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
+    if (!s_compileCtx) logmsg("shader compiler: no second OpenGL context (%s)", SDL_GetError());
     // the context moves to the GL thread (gx_glthread.h)
     SDL_GL_MakeCurrent(s_window, nullptr);
     if (glt::start([](void*) { SDL_GL_MakeCurrent(s_window, s_glctx); }, nullptr)) glt::installProxies();
@@ -1833,3 +1840,14 @@ void sms_gx_rumble_shutdown(void) {
 }
 
 }  // extern "C"
+
+// The shader compiler's thread (gx_shader.cpp): its own context, sharing the GL thread's objects.
+// False when there is none (Vulkan, EGL, a driver that refused it).
+bool GXPC_BindCompileContext() {
+#ifdef SMS_GX_HAVE_SDL2
+    if (!s_window || !s_compileCtx) return false;
+    return SDL_GL_MakeCurrent(s_window, s_compileCtx) == 0;
+#else
+    return false;
+#endif
+}

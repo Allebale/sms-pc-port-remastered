@@ -188,7 +188,7 @@ template <void (**Real)(GLsizei, const GLuint*)> void deleteNames(GLsizei n, con
 
 void pxUseProgram(GLuint p) {
     if (glt::onGlThread()) {
-        glt::noteProgram(p);
+        if (glt::onTheGlThread()) glt::noteProgram(p);
         return real_glUseProgram(p);
     }
     auto fn = real_glUseProgram;
