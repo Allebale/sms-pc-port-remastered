@@ -74,6 +74,11 @@ void GXPC_ShadowSoftness(float units);
 // Shadow Size: each shadow map's size in pixels (4096 High, 2048 Medium, 1024 Low)
 void GXPC_ShadowMapSize(int px);
 int port_shadows_map_size(void);
+// Far Shadows Update Rate (halfRate: the far shadows drawn every other frame) and Far Shadows From
+// (levelOnly: Mario, characters, enemies and water cast near Mario only)
+void GXPC_ShadowFar(int halfRate, int levelOnly);
+int port_shadows_far_half_rate(void);
+int port_shadows_far_level_only(void);
 float port_shadows_softness(void);
 // Around Mario's own draw (port_wet_mario_draw): for the log, whether his batches cast.
 void GXPC_ShadowTag(int on);

@@ -314,6 +314,8 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 	hideBaked(level > 0);
 	// Round Shadows Under Characters: then Mario, the characters and enemies cast no sun shadow
 	GXPC_ShadowRound(level > 0 && port_shadows_round());
+	// Far Shadows Update Rate, Far Shadows From
+	GXPC_ShadowFar(level > 0 && port_shadows_far_half_rate(), level > 0 && port_shadows_far_level_only());
 	if (level <= 0 || level > 2) {
 		static bool s_toldOff;
 		if (!s_toldOff)

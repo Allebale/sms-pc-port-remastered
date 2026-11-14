@@ -99,6 +99,8 @@ int s_waterShadows = 0;   // Water Shadows, with Real Shadows: FLUDD's water and
 int s_shadowsRound = 0;   // Round Shadows Under Characters, with Real Shadows: 1 kept (lighter)
 int s_shadowsDistance = 2;  // Shadow Distance: into kShadowDistances
 int s_shadowsMap = 2;       // Shadow Size: 0 low (1024), 1 medium (2048), 2 high (4096, as it was)
+int s_shadowsFarHalf = 0;   // Far Shadows Update Rate: 0 every frame, 1 every other frame
+int s_shadowsFarLevel = 0;  // Far Shadows From: 0 everything, 1 the level only
 int s_shadowsSoft = 0;      // Soft Shadow Edges: into kShadowSofts (0 off: sharp)
 int s_ladders3D = 0;        // 3D Ladders: flat ladders and climbable fences get depth
 int s_shadowsOriginal = 0;  // Keep the Original Shadow Direction
@@ -315,6 +317,10 @@ void load() {
             s_shadowsRound = value != 0;
         } else if (sscanf(line, " shadowsize = %d", &value) == 1) {
             s_shadowsMap = value < 0 ? 0 : value > 2 ? 2 : value;
+        } else if (sscanf(line, " farshadowsrate = %d", &value) == 1) {
+            s_shadowsFarHalf = value != 0;
+        } else if (sscanf(line, " farshadowsfrom = %d", &value) == 1) {
+            s_shadowsFarLevel = value != 0;
         } else if (sscanf(line, " ladders3d = %d", &value) == 1) {
             s_ladders3D = value != 0;
         } else if (sscanf(line, " shadowsoftedges = %d", &value) == 1) {
@@ -463,6 +469,10 @@ void save() {
     fprintf(f, "ladders3d = %d\n", s_ladders3D);
     fprintf(f, "# shadowsize: the shadow maps' size: 0 low (1024, fastest), 1 medium (2048), 2 high (4096).\n");
     fprintf(f, "shadowsize = %d\n", s_shadowsMap);
+    fprintf(f, "# farshadowsrate: the far shadows are drawn 0 every frame, 1 every other frame (faster).\n");
+    fprintf(f, "farshadowsrate = %d\n", s_shadowsFarHalf);
+    fprintf(f, "# farshadowsfrom: far from Mario 0 everything casts a shadow, 1 the level only (faster).\n");
+    fprintf(f, "farshadowsfrom = %d\n", s_shadowsFarLevel);
     fprintf(f, "# shadoworiginaldirection: 1 the shadows fall where the game's own did, 0 from the sun in the sky.\n");
     fprintf(f, "shadoworiginaldirection = %d\n", s_shadowsOriginal);
     fprintf(f, "# level: 1 the stage itself (ground, buildings, sky) in puddles and water too, 0 not.\n");
@@ -809,6 +819,33 @@ int shadowMapSet(int i) {
     s_shadowsMap = i;
     save();
     port_log("[shadows] Shadow Size changed: %s\n", kShadowMapNames[i]);
+    return 1;
+}
+const char* const kFarFromNames[] = {"Everything", "The Level Only"};
+int farFromCount() { return 2; }
+const char* farFromName(int i) { return kFarFromNames[i == 1 ? 1 : 0]; }
+int farRateGet() {
+    load();
+    return s_shadowsFarHalf;
+}
+int farRateSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_shadowsFarHalf = i;
+    save();
+    port_log("[shadows] Far Shadows Update Rate changed: %s\n", kAoRateNames[i]);
+    return 1;
+}
+int farFromGet() {
+    load();
+    return s_shadowsFarLevel;
+}
+int farFromSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_shadowsFarLevel = i;
+    save();
+    port_log("[shadows] Far Shadows From changed: %s\n", kFarFromNames[i]);
     return 1;
 }
 const char* const kShadowSoftNames[] = {"Off", "Subtle", "Mild", "Light", "Soft"};
@@ -1256,6 +1293,8 @@ const EffectValue kEffects[] = {
     {"Shadow Distance", {"Long", "Very Long", "Medium", "Short"}},
     {"Keep the Original Shadow Direction", {"Off", "Off", "Off", "Off"}},
     {"Shadow Size", {"High", "High", "Medium", "Low"}},
+    {"Far Shadows Update Rate", {"Every Frame", "Every Frame", "Every Other Frame", "Every Other Frame"}},
+    {"Far Shadows From", {"Everything", "Everything", "The Level Only", "The Level Only"}},
     {"Soft Shadow Edges", {"Off", "Mild", "Off", "Off"}},
     {"3D Ladders", {"Off", "On", "On", "On"}},
     {"3D Grass", {"Off", "By Location", "By Location", "By Location"}},
@@ -1471,6 +1510,12 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Shadow Size",
      "How detailed Real Shadows are. Lower is faster and uses less video memory.", 0, nullptr,
      shadowMapCount, shadowMapName, shadowMapGet, shadowMapSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Far Shadows Update Rate",
+     "Shadows far from Mario are drawn every other frame. Faster, a bit less smooth.", 0, nullptr,
+     aoRateCount, aoRateName, farRateGet, farRateSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Far Shadows From",
+     "The Level Only is faster. Characters and enemies far from Mario cast no shadow.", 0, nullptr,
+     farFromCount, farFromName, farFromGet, farFromSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "3D Ladders",
      "Flat ladders and climbable fences get depth, their rails and rungs with sides.", 0, nullptr,
      offOnCount, offOnName, ladders3DGet, ladders3DSet},
@@ -1723,6 +1768,14 @@ float port_shadows_distance(void) {
 int port_shadows_map_size(void) {
     load();
     return kShadowMaps[s_shadowsMap < 0 || s_shadowsMap > 2 ? 2 : s_shadowsMap];
+}
+int port_shadows_far_half_rate(void) {
+    load();
+    return s_shadowsFarHalf;
+}
+int port_shadows_far_level_only(void) {
+    load();
+    return s_shadowsFarLevel;
 }
 int port_ladders_3d(void) {
     load();

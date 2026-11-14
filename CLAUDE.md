@@ -125,6 +125,12 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   (Reflections page) sets the reflection web's density (48x96, 30x60, 18x36) and Reflection Blur's taps (7 or 4).
 - Mario's AO is limited with a capsule around him (`u_mario`), not his exact shape. Doing his exact
   shape would need a stencil buffer or two extra depth copies a frame (slower, riskier).
+- Reflect the Level Off draws the stage once: no mirror copies are made (`makeLevelMirrors`) and none drawn
+  (`TPortLevelMirror::perform`); checked Nov 2026.
+- Far Shadows Update Rate (Every Other Frame): the far cascade is drawn one frame and copied from last frame's map
+  the next (`s_shadowFarKept`, a depth blit of the right half, with the box it was drawn for). Far Shadows From
+  (The Level Only, `g.shadowFarLevel`): Mario's, the registered characters' and the water's draws go into the near
+  cascade only. Both `GXPC_ShadowFar`; on in the Performance presets, off in Remastered until Allebale has tested.
 - Round Shadows Under Characters: characters', enemies' and Yoshi's display lists are registered at
   stage setup (`GXPC_ShadowCharacter`) and cast no sun shadow while it is on; Mario's draw is known by `g.shadowTag`.
 - Keep shaders small: big shaders caused stutters. Mario-only code goes only into Mario's program.
@@ -168,7 +174,6 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 ## Planned features
 
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
-- **No double world drawing with Reflect the Level Off**: when the Reflections option Reflect the Level is Off, the stage should not be drawn a second time for the mirror.
 - **Smooth vertex normals**: smooth the shading of low-poly models (averaged vertex normals), so they look less blocky.
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.

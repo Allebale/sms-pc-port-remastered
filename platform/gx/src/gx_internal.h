@@ -120,6 +120,9 @@ struct State {
     // Round Shadows Under Characters (GXPC_ShadowRound): Mario and the characters cast none;
     // shadowNoCast: a character's display list is drawn now
     bool shadowRound, shadowNoCast;
+    // Far Shadows From, The Level Only (GXPC_ShadowFar): Mario's and the characters' draws are
+    // told apart (shadowTag, shadowNoCast) and left out of the far cascade
+    bool shadowFarLevel;
     // Ambient Occlusion Near Grass's All But Characters: Mario's and the characters' draws are drawn
     // again into a depth map of their own (charCast), so the shade knows them
     bool charMask;

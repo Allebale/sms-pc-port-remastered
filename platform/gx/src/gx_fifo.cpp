@@ -1247,7 +1247,7 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
     float minY, maxY;
     // Round Shadows Under Characters: a character's list on its own, casting no sun shadow
     // (Wet Characters: drawn with the wet ones' spheres)
-    if ((g.shadowRound || g.charMask || g.wetChars[0] > 0.0f) && data && !s_dlRec && characterLookup(data, size)) {
+    if ((g.shadowRound || g.shadowFarLevel || g.charMask || g.wetChars[0] > 0.0f) && data && !s_dlRec && characterLookup(data, size)) {
         flushBatch();
         g.shadowNoCast = true;
         g.charDraw     = true;

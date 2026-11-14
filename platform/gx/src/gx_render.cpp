@@ -3757,6 +3757,19 @@ static bool s_shadowFilled[2];
 static uint32_t s_shadowFrame = ~0u;
 static float s_shadowLightVP[2][2][16];  // [texture][cascade]: world to the cascade's clip space, rows
 static float s_shadowWriteRows[2][12];   // this frame's, view space to each cascade (3 rows)
+// Far Shadows Update Rate, Every Other Frame: the far cascade is drawn one frame and kept the next
+// (copied over from last frame's map, with the box it was drawn for), the near one every frame.
+// Far Shadows From, The Level Only (g.shadowFarLevel): Mario's, the characters' and the water's
+// draws go into the near cascade only.
+static bool s_shadowFarHalf;      // the setting
+static bool s_shadowFarKept;      // this frame's far cascade is last frame's: nothing is drawn into it
+static bool s_shadowFarDrawn[2];  // [texture]: its far cascade was drawn (not a copy)
+extern "C" void GXPC_ShadowFar(int halfRate, int levelOnly) {
+    s_shadowFarHalf = halfRate != 0;
+    if (g.shadowFarLevel == (levelOnly != 0)) return;
+    flushBatch();
+    g.shadowFarLevel = levelOnly != 0;
+}
 
 static void shadowMake() {
     if (s_shadowFbo[0] && s_shadowSize == s_shadowWant) return;
@@ -3766,6 +3779,7 @@ static void shadowMake() {
         glGenFramebuffers(2, s_shadowFbo);
     }
     s_shadowFilled[0] = s_shadowFilled[1] = false;  // made again: nothing drawn in them yet
+    s_shadowFarDrawn[0] = s_shadowFarDrawn[1] = false;
     glActiveTexture(GL_TEXTURE0 + kShadowUnit);
     for (int i = 0; i < 2; i++) {
         glBindTexture(GL_TEXTURE_2D, s_shadowTex[i]);
@@ -3884,6 +3898,16 @@ extern "C" void GXPC_ShadowFrame(const float view[3][4], const float sun[3], con
         glClearDepth(1.0);
         glClear(GL_DEPTH_BUFFER_BIT);
         s_shadowFilled[s_shadowWrite] = false;
+        const int last = s_shadowWrite ^ 1;
+        s_shadowFarKept = s_shadowFarHalf && s_shadowFilled[last] && s_shadowFarDrawn[last];
+        s_shadowFarDrawn[s_shadowWrite] = !s_shadowFarKept;
+        if (s_shadowFarKept) {  // the far cascade (the right half) as it was drawn last frame
+            memcpy(s_shadowLightVP[s_shadowWrite][1], s_shadowLightVP[last][1], sizeof s_shadowLightVP[0][0]);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, s_shadowFbo[last]);
+            glBlitFramebuffer(s_shadowSize, 0, 2 * s_shadowSize, s_shadowSize, s_shadowSize, 0, 2 * s_shadowSize,
+                              s_shadowSize, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            s_shadowFilled[s_shadowWrite] = true;
+        }
         glActiveTexture(GL_TEXTURE0 + kShadowUnit);
         glBindTexture(GL_TEXTURE_2D, s_shadowTex[s_shadowWrite ^ 1]);
         g_glc.activeUnit = -1;
@@ -3960,7 +3984,9 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
     }
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(1.5f, 4.0f);
-    for (int cascade = 0; cascade < 2; cascade++) {
+    // the far cascade: not while it is last frame's, and with The Level Only not what moves
+    const bool nearOnly = s_shadowFarKept || (g.shadowFarLevel && (g.shadowTag || g.shadowNoCast || g.shadowCastOnly));
+    for (int cascade = 0; cascade < (nearOnly ? 1 : 2); cascade++) {
         memcpy(g.shadow + 24, s_shadowWriteRows[cascade], 12 * sizeof(float));
         g.shadow[44] = float(cascade);
         uploadUniforms(csp, texW, texH);
