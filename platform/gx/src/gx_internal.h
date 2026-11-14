@@ -487,6 +487,7 @@ uint32_t objectTintNow();
 // directly, the AO trace directly), so the two never meet.
 const int kGoopUnit = 8;
 void shaderWarmFrame();  // Background Shader Compiling: once a frame
+void firstPlayNotice();  // a new build's first play: the shaders-building notice, for a minute
 extern uint32_t g_statWarmBackground;
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)
 

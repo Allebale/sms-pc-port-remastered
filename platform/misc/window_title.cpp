@@ -52,6 +52,10 @@ extern "C" void port_window_title(char* out, size_t size, const char* version, c
 		snprintf(out + at, size - at, " + Super Mario Eclipse");
 }
 
+// The build's commit, as ext.cmake names it ("unknown" outside a git checkout): the renderer's
+// first-play notice (gx_shader.cpp) tells a build played before from a new one by it.
+extern "C" const char* port_game_build(void) { return SMS_GAME_BUILD; }
+
 extern "C" void port_window_title_init(void)
 {
 	char title[160];

@@ -5073,6 +5073,7 @@ static void copyEfb(uint32_t ctrl) {
         statsFrame();
         hitchFrame();
         shaderWarmFrame();
+        firstPlayNotice();
         s_lastFrameStats = s_stats;
         s_stats.draws = s_stats.vertices = s_stats.efbCopies = 0;
     }

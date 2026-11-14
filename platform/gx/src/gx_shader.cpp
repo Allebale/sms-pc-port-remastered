@@ -6,6 +6,7 @@
 #include "gx_glthread.h"
 #include "gl_funcs.h"
 #include "gx_glcache.h"
+#include "sms_gx/gx_pc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1496,6 +1497,46 @@ void shaderWarmFrame() {
         if (s_programs.count(k) || s_warmIssued.count(k)) continue;
         warmPost(k);
         posted++;
+    }
+}
+
+// The first play of a new build: the shaders it draws with are not made yet on this computer (its
+// shader cache is the last build's), so its first minutes stutter while they are. A notice says
+// so for a minute, near the top of the window. The build last played is kept in
+// <cache>/played-build.txt beside the shader cache.
+extern "C" const char* port_game_build(void) __attribute__((weak));  // platform/misc/window_title.cpp
+void firstPlayNotice() {
+    static int s_state = 0;  // 0 not checked, 1 showing, 2 done
+    static std::chrono::steady_clock::time_point s_since;
+    if (s_state == 2) return;
+    if (s_state == 0) {
+        s_state = 2;
+        const char* build = port_game_build ? port_game_build() : nullptr;
+        const std::string dir = userCacheDir();
+        if (!build || !*build || !strcmp(build, "unknown") || dir.empty()) return;
+        const std::string path = dir + "/played-build.txt";
+        char last[128] = "";
+        if (FILE* in = fopen(path.c_str(), "rb")) {
+            const size_t n = fread(last, 1, sizeof last - 1, in);
+            last[n] = 0;
+            fclose(in);
+        }
+        last[strcspn(last, "\r\n")] = 0;
+        if (!strcmp(last, build)) return;  // played before
+        if (FILE* out = fopen(path.c_str(), "wb")) {
+            fprintf(out, "%s\n", build);
+            fclose(out);
+        }
+        logmsg("first play of build %s (last played %s): the shaders are building", build, *last ? last : "none");
+        GXPC_ExtOverlaySet(GXPC_EXT_OVERLAY_NOTICE,
+                           "The shaders are building. You can still enter the game, but please be patient with the performance.");
+        s_since = std::chrono::steady_clock::now();
+        s_state = 1;
+        return;
+    }
+    if (std::chrono::steady_clock::now() - s_since >= std::chrono::seconds(60)) {
+        GXPC_ExtOverlaySet(GXPC_EXT_OVERLAY_NOTICE, "");
+        s_state = 2;
     }
 }
 
