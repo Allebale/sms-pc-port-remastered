@@ -315,6 +315,7 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 	// Round Shadows Under Characters: then Mario, the characters and enemies cast no sun shadow
 	GXPC_ShadowRound(level > 0 && port_shadows_round());
 	GXPC_SkipOffScreen(port_skip_off_screen());  // Skip Off-Screen Objects
+	GXPC_ShaderBackground(port_shader_background());  // Background Shader Compiling
 	GXPC_ShadowTogether(level > 0 && port_shadows_together());  // Draw Shadows Together
 	// Far Shadows Update Rate, Far Shadows From
 	GXPC_ShadowFar(level > 0 && port_shadows_far_half_rate(), level > 0 && port_shadows_far_level_only());

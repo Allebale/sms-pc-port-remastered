@@ -100,6 +100,7 @@ int s_shadowsRound = 0;   // Round Shadows Under Characters, with Real Shadows: 
 int s_shadowsDistance = 2;  // Shadow Distance: into kShadowDistances
 int s_shadowsMap = 2;       // Shadow Size: 0 low (1024), 1 medium (2048), 2 high (4096, as it was)
 int s_skipOffScreen = 0;    // Skip Off-Screen Objects: 1 shapes out of the view are not drawn
+int s_shaderBackground = 0; // Background Shader Compiling: 1 the known shaders are compiled while playing
 int s_shadowsTogether = 0;  // Draw Shadows Together: 1 solid shapes' shadows drawn in one go
 int s_shadowsFarHalf = 0;   // Far Shadows Update Rate: 0 every frame, 1 every other frame
 int s_shadowsFarLevel = 0;  // Far Shadows From: 0 everything, 1 the level only
@@ -321,6 +322,8 @@ void load() {
             s_shadowsMap = value < 0 ? 0 : value > 2 ? 2 : value;
         } else if (sscanf(line, " skipoffscreen = %d", &value) == 1) {
             s_skipOffScreen = value != 0;
+        } else if (sscanf(line, " shaderbackground = %d", &value) == 1) {
+            s_shaderBackground = value != 0;
         } else if (sscanf(line, " shadowstogether = %d", &value) == 1) {
             s_shadowsTogether = value != 0;
         } else if (sscanf(line, " farshadowsrate = %d", &value) == 1) {
@@ -477,6 +480,8 @@ void save() {
     fprintf(f, "shadowsize = %d\n", s_shadowsMap);
     fprintf(f, "# skipoffscreen: 1 shapes and grass out of the view are not drawn (faster), 0 everything is.\n");
     fprintf(f, "skipoffscreen = %d\n", s_skipOffScreen);
+    fprintf(f, "# shaderbackground: 1 shaders not made yet are compiled while playing (fewer stutters), needs Shader Warm-up.\n");
+    fprintf(f, "shaderbackground = %d\n", s_shaderBackground);
     fprintf(f, "# shadowstogether: 1 Real Shadows are drawn in one go, not a little after each shape (faster).\n");
     fprintf(f, "shadowstogether = %d\n", s_shadowsTogether);
     fprintf(f, "# farshadowsrate: the far shadows are drawn 0 every frame, 1 every other frame (faster).\n");
@@ -841,6 +846,18 @@ int skipOffScreenSet(int i) {
     s_skipOffScreen = i;
     save();
     port_log("[graphics] Skip Off-Screen Objects changed: %s\n", i ? "on" : "off");
+    return 1;
+}
+int shaderBackgroundGet() {
+    load();
+    return s_shaderBackground;
+}
+int shaderBackgroundSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_shaderBackground = i;
+    save();
+    port_log("[graphics] Background Shader Compiling changed: %s\n", i ? "on" : "off");
     return 1;
 }
 int shadowsTogetherGet() {
@@ -1328,6 +1345,7 @@ const EffectValue kEffects[] = {
     {"Keep the Original Shadow Direction", {"Off", "Off", "Off", "Off"}},
     {"Shadow Size", {"High", "High", "Medium", "Low"}},
     {"Skip Off-Screen Objects", {"Off", "Off", "On", "On"}},
+    {"Background Shader Compiling", {"Off", "Off", "On", "On"}},
     {"Draw Shadows Together", {"Off", "Off", "On", "On"}},
     {"Far Shadows Update Rate", {"Every Frame", "Every Frame", "Every Other Frame", "Every Other Frame"}},
     {"Far Shadows From", {"Everything", "Everything", "The Level Only", "The Level Only"}},
@@ -1549,6 +1567,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Skip Off-Screen Objects",
      "Objects and grass outside the view are not drawn. Faster, looks the same.", 0, nullptr,
      offOnCount, offOnName, skipOffScreenGet, skipOffScreenSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 121, "Background Shader Compiling",
+     "With Shader Warm-up, the rest of the shaders are made while you play.", 0, nullptr,
+     offOnCount, offOnName, shaderBackgroundGet, shaderBackgroundSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Draw Shadows Together",
      "Real Shadows are drawn in one go, with fewer switches. Faster, looks the same.", 0, nullptr,
      offOnCount, offOnName, shadowsTogetherGet, shadowsTogetherSet},
@@ -1814,6 +1835,10 @@ int port_shadows_map_size(void) {
 int port_skip_off_screen(void) {
     load();
     return s_skipOffScreen;
+}
+int port_shader_background(void) {
+    load();
+    return s_shaderBackground;
 }
 int port_shadows_together(void) {
     load();

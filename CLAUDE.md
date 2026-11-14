@@ -142,6 +142,13 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   kept (`s_castRecs`: its XF block's place in the stream, default matrices, ranges) and all are drawn in one go as
   the next view's shadows begin (`GXPC_ShadowFrame`), or before the stream or the arena starts over. Blended and
   alpha-tested batches (Mario, leaves, fences) are cast at once as before.
+- **Stutters in a stage's first minute** (Nov 2026, the `hitch:` lines): on Allebale's AMD card a shader compiled as
+  a draw needs it takes about 125 ms (and the next frame about 90 ms), while the warm-up's parallel compiles are far
+  quicker. A stage's load only makes what fits in its second (the fork's big programs: about 64 a load), so hundreds
+  of the 1500 known ones were left for draws. Background Shader Compiling (`shaderWarmFrame` in `gx_shader.cpp`,
+  `GXPC_ShaderBackground`; needs Shader Warm-up and parallel compiles) makes the rest while playing: 2 posted a
+  frame, 8 in flight, taken as `GL_COMPLETION_STATUS` says they ended. `hitch:` frames of about 180 ms with no
+  wait for the GL thread next to `[pad] window lost focus` are Allebale switching windows, not stutters.
 - Ambient Occlusion is already traced at a half, a third or a quarter of the picture each way (Ambient Occlusion
   Quality, `kAoDivs`), and 3D Grass is already instanced a tile at a time.
 - Round Shadows Under Characters: characters', enemies' and Yoshi's display lists are registered at

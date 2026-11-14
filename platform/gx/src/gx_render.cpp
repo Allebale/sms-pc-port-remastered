@@ -2100,6 +2100,7 @@ static void hitchFrame() {
     static double limit = -1, last = 0, flush0 = 0, wait0 = 0;
     static uint32_t compiles0 = 0, uploads0 = 0;
     static uint64_t hires0 = 0;
+    static uint32_t warm0 = 0;
     if (limit < 0) {
         const char* e = getenv("SMS_GX_HITCH_MS");
         limit = e ? atof(e) / 1000.0 : 0.045;  // by default, frames of 45 ms and more (stutters)
@@ -2109,10 +2110,11 @@ static void hitchFrame() {
     static int told = 0;
     if (last > 0 && now - last > limit && (getenv("SMS_GX_HITCH_MS") || told++ < 300))
         logmsg("hitch: frame %u took %.1f ms: %u shader compiles, %u texture uploads (%.1f MiB from the texture pack), "
-               "%.1f ms in batches, %.1f ms waiting for the GL thread",
+               "%.1f ms in batches, %.1f ms waiting for the GL thread, %u programs from the background",
                g_displayFrames, (now - last) * 1000.0, g_statShaderCompiles - compiles0, g_statTexUploads - uploads0,
                double(g_statHiresBytes - hires0) / (1 << 20), (g_flushSeconds - flush0) * 1000.0,
-               (waited - wait0) * 1000.0);
+               (waited - wait0) * 1000.0, g_statWarmBackground - warm0);
+    warm0 = g_statWarmBackground;
     last = now;
     flush0 = g_flushSeconds;
     wait0 = waited;
@@ -5070,6 +5072,7 @@ static void copyEfb(uint32_t ctrl) {
         traceFrameAdvance();
         statsFrame();
         hitchFrame();
+        shaderWarmFrame();
         s_lastFrameStats = s_stats;
         s_stats.draws = s_stats.vertices = s_stats.efbCopies = 0;
     }

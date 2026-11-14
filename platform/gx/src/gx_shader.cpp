@@ -10,7 +10,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -1234,6 +1236,11 @@ struct Warmed {
 };
 static std::vector<WarmJob*> s_inFlight;
 static std::vector<Warmed> s_warmed;
+// Background Shader Compiling: s_warmed is filled by the GL thread while the game's runs
+static std::mutex s_warmedLock;
+static std::atomic<int> s_warmFlying(0);  // posted and not finished yet
+static bool s_warmBackground;             // the setting (GXPC_ShaderBackground)
+uint32_t g_statWarmBackground = 0;        // programs taken from the background compiles
 
 static GLuint startCompile(GLenum type, const std::string& src) {
     GLuint sh = glCreateShader(type);
@@ -1271,8 +1278,27 @@ static void warmFinish(WarmJob* j) {  // GL thread
         w.sp.id = 0;
         programCacheStore(j->key, sourceHash(j->vs, j->fs), j->prog);
     }
-    s_warmed.push_back(w);
+    {
+        std::lock_guard<std::mutex> lock(s_warmedLock);
+        s_warmed.push_back(w);
+    }
+    s_warmFlying--;
     delete j;
+}
+
+// GL thread: takes the compiles that have ended (at most `most`), without waiting for the others.
+static void warmPollReady(int most) {
+    size_t kept = 0;
+    for (WarmJob* j : s_inFlight) {
+        GLint ready = GL_FALSE;
+        if (most > 0) glGetProgramiv(j->prog, 0x91B1 /* GL_COMPLETION_STATUS_KHR */, &ready);
+        if (ready) {
+            warmFinish(j);
+            most--;
+        } else
+            s_inFlight[kept++] = j;
+    }
+    s_inFlight.resize(kept);
 }
 
 // GL thread: waits for the compiles in flight and takes them.
@@ -1285,6 +1311,7 @@ static void warmPoll() {
 static void warmPost(const ProgramKey& key) {
     if (!s_warmIssued.insert(key).second) return;
     WarmJob* j = new WarmJob{key, genVS(key.k), genFS(key.k)};
+    s_warmFlying++;
     struct Issue {
         WarmJob* j;
         void operator()() const { warmIssue(j); }
@@ -1295,7 +1322,10 @@ static void warmPost(const ProgramKey& key) {
 // Game thread: takes the finished programs.
 static void warmDrain() {
     std::vector<Warmed> got;
-    got.swap(s_warmed);
+    {
+        std::lock_guard<std::mutex> lock(s_warmedLock);
+        got.swap(s_warmed);
+    }
     for (Warmed& w : got) {
         if (!w.ok) continue;
         if (s_programs.count(w.key)) {  // a draw needed it first
@@ -1435,6 +1465,38 @@ void shaderPrepareStage(int stage) {
     if (s_warmMade != before)
         logmsg("shader warm-up: compiled %u programs for stage %d and %u others in %.1f ms%s", own, s_stage,
                s_warmMade - before - own, elapsed(), s_warmNext < s_warmKeys.size() ? "" : " (all known programs made)");
+}
+
+// Background Shader Compiling: once a frame while playing, the known programs not made yet (a
+// stage's load makes only what fits in its second) are compiled a few at a time by the driver's
+// own threads, and taken as they end: a draw that needs one later finds it made.
+extern "C" void GXPC_ShaderBackground(int on) { s_warmBackground = on != 0; }
+void shaderWarmFrame() {
+    if (s_warmState != 1 || !s_warmWanted || !s_warmBackground || !s_parallel) return;
+    if (s_warmFlying > 0) {
+        struct Poll {
+            void operator()() const { warmPollReady(2); }
+        };
+        glt::post(Poll{});
+    }
+    const uint32_t before = s_warmMade;
+    warmDrain();
+    g_statWarmBackground += s_warmMade - before;
+    static bool s_toldAll;
+    if (s_warmNext >= s_warmKeys.size()) {
+        if (!s_toldAll && s_warmFlying == 0) {
+            s_toldAll = true;
+            logmsg("shader warm-up: all known programs made (%u of them in the background)", g_statWarmBackground);
+        }
+        return;
+    }
+    s_toldAll = false;
+    for (int posted = 0; posted < 2 && s_warmFlying < 8 && s_warmNext < s_warmKeys.size();) {
+        const ProgramKey& k = s_warmKeys[s_warmNext++];
+        if (s_programs.count(k) || s_warmIssued.count(k)) continue;
+        warmPost(k);
+        posted++;
+    }
 }
 
 bool shaderWarmupAvailable() { return s_warmState == 1; }

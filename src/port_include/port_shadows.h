@@ -78,6 +78,9 @@ int port_shadows_map_size(void);
 // (levelOnly: Mario, characters, enemies and water cast near Mario only)
 void GXPC_ShadowFar(int halfRate, int levelOnly);
 int port_shadows_far_half_rate(void);
+// Background Shader Compiling: the known shaders not made yet are compiled while playing
+void GXPC_ShaderBackground(int on);
+int port_shader_background(void);
 // Draw Shadows Together: solid shapes' shadows are drawn into the sun's maps in one go
 void GXPC_ShadowTogether(int on);
 int port_shadows_together(void);
