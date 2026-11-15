@@ -13,9 +13,7 @@
 #include <string.h>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <mutex>
-#include <thread>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -1327,66 +1325,6 @@ static void warmPollReady(int most) {
     s_inFlight.resize(kept);
 }
 
-// ---------------------------------------------------------------- the compiler thread
-// Background Shader Compiling's programs are compiled and linked on a thread of their own, with a
-// second GL context sharing the GL thread's objects (gx_platform.cpp): on AMD's driver a compile
-// holds the thread that asks for it (the parallel compile extension notwithstanding), which on the
-// GL thread made every frame 80 to 120 ms slower while it ran. Each program is finished there
-// (glFinish) before the game's thread takes it, so the GL thread can draw with it at once.
-extern bool GXPC_BindCompileContext();  // gx_platform.cpp
-static std::mutex s_jobLock;
-static std::condition_variable s_jobCv;
-static std::vector<WarmJob*> s_jobs;
-static int s_compilerState = 0;  // 0 not started, 1 running, -1 none (no second context)
-static void compilerMain() {
-    glt::directThread();
-    for (;;) {
-        WarmJob* j = nullptr;
-        {
-            std::unique_lock<std::mutex> lock(s_jobLock);
-            s_jobCv.wait(lock, [] { return !s_jobs.empty(); });
-            j = s_jobs.front();
-            s_jobs.erase(s_jobs.begin());
-        }
-        j->v = startCompile(GL_VERTEX_SHADER, j->vs);
-        j->f = startCompile(GL_FRAGMENT_SHADER, j->fs);
-        j->prog = glCreateProgram();
-        glAttachShader(j->prog, j->v);
-        glAttachShader(j->prog, j->f);
-        bindAttributes(j->prog);
-        glLinkProgram(j->prog);
-        warmFinish(j);  // checks it, sets it up (aside), stores it in the cache, hands it over
-        glFinish();
-    }
-}
-// Game thread: starts the compiler thread the first time; false when there can be none.
-static bool compilerReady() {
-    if (s_compilerState) return s_compilerState > 0;
-    s_compilerState = -1;
-    std::atomic<int> bound(-1);
-    std::thread([&bound] {
-        if (!GXPC_BindCompileContext()) {
-            bound = 0;
-            return;
-        }
-        bound = 1;
-        compilerMain();
-    }).detach();
-    while (bound.load() < 0) std::this_thread::yield();
-    if (bound.load() == 1) s_compilerState = 1;
-    logmsg("shader compiler thread: %s", s_compilerState > 0 ? "running, with its own context"
-                                                              : "none (no second context): compiled on the GL thread");
-    return s_compilerState > 0;
-}
-static void compilerPost(const ProgramKey& key) {
-    if (!s_warmIssued.insert(key).second) return;
-    WarmJob* j = new WarmJob{key, genVS(key.k), genFS(key.k)};
-    s_warmFlying++;
-    std::lock_guard<std::mutex> lock(s_jobLock);
-    s_jobs.push_back(j);
-    s_jobCv.notify_one();
-}
-
 // GL thread: waits for the compiles in flight and takes them.
 static void warmPoll() {
     for (WarmJob* j : s_inFlight) warmFinish(j);
@@ -1571,8 +1509,7 @@ void shaderPrepareStage(int stage) {
 extern "C" void GXPC_ShaderBackground(int on) { s_warmBackground = on != 0; }
 void shaderWarmFrame() {
     if (s_warmState != 1 || !s_warmWanted || !s_warmBackground || !s_parallel) return;
-    const bool own = compilerReady();
-    if (s_warmFlying > 0 && !own) {
+    if (s_warmFlying > 0) {
         struct Poll {
             void operator()() const { warmPollReady(2); }
         };
@@ -1592,13 +1529,10 @@ void shaderWarmFrame() {
         return;
     }
     s_toldAll = false;
-    for (int posted = 0; posted < (own ? 8 : 2) && s_warmFlying < 8 && s_warmNext < s_warmKeys.size();) {
+    for (int posted = 0; posted < 2 && s_warmFlying < 8 && s_warmNext < s_warmKeys.size();) {
         const ProgramKey& k = s_warmKeys[s_warmNext++];
         if (s_programs.count(k) || s_warmIssued.count(k)) continue;
-        if (own)
-            compilerPost(k);
-        else
-            warmPost(k);
+        warmPost(k);
         posted++;
     }
 }

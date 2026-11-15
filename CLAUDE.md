@@ -162,12 +162,6 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   work, presenting) and the game's thread marks what they were queued for (`glt::mark`). A frame of 45 ms or more,
   or one with a command of 30 ms or more, is logged as `GL frame N` with its slowest command and the program's
   origin (`programOrigin` in `gx_shader.cpp`).
-- **The shader compiler thread** (branch `remastered-test-stutter-fix`): the GL frame log showed Background Shader
-  Compiling costing the GL thread 80 to 120 ms every frame while it ran (AMD compiles on the asking thread, parallel
-  compile extension or not). Its programs are now compiled on a thread of their own (`compilerMain` in
-  `gx_shader.cpp`) with a second context sharing the first's objects (`s_compileCtx`, `GXPC_BindCompileContext` in
-  `gx_platform.cpp`; `glt::directThread` lets that thread call GL straight), each finished (`glFinish`) before the
-  game's thread takes it. Without a second context it falls back to the GL thread. Log caps raised to 3000 there.
 - **A new build's first play** (`firstPlayNotice` in `gx_shader.cpp`): the build (the commit, told by `GXPC_SetGameBuild`
   from `sms_game_build.h`, in `window_title.cpp`) is compared with `<cache>/played-build.txt` beside the shader
   cache; when it is new, the extensions' notice panel says the shaders are building, for 60 seconds.

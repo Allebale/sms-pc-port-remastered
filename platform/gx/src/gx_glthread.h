@@ -26,10 +26,6 @@ double waitedSeconds();  // how long the game's threads have waited for the GL t
 // True on the GL thread, and on any thread while there is none: then GL may
 // be called directly.
 bool onGlThread();
-// A thread with a GL context of its own, shared with the GL thread's (the shader compiler,
-// gx_shader.cpp): its GL calls go straight to the driver.
-void directThread();
-bool onTheGlThread();  // the GL thread itself, not such a thread
 
 // Starts the GL thread, which first calls bind(arg) to make the context
 // current there (the caller has released it). Returns false (and runs nothing)

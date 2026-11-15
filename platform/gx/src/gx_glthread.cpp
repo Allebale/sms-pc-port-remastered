@@ -238,11 +238,6 @@ void frameMark(uint32_t frame) {
 bool active() { return s_running.load(std::memory_order_relaxed); }
 double waitedSeconds() { return s_waited; }
 bool onGlThread() { return t_onGl || !s_running.load(std::memory_order_relaxed); }
-namespace {
-thread_local bool t_direct = false;  // a thread with a GL context of its own (directThread)
-}
-void directThread() { t_onGl = t_direct = true; }
-bool onTheGlThread() { return t_onGl && !t_direct; }
 
 void* reserve(Thunk fn, size_t bytes) {
     const size_t total = 16 + align16(bytes);
