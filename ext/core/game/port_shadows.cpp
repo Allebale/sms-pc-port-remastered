@@ -11,6 +11,8 @@
 #include "port_puddles.h"
 
 #include <Camera/Camera.hpp>
+#include <System/Application.hpp>
+#include <System/MarDirector.hpp>
 #include <Camera/SunMgr.hpp>
 #include <Camera/SunModel.hpp>
 #include <MarioUtil/LightUtil.hpp>
@@ -153,6 +155,21 @@ void hideBaked(bool hide)
 			s_baked[i]->offFlag(J3DShpFlag_Visible);
 }
 
+// Background Shader Compiling works only in the menus: the title, file select, movies, and a
+// stage's pause menu, map and save screen (AMD's driver compiles on the thread that draws, so a
+// compile in play would slow the game). Told to the renderer at the top of every frame.
+void frame()
+{
+	bool menu = gpApplication.mAppState != TApplication::APP_STATE_GAMEPLAY
+	            || gpApplication.mCurrArea.getStage() == 15;  // the title
+	if (!menu && gpMarDirector) {
+		const int st = gpMarDirector->mState;
+		menu = st == TMarDirector::STATE_PAUSE_MENU || st == TMarDirector::STATE_GUIDE
+		       || st == TMarDirector::STATE_CARD_SAVE;
+	}
+	GXPC_ShaderMenu(menu ? 1 : 0);
+}
+
 PortExtension s_extension;
 
 struct Register {
@@ -161,6 +178,7 @@ struct Register {
 		memset(&s_extension, 0, sizeof s_extension);
 		s_extension.name       = "shadows";
 		s_extension.stageSetup = stageSetup;
+		s_extension.frame      = frame;
 		port_ext_register(&s_extension);
 	}
 } s_register;

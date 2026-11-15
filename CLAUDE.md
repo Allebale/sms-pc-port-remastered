@@ -153,6 +153,8 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   `GXPC_ShaderBackground`; needs Shader Warm-up and parallel compiles) makes the rest while playing: 2 posted a
   frame, 8 in flight, taken as `GL_COMPLETION_STATUS` says they ended. `hitch:` frames of about 180 ms with no
   wait for the GL thread next to `[pad] window lost focus` are Allebale switching windows, not stutters.
+  On `remastered-test-stutter-fix` it compiles only in menus (title, file select, movies, a stage's pause menu, map,
+  save screen: `GXPC_ShaderMenu`, told by `port_shadows.cpp`'s frame hook): in play it cost 80 to 120 ms a frame.
 - **Shader Priming** (branch `remastered-test-stutter-fix` only, an experiment): `primePrograms` in `gx_render.cpp`
   draws each warm-up program once as a stage loads (a triangle of one point, into the EFB, the last batch's vertex
   format), so a driver that finishes a program on its first draw (AMD) does it in the load. Up to 3 s a load.

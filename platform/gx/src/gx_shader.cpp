@@ -1507,8 +1507,14 @@ void shaderPrepareStage(int stage) {
 // stage's load makes only what fits in its second) are compiled a few at a time by the driver's
 // own threads, and taken as they end: a draw that needs one later finds it made.
 extern "C" void GXPC_ShaderBackground(int on) { s_warmBackground = on != 0; }
+// Only in the menus (title, file select, movies, a stage's pause menu, map and save screen): on
+// AMD's driver a compile holds the thread that draws, so compiling in play slowed every frame to
+// about 100 ms. What is left when play starts waits for the next menu, or is made as a draw needs it.
+static bool s_inMenu = true;
+extern "C" void GXPC_ShaderMenu(int menu) { s_inMenu = menu != 0; }
 void shaderWarmFrame() {
     if (s_warmState != 1 || !s_warmWanted || !s_warmBackground || !s_parallel) return;
+    if (!s_inMenu && s_warmFlying == 0) return;  // in play: nothing new, nothing waiting
     if (s_warmFlying > 0) {
         struct Poll {
             void operator()() const { warmPollReady(2); }
@@ -1529,7 +1535,7 @@ void shaderWarmFrame() {
         return;
     }
     s_toldAll = false;
-    for (int posted = 0; posted < 2 && s_warmFlying < 8 && s_warmNext < s_warmKeys.size();) {
+    for (int posted = 0; s_inMenu && posted < 2 && s_warmFlying < 8 && s_warmNext < s_warmKeys.size();) {
         const ProgramKey& k = s_warmKeys[s_warmNext++];
         if (s_programs.count(k) || s_warmIssued.count(k)) continue;
         warmPost(k);

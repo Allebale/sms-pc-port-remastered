@@ -1586,7 +1586,7 @@ const PortSetting kPuddleSettings[] = {
      "Objects and grass outside the view are not drawn. Faster, looks the same.", 0, nullptr,
      offOnCount, offOnName, skipOffScreenGet, skipOffScreenSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 121, "Background Shader Compiling",
-     "With Shader Warm-up, the rest of the shaders are made while you play.", 0, nullptr,
+     "With Shader Warm-up, the rest of the shaders are made in menus and pauses.", 0, nullptr,
      offOnCount, offOnName, shaderBackgroundGet, shaderBackgroundSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 122, "Shader Priming",
      "Each shader is drawn once while a level loads. Longer loads, fewer stutters.", 0, nullptr,

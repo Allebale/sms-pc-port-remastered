@@ -80,6 +80,8 @@ void GXPC_ShadowFar(int halfRate, int levelOnly);
 int port_shadows_far_half_rate(void);
 // Background Shader Compiling: the known shaders not made yet are compiled while playing
 void GXPC_ShaderBackground(int on);
+// Whether the game is in a menu now (title, file select, pause): the only time it compiles
+void GXPC_ShaderMenu(int menu);
 // Shader Priming: each shader the warm-up made drawn once while a level loads
 void GXPC_ShaderPriming(int on);
 int port_shader_priming(void);
