@@ -11,6 +11,7 @@
 #include "port_puddles.h"
 
 #include <Camera/Camera.hpp>
+#include <System/Application.hpp>
 #include <Camera/SunMgr.hpp>
 #include <Camera/SunModel.hpp>
 #include <MarioUtil/LightUtil.hpp>
@@ -153,6 +154,18 @@ void hideBaked(bool hide)
 			s_baked[i]->offFlag(J3DShpFlag_Visible);
 }
 
+// Background Shader Compiling waits until a save file is chosen: the title and file select stay
+// smooth. Once a stage (not the title) is played it may start, and stays allowed.
+void frame()
+{
+	static bool s_chosen = false;
+	if (!s_chosen && gpApplication.mAppState == TApplication::APP_STATE_GAMEPLAY
+	    && gpApplication.mCurrArea.getStage() != 15) {
+		s_chosen = true;
+		GXPC_ShaderAllowed(1);
+	}
+}
+
 PortExtension s_extension;
 
 struct Register {
@@ -161,6 +174,7 @@ struct Register {
 		memset(&s_extension, 0, sizeof s_extension);
 		s_extension.name       = "shadows";
 		s_extension.stageSetup = stageSetup;
+		s_extension.frame      = frame;
 		port_ext_register(&s_extension);
 	}
 } s_register;

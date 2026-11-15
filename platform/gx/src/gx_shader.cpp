@@ -1472,8 +1472,12 @@ void shaderPrepareStage(int stage) {
 // stage's load makes only what fits in its second) are compiled a few at a time by the driver's
 // own threads, and taken as they end: a draw that needs one later finds it made.
 extern "C" void GXPC_ShaderBackground(int on) { s_warmBackground = on != 0; }
+// Not before a save file is chosen (the title and file select stay smooth): port_shadows.cpp
+// tells it once a stage that is not the title is played.
+static bool s_warmAllowed = false;
+extern "C" void GXPC_ShaderAllowed(int allowed) { s_warmAllowed = allowed != 0; }
 void shaderWarmFrame() {
-    if (s_warmState != 1 || !s_warmWanted || !s_warmBackground || !s_parallel) return;
+    if (s_warmState != 1 || !s_warmWanted || !s_warmBackground || !s_parallel || !s_warmAllowed) return;
     if (s_warmFlying > 0) {
         struct Poll {
             void operator()() const { warmPollReady(2); }

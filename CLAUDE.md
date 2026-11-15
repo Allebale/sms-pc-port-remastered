@@ -153,6 +153,8 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   `GXPC_ShaderBackground`; needs Shader Warm-up and parallel compiles) makes the rest while playing: 2 posted a
   frame, 8 in flight, taken as `GL_COMPLETION_STATUS` says they ended. `hitch:` frames of about 180 ms with no
   wait for the GL thread next to `[pad] window lost focus` are Allebale switching windows, not stutters.
+  It starts only once a save file is chosen (the first stage that is not the title: `GXPC_ShaderAllowed`, from
+  `port_shadows.cpp`'s frame hook), so the title and file select stay smooth.
 - **A new build's first play** (`firstPlayNotice` in `gx_shader.cpp`): the build (the commit, told by `GXPC_SetGameBuild`
   from `sms_game_build.h`, in `window_title.cpp`) is compared with `<cache>/played-build.txt` beside the shader
   cache; when it is new, the extensions' notice panel says the shaders are building, for 60 seconds.

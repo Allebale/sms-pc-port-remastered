@@ -1568,7 +1568,7 @@ const PortSetting kPuddleSettings[] = {
      "Objects and grass outside the view are not drawn. Faster, looks the same.", 0, nullptr,
      offOnCount, offOnName, skipOffScreenGet, skipOffScreenSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 121, "Background Shader Compiling",
-     "With Shader Warm-up, the rest of the shaders are made while you play.", 0, nullptr,
+     "With Shader Warm-up, the rest of the shaders are made after a save is chosen.", 0, nullptr,
      offOnCount, offOnName, shaderBackgroundGet, shaderBackgroundSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 99, "Draw Shadows Together",
      "Real Shadows are drawn in one go, with fewer switches. Faster, looks the same.", 0, nullptr,
