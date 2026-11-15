@@ -149,7 +149,7 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - **Stutters in a stage's first minute** (Nov 2026, the `hitch:` lines): on Allebale's AMD card a shader compiled as
   a draw needs it takes about 125 ms (and the next frame about 90 ms), while the warm-up's parallel compiles are far
   quicker. A stage's load only makes what fits in its second (the fork's big programs: about 64 a load), so hundreds
-  of the 1500 known ones were left for draws. Background Shader Compiling (`shaderWarmFrame` in `gx_shader.cpp`,
+  of the 1500 known ones were left for draws. Background Shader Compiling (`shaderWarmFrame` in `gx_shader.cpp`, Off by default and in every preset,
   `GXPC_ShaderBackground`; needs Shader Warm-up and parallel compiles) makes the rest while playing: 2 posted a
   frame, 8 in flight, taken as `GL_COMPLETION_STATUS` says they ended. `hitch:` frames of about 180 ms with no
   wait for the GL thread next to `[pad] window lost focus` are Allebale switching windows, not stutters.

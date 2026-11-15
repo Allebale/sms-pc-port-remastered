@@ -1345,7 +1345,7 @@ const EffectValue kEffects[] = {
     {"Keep the Original Shadow Direction", {"Off", "Off", "Off", "Off"}},
     {"Shadow Size", {"High", "High", "Medium", "Low"}},
     {"Skip Off-Screen Objects", {"Off", "Off", "On", "On"}},
-    {"Background Shader Compiling", {"Off", "Off", "On", "On"}},
+    {"Background Shader Compiling", {"Off", "Off", "Off", "Off"}},
     {"Draw Shadows Together", {"Off", "Off", "On", "On"}},
     {"Far Shadows Update Rate", {"Every Frame", "Every Frame", "Every Other Frame", "Every Other Frame"}},
     {"Far Shadows From", {"Everything", "Everything", "The Level Only", "The Level Only"}},
