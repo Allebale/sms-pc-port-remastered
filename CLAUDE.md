@@ -200,6 +200,13 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 - Depth Buffer View (Graphics page) shows depth, normals, the AO shade alone and depth edges: ask for
   screenshots of it when AO or depth looks wrong.
 
+## Fixes to send on later
+
+- **`251c191`** on `remastered-test` (`ext/modapi/game/modapi_held_fludd.cpp`, `backAxes`): FLUDD's back frame learns its
+  axes from the way Mario's body is drawn (`mModelFaceAngle`), not the way he moves (`mFaceAngle`). With a mod's
+  `player->set_aim` (the FLUDD Weapons mod's shooter aim, walking sideways) the weapon on his back pointed sideways.
+  Tested and working (Nov 2026). Not yet on `first-person-beta`; Allebale wants to send it on later (he opens PRs himself).
+
 ## Planned features
 
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
