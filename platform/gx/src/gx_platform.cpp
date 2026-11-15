@@ -1843,6 +1843,7 @@ void sms_gx_rumble_shutdown(void) {
 
 // The shader compiler's thread (gx_shader.cpp): its own context, sharing the GL thread's objects.
 // False when there is none (Vulkan, EGL, a driver that refused it).
+namespace gx {  // declared in gx_shader.cpp, inside namespace gx
 bool GXPC_BindCompileContext() {
 #ifdef SMS_GX_HAVE_SDL2
     if (!s_window || !s_compileCtx) return false;
@@ -1851,3 +1852,4 @@ bool GXPC_BindCompileContext() {
     return false;
 #endif
 }
+}  // namespace gx
