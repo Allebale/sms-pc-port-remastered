@@ -107,6 +107,9 @@ int s_shadowsFarLevel = 0;  // Far Shadows From: 0 everything, 1 the level only
 int s_shadowsSoft = 0;      // Soft Shadow Edges: into kShadowSofts (0 off: sharp)
 int s_ladders3D = 0;        // 3D Ladders: flat ladders and climbable fences get depth
 int s_interiorLights = 0;   // Interior Lights: 1 the rooms' lamps and windows light them, 2 and cast shadows
+int s_interiorStrength = 2; // Interior Lights Strength: into kInteriorStrengths
+int s_interiorShadow = 3;   // Interior Lights Shadow Strength: into kInteriorShadows
+int s_interiorDistance = 1; // Interior Lights Distance: into kInteriorDistances
 int s_textureLog = 0;       // the Texture Log: 1 the textures at the middle of the screen are logged
 int s_smoothChars = 0;      // Smooth Characters: 0 off, 1 people and enemies, 2 and Mario
 int s_shadowsOriginal = 0;  // Keep the Original Shadow Direction
@@ -335,6 +338,12 @@ void load() {
             s_shadowsFarLevel = value != 0;
         } else if (sscanf(line, " ladders3d = %d", &value) == 1) {
             s_ladders3D = value != 0;
+        } else if (sscanf(line, " interiorlightsstrength = %d", &value) == 1) {
+            s_interiorStrength = value < 0 ? 0 : value > 4 ? 4 : value;
+        } else if (sscanf(line, " interiorlightsshadow = %d", &value) == 1) {
+            s_interiorShadow = value < 0 ? 0 : value > 3 ? 3 : value;
+        } else if (sscanf(line, " interiorlightsdistance = %d", &value) == 1) {
+            s_interiorDistance = value < 0 ? 0 : value > 3 ? 3 : value;
         } else if (sscanf(line, " interiorlights = %d", &value) == 1) {
             s_interiorLights = value < 0 || value > 2 ? 0 : value;
         } else if (sscanf(line, " texturelog = %d", &value) == 1) {
@@ -487,6 +496,12 @@ void save() {
     fprintf(f, "ladders3d = %d\n", s_ladders3D);
     fprintf(f, "# interiorlights: 1 the rooms' lamps and windows light them, 2 and cast shadows, 0 as the game has it.\n");
     fprintf(f, "interiorlights = %d\n", s_interiorLights);
+    fprintf(f, "# interiorlightsstrength: 0 faint to 4 very bright (2 normal).\n");
+    fprintf(f, "interiorlightsstrength = %d\n", s_interiorStrength);
+    fprintf(f, "# interiorlightsshadow: how dark their shadows are, 0 light to 3 full.\n");
+    fprintf(f, "interiorlightsshadow = %d\n", s_interiorShadow);
+    fprintf(f, "# interiorlightsdistance: how far from the camera they light, 0 short to 3 very long.\n");
+    fprintf(f, "interiorlightsdistance = %d\n", s_interiorDistance);
     fprintf(f, "# texturelog: 1 every few seconds the textures at the middle of the screen are logged, 0 not.\n");
     fprintf(f, "texturelog = %d\n", s_textureLog);
     fprintf(f, "# smoothcharacters: 1 people and enemies shaded round (no flat faces), 2 and Mario, 0 as the game has it.\n");
@@ -969,6 +984,54 @@ int textureLogSet(int i) {
     port_log("[graphics] Texture Log changed: %s\n", i ? "on" : "off");
     return 1;
 }
+const char* const kInteriorStrengthNames[] = {"Faint", "Light", "Normal", "Bright", "Very Bright"};
+const float kInteriorStrengths[] = {0.4f, 0.7f, 1.0f, 1.4f, 2.0f};
+int interiorStrengthCount() { return 5; }
+const char* interiorStrengthName(int i) { return kInteriorStrengthNames[i < 0 || i > 4 ? 2 : i]; }
+int interiorStrengthGet() {
+    load();
+    return s_interiorStrength;
+}
+int interiorStrengthSet(int i) {
+    if (i < 0 || i > 4) return 0;
+    load();
+    s_interiorStrength = i;
+    save();
+    port_log("[graphics] Interior Lights Strength changed: %s\n", kInteriorStrengthNames[i]);
+    return 1;
+}
+const char* const kInteriorShadowNames[] = {"Light", "Medium", "Strong", "Full"};
+const float kInteriorShadows[] = {0.4f, 0.65f, 0.85f, 1.0f};
+int interiorShadowCount() { return 4; }
+const char* interiorShadowName(int i) { return kInteriorShadowNames[i < 0 || i > 3 ? 3 : i]; }
+int interiorShadowGet() {
+    load();
+    return s_interiorShadow;
+}
+int interiorShadowSet(int i) {
+    if (i < 0 || i > 3) return 0;
+    load();
+    s_interiorShadow = i;
+    save();
+    port_log("[graphics] Interior Lights Shadow Strength changed: %s\n", kInteriorShadowNames[i]);
+    return 1;
+}
+const char* const kInteriorDistanceNames[] = {"Short", "Medium", "Long", "Very Long"};
+const float kInteriorDistances[] = {3000.0f, 5000.0f, 8000.0f, 12000.0f};
+int interiorDistanceCount() { return 4; }
+const char* interiorDistanceName(int i) { return kInteriorDistanceNames[i < 0 || i > 3 ? 1 : i]; }
+int interiorDistanceGet() {
+    load();
+    return s_interiorDistance;
+}
+int interiorDistanceSet(int i) {
+    if (i < 0 || i > 3) return 0;
+    load();
+    s_interiorDistance = i;
+    save();
+    port_log("[graphics] Interior Lights Distance changed: %s\n", kInteriorDistanceNames[i]);
+    return 1;
+}
 const char* const kSmoothNames[] = {"Off", "Characters", "Characters and Mario"};
 int smoothCount() { return 3; }
 const char* smoothName(int i) { return i >= 0 && i < 3 ? kSmoothNames[i] : ""; }
@@ -1410,6 +1473,9 @@ const EffectValue kEffects[] = {
     {"3D Ladders", {"Off", "On", "On", "On"}},
     {"Smooth Characters", {"Off", "Off", "Off", "Off"}},
     {"Interior Lights", {"Off", "Off", "Off", "Off"}},
+    {"Interior Lights Strength", {"Normal", "Normal", "Normal", "Normal"}},
+    {"Interior Lights Shadow Strength", {"Full", "Full", "Full", "Full"}},
+    {"Interior Lights Distance", {"Medium", "Medium", "Medium", "Medium"}},
     {"3D Grass", {"Off", "By Location", "By Location", "By Location"}},
     {"Grass Distance", {"High", "Very High", "Medium", "Low"}},
     {"Cut Grass Height", {"Normal", "Twice", "Twice", "Normal"}},
@@ -1644,6 +1710,15 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "Interior Lights",
      "The rooms' lamps and windows light them up, with shadows if chosen. Not all yet.", 0, nullptr,
      interiorCount, interiorName, interiorGet, interiorSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "Interior Lights Strength",
+     "How bright the rooms' lamps and windows are.", 0, nullptr,
+     interiorStrengthCount, interiorStrengthName, interiorStrengthGet, interiorStrengthSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "Interior Lights Shadow Strength",
+     "How dark the shadows from the rooms' lamps and windows are.", 0, nullptr,
+     interiorShadowCount, interiorShadowName, interiorShadowGet, interiorShadowSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "Interior Lights Distance",
+     "How far from the camera the rooms' lights shine. They fade out toward the edge.", 0, nullptr,
+     interiorDistanceCount, interiorDistanceName, interiorDistanceGet, interiorDistanceSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 121, "Texture Log",
      "Every few seconds the log names the textures at the middle of the screen.", 0, nullptr,
      offOnCount, offOnName, textureLogGet, textureLogSet},
@@ -1903,6 +1978,18 @@ int port_shadows_map_size(void) {
 int port_interior_lights(void) {
     load();
     return s_interiorLights;
+}
+float port_interior_strength(void) {
+    load();
+    return kInteriorStrengths[s_interiorStrength < 0 || s_interiorStrength > 4 ? 2 : s_interiorStrength];
+}
+float port_interior_shadow(void) {
+    load();
+    return kInteriorShadows[s_interiorShadow < 0 || s_interiorShadow > 3 ? 3 : s_interiorShadow];
+}
+float port_interior_distance(void) {
+    load();
+    return kInteriorDistances[s_interiorDistance < 0 || s_interiorDistance > 3 ? 1 : s_interiorDistance];
 }
 int port_texture_log(void) {
     load();

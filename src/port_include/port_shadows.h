@@ -98,6 +98,11 @@ void GXPC_NameClear(void);
 // them (gx_render.cpp); from the main camera each frame, with its view
 void GXPC_RoomLightsView(int mode, const float view[3][4]);
 int port_interior_lights(void);
+// Interior Lights Strength, Shadow Strength (0 to 1), Distance (units from the camera)
+void GXPC_RoomLightsLook(float strength, float shadow, float distance);
+float port_interior_strength(void);
+float port_interior_shadow(void);
+float port_interior_distance(void);
 int port_texture_log(void);
 // Smooth Characters: people's and enemies' (2: and Mario's) flat faces shaded round (gx_fifo.cpp)
 void GXPC_SmoothCharacters(int mode);

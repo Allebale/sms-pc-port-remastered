@@ -241,6 +241,9 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   (`pshadowLit`, `u_pshadow`, unit 16). A lamp's near plane is past its own shade (0.75 of its size).
   Room lights always get two of the eight slots (the game's farthest fires dropped); without that, Sirena's hotel
   (8 fire lights near Mario) had no room lights at all. `interior lights: shadows from` log line every 4 s.
+  Interior Lights Strength, Shadow Strength and Distance (`GXPC_RoomLightsLook`). Nothing pops on or off as the
+  camera moves: each light fades out over the last quarter of Distance (or before the next light that has no slot
+  left), and a light's shadow fades out over 400 units as it nears the third nearest light (`s_roomShadowCut`).
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 

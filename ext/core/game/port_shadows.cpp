@@ -357,6 +357,7 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 	if (camera != (void*)gpCamera || !view)
 		return;
 	GXPC_TextureLog(port_texture_log());  // the Texture Log: what is at the middle of the screen
+	GXPC_RoomLightsLook(port_interior_strength(), port_interior_shadow(), port_interior_distance());
 	GXPC_RoomLightsView(port_interior_lights(), view);  // Interior Lights: the rooms' lamps and windows
 	port_lights_view(view);  // Fire Lights, seen from the main camera
 	port_wet_characters_view(view);  // Wet Characters: the wet ones, in this view

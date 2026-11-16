@@ -921,9 +921,9 @@ static std::string genFS(const ShaderKey& k) {
          "      float d = length(L);\n"
          "      float a = lp.w > 1.0 ? clamp(1.0 - d / lp.w, 0.0, 1.0) : 0.0;\n"
          "      if (!(a > 0.0)) continue;\n"
-         // Interior Lights' shadows: its two nearest room lights' (u_pshadow[3]: their slots, plus one)
-         "      if (float(i) == u_pshadow[3].x - 1.0) a *= pshadowLit(0, v_wp, pn);\n"
-         "      else if (float(i) == u_pshadow[3].y - 1.0) a *= pshadowLit(1, v_wp, pn);\n"
+         // Interior Lights' shadows: its two nearest room lights' (u_pshadow[3]: their slots, plus one; how dark)
+         "      if (float(i) == u_pshadow[3].x - 1.0) a *= mix(1.0, pshadowLit(0, v_wp, pn), u_pshadow[3].z);\n"
+         "      else if (float(i) == u_pshadow[3].y - 1.0) a *= mix(1.0, pshadowLit(1, v_wp, pn), u_pshadow[3].w);\n"
          "      lsum += lc.rgb * (lc.a * a * a * (max(dot(pn, L / max(d, 1.0)), 0.0) * 0.7 + 0.3));\n"
          "    }\n"
          "    if (!(lsum.r + lsum.g + lsum.b >= 0.0) || lsum.r + lsum.g + lsum.b > 30.0) lsum = vec3(0.0);\n"

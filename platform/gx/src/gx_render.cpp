@@ -2597,8 +2597,22 @@ struct RoomAdded {
 };
 static RoomAdded s_roomAdded[2];
 static int s_roomAddedN;
+// Interior Lights Strength, Shadow Strength, Distance (GXPC_RoomLightsLook, from port_shadows.cpp each frame)
+static float s_roomStrength = 1.0f, s_roomShadowAmt = 1.0f, s_roomDist = 5000.0f;
+extern "C" void GXPC_RoomLightsLook(float strength, float shadow, float distance) {
+    s_roomStrength  = strength > 0.0f ? strength : 0.0f;
+    s_roomShadowAmt = shadow < 0.0f ? 0.0f : shadow > 1.0f ? 1.0f : shadow;
+    s_roomDist      = distance > 500.0f ? distance : 500.0f;
+}
+// No light comes or goes all at once as the camera moves: each fades out toward the edge (Distance,
+// or nearer, where the next light would have no room left), and a light's shadow fades out as it
+// nears the third nearest's distance (only two cast). s_roomShadowCut: that distance, for the shadows
+static float s_roomShadowCut;
+static const float kRoomShadowFade = 400.0f;
+static float roomFadeWidth() { return s_roomDist * 0.25f; }
 static int roomAdd(float* world, int count) {
     s_roomAddedN = 0;
+    s_roomShadowCut = 0.0f;
     if (!s_roomMode || !s_roomViewOk || s_roomLights.empty() || count >= 8) return count;
     const float cam[3] = {s_roomInv[3], s_roomInv[7], s_roomInv[11]};
     static const float kRadius[2] = {700.0f, 1000.0f};
@@ -2613,13 +2627,19 @@ static int roomAdd(float* world, int count) {
         byDist.push_back(std::make_pair(dx * dx + dy * dy + dz * dz, int(i)));
     }
     std::sort(byDist.begin(), byDist.end());
+    const size_t slots = size_t(8 - count);
+    float cut = s_roomDist;
+    if (byDist.size() > slots) cut = std::min(cut, sqrtf(byDist[slots].first));
+    s_roomShadowCut = byDist.size() > 2 && slots > 2 ? std::min(cut, sqrtf(byDist[2].first)) : cut;
     for (size_t k = 0; k < byDist.size() && count < 8; k++) {
         const RoomLight& l = s_roomLights[byDist[k].second];
-        if (byDist[k].first > 6000.0f * 6000.0f) break;
+        const float w = (cut - sqrtf(byDist[k].first)) / roomFadeWidth();
+        if (!(w > 0.0f)) break;
         float* o = world + count * 8;
         memcpy(o, l.p, sizeof l.p);
         o[3] = kRadius[l.kind];
         memcpy(o + 4, kColour[l.kind], 4 * sizeof(float));
+        o[7] *= s_roomStrength * (w < 1.0f ? w : 1.0f);
         if (s_roomAddedN < 2) {
             RoomAdded& a = s_roomAdded[s_roomAddedN++];
             memcpy(a.p, l.p, sizeof a.p);
@@ -4519,6 +4539,10 @@ static void roomShadowFrame(const float view[3][4], const float* world, int coun
                     break;
                 }
         if (rd && u[12 + li] > 0.0f) {
+            // how dark its shadow is: faded out as it nears the third nearest's distance
+            const float dx = rd->p[0] - s_roomInv[3], dy = rd->p[1] - s_roomInv[7], dz = rd->p[2] - s_roomInv[11];
+            const float sw = (s_roomShadowCut - sqrtf(dx * dx + dy * dy + dz * dz)) / kRoomShadowFade;
+            u[14 + li] = s_roomShadowAmt * (sw < 0.0f ? 0.0f : sw > 1.0f ? 1.0f : sw);
             for (int r = 0; r < 3; r++)
                 u[16 + li * 4 + r] = view[r][0] * rd->p[0] + view[r][1] * rd->p[1] + view[r][2] * rd->p[2] + view[r][3];
             u[16 + li * 4 + 3] = rd->fr;
