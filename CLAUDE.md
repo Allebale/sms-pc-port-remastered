@@ -224,9 +224,11 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   Start again texture by texture: find each window's and lamp's texture name, then list them. The **Texture
   Log** (Graphics page, Off: `GXPC_TextureLog`, `centreBatch` in `gx_render.cpp`) logs, every 240 frames, the
   main camera's draws over the middle of the screen, nearest first, with both textures' pack names and sizes.
-  Batches merge many objects and lamps often use a plain white texture (`tex1_4x4_2790fbb3fcfeea82_3`), so the
-  game side logs too (`[look]` lines, `lookLog` in `port_shadows.cpp`): the materials straight ahead of the camera
-  by name (the map's models and every live object's, by each shape's box), nearest first. Light by material name.
+  Batches merge many objects and lamps often use a plain white texture (`tex1_4x4_2790fbb3fcfeea82_3`), and a
+  box test on the game side missed Eclipse's hotel (its map shapes' boxes do not hold). Now: every 240 frames one
+  frame is decoded afresh (no display-list cache) and each primitive's triangles under the screen's middle are
+  found exactly (`pickTriangles`), with their display list's name (`GXPC_NameList`, from `nameModels` in
+  `port_shadows.cpp` at stage setup: material and owner). Light by material name.
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 

@@ -92,6 +92,8 @@ int port_skip_off_screen(void);
 // The Texture Log (Graphics page): every few seconds, the textures drawn over the middle of the screen
 // are logged (gx_render.cpp), to find a lamp's or a window's by pointing the camera at it
 void GXPC_TextureLog(int on);
+void GXPC_NameList(const void* list, const char* name);
+void GXPC_NameClear(void);
 int port_texture_log(void);
 // Smooth Characters: people's and enemies' (2: and Mario's) flat faces shaded round (gx_fifo.cpp)
 void GXPC_SmoothCharacters(int mode);

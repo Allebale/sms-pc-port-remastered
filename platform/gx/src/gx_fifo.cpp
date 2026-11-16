@@ -973,6 +973,7 @@ extern "C" void GXPC_SmoothCharacters(int mode) {
 
 static void dlRecordPrimitive(uint8_t opcode, const uint8_t* p, uint32_t count, int vat, const DecSetup& S,
                               const uint8_t* out);
+static const void* s_curList;  // the display list being drawn (the Texture Log's names)
 static struct DlEntry* s_dlRec = nullptr;  // the display list being recorded into the cache
 
 static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t count, const VtxLayout& L, int vat) {
@@ -1001,6 +1002,7 @@ static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t 
         else if (!lit && (S.fmt & VF_CLR0)) smoothColours(out, count, S.fmt, stride);
         else s_smoothNoNormals += count;
     }
+    if (g_pickArmed) pickTriangles(opcode, out, count, S.fmt, stride, s_curList);  // the Texture Log
     primitiveEnd(opcode, count);
     if (s_dlRec) dlRecordPrimitive(opcode, p, count, vat, S, out);
     return p + size_t(count) * L.size;
@@ -1379,7 +1381,14 @@ static void dlReplayState(const DlEntry& e) {
 static void callDisplayListInner(const uint8_t* data, uint32_t size);
 // Moving Vegetation: a plant's display list (gx_render.cpp's register) is drawn on its own, with
 // the sway on (its batch flushed before and after, so that nothing else sways with it).
+static void callDisplayListBody(const uint8_t* data, uint32_t size);
 void callDisplayList(const uint8_t* data, uint32_t size) {
+    const void* was = s_curList;
+    s_curList = data;
+    callDisplayListBody(data, size);
+    s_curList = was;
+}
+static void callDisplayListBody(const uint8_t* data, uint32_t size) {
     float minY, maxY;
     // Round Shadows Under Characters: a character's list on its own, casting no sun shadow
     // (Wet Characters: drawn with the wet ones' spheres)
@@ -1451,7 +1460,7 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
 }
 
 static void callDisplayListInner(const uint8_t* data, uint32_t size) {
-    if (!data || g.smoothDraw || !dlCacheEnabled() || !rendererReady() || s_dlRec) {
+    if (!data || g.smoothDraw || g_pickArmed || !dlCacheEnabled() || !rendererReady() || s_dlRec) {
         runCommands(data, size);
         return;
     }

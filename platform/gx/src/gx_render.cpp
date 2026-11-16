@@ -2459,106 +2459,121 @@ static void probeBatch() {
 }
 
 // The Texture Log (Graphics page; GXPC_TextureLog from port_shadows.cpp, with the main camera's view
-// each frame): every four seconds, the main camera's draws over the middle of the screen are logged,
-// nearest first, with their textures (as the texture pack names them) and their size, so that a
-// lamp's or a window's texture can be known by pointing the camera at it.
-struct CentreHit {
-    float depth, size[3];
-    uint32_t verts;
-    char tex[2][160];
-    bool blended, character;
+// each frame): every four seconds, one frame's draws are decoded afresh (not from the display-list
+// cache) and each triangle of the main camera's view under the middle of the screen is found; the
+// draws they belong to are logged, nearest first, with the material's name (each model's display
+// lists are named by the game as stages load: GXPC_NameList) and both textures (as the texture pack
+// names them). Point the camera, or the first person crosshair, at a lamp or a window.
+bool g_pickArmed;
+static float s_pickProj[7];
+static uint32_t s_pickFrame;
+struct PickHit {
+    float depth;
+    const void* list;
+    char tex[2][96];
 };
-static bool s_centreOn, s_centreArmed;
-static float s_centreProj[7];
-static std::vector<CentreHit> s_centreHits;
-static uint32_t s_centreFrame;
+static std::vector<PickHit> s_pickHits;
+static std::unordered_map<const void*, std::string> s_listNames;
+extern "C" void GXPC_NameList(const void* list, const char* name) {
+    if (list && name) s_listNames[list] = name;
+}
+extern "C" void GXPC_NameClear(void) { s_listNames.clear(); }
 extern "C" void GXPC_TextureLog(int on) {
-    // last frame's look, told
-    if (s_centreArmed) {
-        s_centreArmed = false;
-        std::sort(s_centreHits.begin(), s_centreHits.end(), [](const CentreHit& a, const CentreHit& b) { return a.depth < b.depth; });
-        logmsg("texture log: %zu draws over the middle of the screen, nearest first", s_centreHits.size());
-        for (size_t i = 0; i < s_centreHits.size() && i < 12; i++) {
-            const CentreHit& h = s_centreHits[i];
-            logmsg("texture log:   %zu. %.0f away, %.0f x %.0f x %.0f, %u vertices, %s%s, texture 0 %s, texture 1 %s", i + 1,
-                   h.depth, h.size[0], h.size[1], h.size[2], h.verts, h.blended ? "blended" : "solid",
-                   h.character ? ", a character's" : "", h.tex[0], h.tex[1]);
+    if (g_pickArmed) {  // last frame's, told
+        g_pickArmed = false;
+        std::sort(s_pickHits.begin(), s_pickHits.end(), [](const PickHit& a, const PickHit& b) { return a.depth < b.depth; });
+        logmsg("texture log: %zu draws under the middle of the screen, nearest first", s_pickHits.size());
+        for (size_t i = 0; i < s_pickHits.size() && i < 10; i++) {
+            const PickHit& h = s_pickHits[i];
+            auto it = s_listNames.find(h.list);
+            logmsg("texture log:   %zu. %.0f away: %s, texture 0 %s, texture 1 %s", i + 1, h.depth,
+                   it != s_listNames.end() ? it->second.c_str() : "(no name: not a model's)", h.tex[0], h.tex[1]);
         }
     }
-    s_centreOn = on != 0;
     const uint32_t frame = GXPC_FrameCount();
-    if (!s_centreOn || frame - s_centreFrame < 240) return;
-    s_centreFrame = frame;
-    s_centreArmed = true;
-    s_centreHits.clear();
-    memcpy(s_centreProj, g.projection, sizeof s_centreProj);
+    if (!on || frame - s_pickFrame < 240) return;
+    s_pickFrame = frame;
+    g_pickArmed = true;
+    s_pickHits.clear();
+    memcpy(s_pickProj, g.projection, sizeof s_pickProj);
 }
-static void centreBatch() {
-    if (!s_centreArmed || s_centreHits.size() >= 64 || (g.xfReg[XFR_PROJ + 6] & 1) || g.userClipOn) return;
-    if (memcmp(g.projection, s_centreProj, sizeof s_centreProj) != 0) return;  // the main camera's view only
-    const VtxFmtLayout& l = vtxFmtLayout(s_bfmt);
+// A primitive just decoded (gx_fifo.cpp): its triangles under the middle of the screen
+void pickTriangles(uint8_t op, const uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride, const void* list) {
+    if ((g.xfReg[XFR_PROJ + 6] & 1) || g.userClipOn || primClass(op) != PRIM_TRIS) return;
+    if (memcmp(g.projection, s_pickProj, sizeof s_pickProj) != 0) return;  // the main camera's view only
+    const VtxFmtLayout& l = vtxFmtLayout(fmt);
     const uint32_t defIdx = g.xfReg[XFR_MATIDX_A] & 63;
     const float p0 = g.projection[1], p1 = g.projection[2], p2 = g.projection[3], p3 = g.projection[4];
-    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
-    float nlo[2] = {1e30f, 1e30f}, nhi[2] = {-1e30f, -1e30f};
-    float nearest = 1e30f;
-    bool behind = false;
-    uint32_t n = 0;
-    auto take = [&](const uint8_t* vx) {
-        float pos[3];
+    // each corner on the screen (-1 to 1) and its depth
+    static std::vector<float> scr;
+    scr.resize(size_t(count) * 3);
+    for (uint32_t v = 0; v < count; v++) {
+        const uint8_t* vx = out + size_t(v) * stride;
+        float pos[3], m[12];
         memcpy(pos, vx, 12);
-        const uint32_t idx = (s_bfmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx;
-        float m[12];
-        memcpy(m, &g.xfMem[idx * 4], sizeof m);
+        memcpy(m, &g.xfMem[((fmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx) * 4], sizeof m);
         float c[3];
-        for (int r = 0; r < 3; r++) {
-            c[r] = m[r * 4] * pos[0] + m[r * 4 + 1] * pos[1] + m[r * 4 + 2] * pos[2] + m[r * 4 + 3];
-            lo[r] = std::min(lo[r], c[r]);
-            hi[r] = std::max(hi[r], c[r]);
+        for (int r = 0; r < 3; r++) c[r] = m[r * 4] * pos[0] + m[r * 4 + 1] * pos[1] + m[r * 4 + 2] * pos[2] + m[r * 4 + 3];
+        float* o = &scr[size_t(v) * 3];
+        if (c[2] > -1.0f) {
+            o[2] = -1.0f;  // behind the camera
+            continue;
         }
-        n++;
-        if (c[2] > -1.0f) {  // behind the camera: the rest of it may still be in front (a room's)
-            behind = true;
+        o[0] = p0 * c[0] / -c[2] - p1;
+        o[1] = p2 * c[1] / -c[2] - p3;
+        o[2] = -c[2];
+    }
+    float best = 1e30f;
+    auto tri = [&](uint32_t a, uint32_t b, uint32_t c) {
+        const float *A = &scr[a * 3], *B = &scr[b * 3], *C = &scr[c * 3];
+        if (A[2] < 0.0f || B[2] < 0.0f || C[2] < 0.0f) return;
+        const float d = (B[1] - C[1]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[1] - C[1]);
+        if (std::fabs(d) < 1e-12f) return;
+        const float wa = ((B[1] - C[1]) * (0.0f - C[0]) + (C[0] - B[0]) * (0.0f - C[1])) / d;
+        const float wb = ((C[1] - A[1]) * (0.0f - C[0]) + (A[0] - C[0]) * (0.0f - C[1])) / d;
+        const float wc = 1.0f - wa - wb;
+        if (wa < 0.0f || wb < 0.0f || wc < 0.0f) return;
+        best = std::min(best, wa * A[2] + wb * B[2] + wc * C[2]);
+    };
+    switch (op & 0xF8) {
+    case 0x80:
+    case 0x88:
+        for (uint32_t i = 0; i + 3 < count; i += 4) tri(i, i + 1, i + 2), tri(i, i + 2, i + 3);
+        break;
+    case 0x90:
+        for (uint32_t i = 0; i + 2 < count; i += 3) tri(i, i + 1, i + 2);
+        break;
+    case 0x98:
+        for (uint32_t i = 2; i < count; i++) tri(i - 2, i - 1, i);
+        break;
+    case 0xA0:
+        for (uint32_t i = 2; i < count; i++) tri(0, i - 1, i);
+        break;
+    }
+    if (best > 1e29f) return;
+    for (PickHit& h : s_pickHits)
+        if (h.list == list) {
+            h.depth = std::min(h.depth, best);
             return;
         }
-        // where it lands on the screen (-1 to 1)
-        const float x = p0 * c[0] / -c[2] - p1, y = p2 * c[1] / -c[2] - p3;
-        nlo[0] = std::min(nlo[0], x), nhi[0] = std::max(nhi[0], x);
-        nlo[1] = std::min(nlo[1], y), nhi[1] = std::max(nhi[1], y);
-        nearest = std::min(nearest, -c[2]);
-    };
-    for (uint32_t i = 0; i < s_bcount; i++) take(s_bdata.data + size_t(i) * s_bstride);
-    for (const BatchSeg& sg : s_segs)
-        if (sg.arena)
-            for (uint32_t i = 0; i < sg.nverts; i++) take(sg.verts + size_t(i) * s_bstride);
-    (void)behind;
-    if (!n || nearest > 1e29f) return;
-    // a card over the whole view (a haze, a tint: 4 corners, flat, very wide): not what is looked at
-    if (n == 4 && std::min(hi[0] - lo[0], std::min(hi[1] - lo[1], hi[2] - lo[2])) < 1.0f &&
-        std::max(hi[0] - lo[0], hi[1] - lo[1]) > 1500.0f)
-        return;
-    if (nlo[0] > 0.0f || nhi[0] < 0.0f || nlo[1] > 0.0f || nhi[1] < 0.0f) return;  // not over the middle
-    CentreHit h;
-    h.depth = nearest;
-    for (int k = 0; k < 3; k++) h.size[k] = hi[k] - lo[k];
-    h.verts = n;
-    h.blended = (g.bp[BP_CMODE0] & 1) != 0;
-    h.character = g.charDraw || g.shadowTag;
+    if (s_pickHits.size() >= 64) return;
+    PickHit h;
+    h.depth = best;
+    h.list = list;
     for (int map = 0; map < 2; map++) {
         snprintf(h.tex[map], sizeof h.tex[map], "none");
         const uint8_t* ptr = g.texImage[map];
         if (!ptr) continue;
         const uint32_t img0 = g.bp[bpTexReg(BP_TX_IMAGE0, map)], mode0 = g.bp[bpTexReg(BP_TX_MODE0, map)];
-        const uint32_t w = (img0 & 0x3FF) + 1, ht = ((img0 >> 10) & 0x3FF) + 1, fmt = (img0 >> 20) & 15;
+        const uint32_t w = (img0 & 0x3FF) + 1, ht = ((img0 >> 10) & 0x3FF) + 1, tfmt = (img0 >> 20) & 15;
         int cw, ch;
         if (efbCopyLookup(ptr, &cw, &ch)) {
             snprintf(h.tex[map], sizeof h.tex[map], "a copy of the picture");
             continue;
         }
-        const std::string name = hiresName(ptr, fmt, w, ht, ((mode0 >> 5) & 3) != 0, nullptr, 0, false);
-        snprintf(h.tex[map], sizeof h.tex[map], "%s", name.c_str());
+        snprintf(h.tex[map], sizeof h.tex[map], "%s", hiresName(ptr, tfmt, w, ht, ((mode0 >> 5) & 3) != 0, nullptr, 0, false).c_str());
     }
-    s_centreHits.push_back(h);
+    s_pickHits.push_back(h);
 }
 
 // A centring offset (game x) moved to the nearest whole pixel of the scaled EFB. At a fractional
@@ -4626,7 +4641,6 @@ void flushBatch() {
         }
     }
     if (s_probeArmed && s_bclass == PRIM_TRIS) probeBatch();  // the grab log
-    if (s_centreArmed && s_bclass == PRIM_TRIS && !g.shellOn) centreBatch();  // the Texture Log
     // 3D Ladders by texture: a ladder's draw again behind itself (not its reflection, not a layer's)
     if (g.ladders3D && !g.shellOn && !g.viewHidden && s_bclass == PRIM_TRIS && !g.userClipOn
         && !(g.xfReg[XFR_PROJ + 6] & 1) && ladderTexture())
