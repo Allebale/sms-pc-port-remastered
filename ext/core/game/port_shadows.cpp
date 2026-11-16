@@ -32,6 +32,8 @@
 #include <Player/Yoshi.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Player/ModelWaterManager.hpp>
+#include <MoveBG/MapObjBase.hpp>
+#include <MoveBG/MapObjManager.hpp>
 
 #include <math.h>
 #include <stdio.h>
@@ -299,11 +301,142 @@ static void waterShadows(float (*view)[4], const f32 sun[3])
 	GXPC_ShadowCastOnly(0);
 }
 
+// The Texture Log's look (Graphics page): every four seconds, the materials the camera looks at (a
+// line from the camera straight ahead, through the middle of the screen) are logged by name, nearest
+// first: the level's own (the map's models) and every live object's and character's (their name too),
+// each by its shape's box in the world. A lamp's or a window's material is named so that it can be
+// told apart from the rest (many share a plain white texture, but not a name).
+namespace {
+struct LookHit {
+	f32 t, size;
+	const char* material;
+	const char* owner;
+};
+const int kMostLookHits = 48;
+LookHit s_lookHits[kMostLookHits];
+int s_lookCount;
+
+void lookModel(J3DModel* model, const char* owner, const f32 cam[3], const f32 dir[3])
+{
+	J3DModelData* data = model ? model->getModelData() : 0;
+	JUTNameTab* names  = data ? data->getMaterialName() : 0;
+	if (!data)
+		return;
+	MtxPtr m = model->getBaseTRMtx();
+	for (u16 i = 0; i < data->getMaterialNum(); i++) {
+		J3DMaterial* mat = data->getMaterialNodePointer(i);
+		J3DShape* shape  = mat ? mat->getShape() : 0;
+		if (!shape)
+			continue;
+		// its box (J3DShape's own fields, private there: read through the same layout)
+		struct ShapeHead {
+			void* material;
+			u16 index, groups;
+			u32 flags;
+			f32 radius;
+			Vec lo, hi;
+		};
+		const ShapeHead* head = reinterpret_cast<const ShapeHead*>(shape);
+		const Vec& lo = head->lo;
+		const Vec& hi = head->hi;
+		if (!(hi.x >= lo.x && hi.y >= lo.y && hi.z >= lo.z))
+			continue;
+		// its box in the world (the model's place, its corners turned)
+		f32 wlo[3] = {1e30f, 1e30f, 1e30f}, whi[3] = {-1e30f, -1e30f, -1e30f};
+		for (int c = 0; c < 8; c++) {
+			const f32 p[3] = {(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
+			for (int r = 0; r < 3; r++) {
+				const f32 w = m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3];
+				wlo[r] = w < wlo[r] ? w : wlo[r];
+				whi[r] = w > whi[r] ? w : whi[r];
+			}
+		}
+		// the line from the camera through it (slabs)
+		f32 t0 = 0.0f, t1 = 1e30f;
+		bool hit = true;
+		for (int r = 0; r < 3 && hit; r++) {
+			if (fabsf(dir[r]) < 1e-6f) {
+				hit = cam[r] >= wlo[r] && cam[r] <= whi[r];
+				continue;
+			}
+			f32 a = (wlo[r] - cam[r]) / dir[r], b = (whi[r] - cam[r]) / dir[r];
+			if (a > b) {
+				const f32 k = a;
+				a = b, b = k;
+			}
+			t0 = a > t0 ? a : t0;
+			t1 = b < t1 ? b : t1;
+			hit = t0 <= t1;
+		}
+		if (!hit || t1 > 20000.0f)
+			continue;
+		f32 size = 0.0f;
+		for (int r = 0; r < 3; r++)
+			size = whi[r] - wlo[r] > size ? whi[r] - wlo[r] : size;
+		if (s_lookCount == kMostLookHits)
+			return;
+		LookHit& h = s_lookHits[s_lookCount++];
+		h.t        = t0;
+		h.size     = size;
+		h.material = names ? names->getName(i) : 0;
+		h.owner    = owner;
+	}
+}
+
+void lookLog(float (*view)[4])
+{
+	static int s_frames;
+	if (++s_frames < 240)
+		return;
+	s_frames = 0;
+	// the camera, and straight ahead (the view's third row, backwards)
+	f32 cam[3], dir[3];
+	for (int r = 0; r < 3; r++)
+		cam[r] = -(view[0][r] * view[0][3] + view[1][r] * view[1][3] + view[2][r] * view[2][3]);
+	for (int r = 0; r < 3; r++)
+		dir[r] = -view[2][r];
+	s_lookCount = 0;
+	if (gpMap && gpMap->getModelManager()) {
+		TMapModelManager* models = gpMap->getModelManager();
+		for (int i = 0; i < models->getJointModelNum(); i++)
+			if (TJointModel* joint = models->getJointModel(i))
+				lookModel(joint->getModel(), "the level", cam, dir);
+	}
+	if (gpConductor)
+		for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+				TLiveActor* actor = (*it)->getObj(i);
+				if (actor && actor->getMActor())
+					lookModel(actor->getMActor()->getModel(), actor->getName(), cam, dir);
+			}
+	if (gpMapObjManager)
+		for (int i = 0; i < gpMapObjManager->getObjNum(); i++) {
+			TLiveActor* actor = gpMapObjManager->getObj(i);
+			if (actor && actor->getMActor())
+				lookModel(actor->getMActor()->getModel(), actor->getName(), cam, dir);
+		}
+	// nearest first (a few)
+	for (int i = 1; i < s_lookCount; i++)
+		for (int j = i; j > 0 && s_lookHits[j].t < s_lookHits[j - 1].t; j--) {
+			const LookHit k   = s_lookHits[j];
+			s_lookHits[j]     = s_lookHits[j - 1];
+			s_lookHits[j - 1] = k;
+		}
+	fprintf(stderr, "[look] %d materials straight ahead of the camera (at %.0f %.0f %.0f), nearest first\n", s_lookCount,
+	        cam[0], cam[1], cam[2]);
+	for (int i = 0; i < s_lookCount && i < 12; i++)
+		fprintf(stderr, "[look]   %d. %.0f away, %.0f across: %s (%s)\n", i + 1, s_lookHits[i].t, s_lookHits[i].size,
+		        s_lookHits[i].material ? s_lookHits[i].material : "?", s_lookHits[i].owner ? s_lookHits[i].owner : "?");
+}
+} // namespace
+
 void port_shadows_main_view(void* camera, float (*view)[4])
 {
 	if (camera != (void*)gpCamera || !view)
 		return;
 	GXPC_TextureLog(port_texture_log());  // the Texture Log: what is at the middle of the screen
+	if (port_texture_log())
+		lookLog(view);  // ...and the materials there, by name
 	port_lights_view(view);  // Fire Lights, seen from the main camera
 	port_wet_characters_view(view);  // Wet Characters: the wet ones, in this view
 	GXPC_Ladders3D(port_ladders_3d());  // 3D Ladders (port_ladders.cpp)
