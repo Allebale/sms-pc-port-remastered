@@ -130,7 +130,6 @@ void registerCharacters()
 void stageSetup()
 {
 	registerCharacters();
-	GXPC_InteriorClear();  // Interior Lights: the new stage's own
 	s_bakedCount  = 0;
 	s_bakedHidden = false;
 	if (!gpMap || !gpMap->getModelManager())
@@ -304,9 +303,6 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 {
 	if (camera != (void*)gpCamera || !view)
 		return;
-	// Interior Lights: the rooms' windows, lamps and screens light them (guessed only indoors: no sun
-	// in the sky, as Real Shadows tells it)
-	GXPC_InteriorView(port_interior_lights(), !(gpSunModel && gpSunMgr && gpSunMgr->unk14), view);
 	port_lights_view(view);  // Fire Lights, seen from the main camera
 	port_wet_characters_view(view);  // Wet Characters: the wet ones, in this view
 	GXPC_Ladders3D(port_ladders_3d());  // 3D Ladders (port_ladders.cpp)

@@ -163,7 +163,6 @@ struct State {
     // 16 vec4s, then (count, ...)); lit while what is drawn is that view's (its projection).
     float plightWorld[64];
     int plightCount;
-    int plightShown;  // in the shader: the game's and Interior Lights' (gx_render.cpp GXPC_LightsView)
     float plight[68];
     float plightProj[7];
     bool plightArmed, plightActive;
@@ -225,9 +224,6 @@ enum PrimClass { PRIM_TRIS, PRIM_LINES, PRIM_POINTS };
 void rendererInit(float efbScale);
 float efbScale();  // the internal resolution over the GameCube's
 void flushBatch();
-// Interior Lights' shadows (gx_render.cpp): wanted this frame; drawn as the main camera's scene ends
-bool interiorShadowsWanted();
-void interiorShadows();
 
 // Changes made while the game runs, by the settings menu (gx_settings.cpp), on the GL thread.
 // The picture's post-processing: the scaler is 0 bilinear/area, 1 nearest, 2 sharp, 3 FSR 1, 4 NIS.

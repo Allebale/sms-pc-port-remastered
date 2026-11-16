@@ -106,7 +106,6 @@ int s_shadowsFarHalf = 0;   // Far Shadows Update Rate: 0 every frame, 1 every o
 int s_shadowsFarLevel = 0;  // Far Shadows From: 0 everything, 1 the level only
 int s_shadowsSoft = 0;      // Soft Shadow Edges: into kShadowSofts (0 off: sharp)
 int s_ladders3D = 0;        // 3D Ladders: flat ladders and climbable fences get depth
-int s_interiorLights = 0;   // Interior Lights: 0 off, 1 lights, 2 lights and shadows
 int s_smoothChars = 0;      // Smooth Characters: 0 off, 1 people and enemies, 2 and Mario
 int s_shadowsOriginal = 0;  // Keep the Original Shadow Direction
 int s_level = 0;          // Reflect the Level: 0 off (as the game has it), 1 the stage itself too
@@ -334,8 +333,6 @@ void load() {
             s_shadowsFarLevel = value != 0;
         } else if (sscanf(line, " ladders3d = %d", &value) == 1) {
             s_ladders3D = value != 0;
-        } else if (sscanf(line, " interiorlights = %d", &value) == 1) {
-            s_interiorLights = value < 0 || value > 2 ? 0 : value;
         } else if (sscanf(line, " smoothcharacters = %d", &value) == 1) {
             s_smoothChars = value < 0 || value > 2 ? 0 : value;
         } else if (sscanf(line, " shadowsoftedges = %d", &value) == 1) {
@@ -482,8 +479,6 @@ void save() {
     fprintf(f, "shadowsoftedges = %d\n", s_shadowsSoft);
     fprintf(f, "# ladders3d: 1 flat ladders and climbable fences get depth (rails and rungs with sides), 0 flat as before.\n");
     fprintf(f, "ladders3d = %d\n", s_ladders3D);
-    fprintf(f, "# interiorlights: 1 windows, lamps and screens light rooms, 2 and cast shadows, 0 as the game has it.\n");
-    fprintf(f, "interiorlights = %d\n", s_interiorLights);
     fprintf(f, "# smoothcharacters: 1 people and enemies shaded round (no flat faces), 2 and Mario, 0 as the game has it.\n");
     fprintf(f, "smoothcharacters = %d\n", s_smoothChars);
     fprintf(f, "# shadowsize: the shadow maps' size: 0 low (1024, fastest), 1 medium (2048), 2 high (4096).\n");
@@ -937,21 +932,6 @@ int ladders3DSet(int i) {
     port_log("[ladders] 3D Ladders changed: %s\n", i ? "on" : "off");
     return 1;
 }
-const char* const kInteriorNames[] = {"Off", "Lights", "Lights and Shadows"};
-int interiorCount() { return 3; }
-const char* interiorName(int i) { return i >= 0 && i < 3 ? kInteriorNames[i] : ""; }
-int interiorGet() {
-    load();
-    return s_interiorLights;
-}
-int interiorSet(int i) {
-    if (i < 0 || i > 2) return 0;
-    load();
-    s_interiorLights = i;
-    save();
-    port_log("[graphics] Interior Lights changed: %s\n", kInteriorNames[i]);
-    return 1;
-}
 const char* const kSmoothNames[] = {"Off", "Characters", "Characters and Mario"};
 int smoothCount() { return 3; }
 const char* smoothName(int i) { return i >= 0 && i < 3 ? kSmoothNames[i] : ""; }
@@ -1392,7 +1372,6 @@ const EffectValue kEffects[] = {
     {"Soft Shadow Edges", {"Off", "Mild", "Off", "Off"}},
     {"3D Ladders", {"Off", "On", "On", "On"}},
     {"Smooth Characters", {"Off", "Off", "Off", "Off"}},
-    {"Interior Lights", {"Off", "Off", "Off", "Off"}},
     {"3D Grass", {"Off", "By Location", "By Location", "By Location"}},
     {"Grass Distance", {"High", "Very High", "Medium", "Low"}},
     {"Cut Grass Height", {"Normal", "Twice", "Twice", "Normal"}},
@@ -1624,9 +1603,6 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "3D Ladders",
      "Flat ladders and climbable fences get depth, their rails and rungs with sides.", 0, nullptr,
      offOnCount, offOnName, ladders3DGet, ladders3DSet},
-    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "Interior Lights",
-     "Indoors, windows, lamps and screens light the room, with shadows if chosen.", 0, nullptr,
-     interiorCount, interiorName, interiorGet, interiorSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "Smooth Characters",
      "Low-poly people and enemies are shaded round, without flat faces.", 0, nullptr,
      smoothCount, smoothName, smoothGet, smoothSet},
@@ -1879,10 +1855,6 @@ float port_shadows_distance(void) {
 int port_shadows_map_size(void) {
     load();
     return kShadowMaps[s_shadowsMap < 0 || s_shadowsMap > 2 ? 2 : s_shadowsMap];
-}
-int port_interior_lights(void) {
-    load();
-    return s_interiorLights;
 }
 int port_smooth_characters(void) {
     load();
