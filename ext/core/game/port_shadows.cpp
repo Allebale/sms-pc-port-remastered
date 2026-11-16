@@ -303,6 +303,7 @@ void port_shadows_main_view(void* camera, float (*view)[4])
 {
 	if (camera != (void*)gpCamera || !view)
 		return;
+	GXPC_TextureLog(port_texture_log());  // the Texture Log: what is at the middle of the screen
 	port_lights_view(view);  // Fire Lights, seen from the main camera
 	port_wet_characters_view(view);  // Wet Characters: the wet ones, in this view
 	GXPC_Ladders3D(port_ladders_3d());  // 3D Ladders (port_ladders.cpp)

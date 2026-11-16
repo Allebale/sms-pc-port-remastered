@@ -106,6 +106,7 @@ int s_shadowsFarHalf = 0;   // Far Shadows Update Rate: 0 every frame, 1 every o
 int s_shadowsFarLevel = 0;  // Far Shadows From: 0 everything, 1 the level only
 int s_shadowsSoft = 0;      // Soft Shadow Edges: into kShadowSofts (0 off: sharp)
 int s_ladders3D = 0;        // 3D Ladders: flat ladders and climbable fences get depth
+int s_textureLog = 0;       // the Texture Log: 1 the textures at the middle of the screen are logged
 int s_smoothChars = 0;      // Smooth Characters: 0 off, 1 people and enemies, 2 and Mario
 int s_shadowsOriginal = 0;  // Keep the Original Shadow Direction
 int s_level = 0;          // Reflect the Level: 0 off (as the game has it), 1 the stage itself too
@@ -333,6 +334,8 @@ void load() {
             s_shadowsFarLevel = value != 0;
         } else if (sscanf(line, " ladders3d = %d", &value) == 1) {
             s_ladders3D = value != 0;
+        } else if (sscanf(line, " texturelog = %d", &value) == 1) {
+            s_textureLog = value != 0;
         } else if (sscanf(line, " smoothcharacters = %d", &value) == 1) {
             s_smoothChars = value < 0 || value > 2 ? 0 : value;
         } else if (sscanf(line, " shadowsoftedges = %d", &value) == 1) {
@@ -479,6 +482,8 @@ void save() {
     fprintf(f, "shadowsoftedges = %d\n", s_shadowsSoft);
     fprintf(f, "# ladders3d: 1 flat ladders and climbable fences get depth (rails and rungs with sides), 0 flat as before.\n");
     fprintf(f, "ladders3d = %d\n", s_ladders3D);
+    fprintf(f, "# texturelog: 1 every few seconds the textures at the middle of the screen are logged, 0 not.\n");
+    fprintf(f, "texturelog = %d\n", s_textureLog);
     fprintf(f, "# smoothcharacters: 1 people and enemies shaded round (no flat faces), 2 and Mario, 0 as the game has it.\n");
     fprintf(f, "smoothcharacters = %d\n", s_smoothChars);
     fprintf(f, "# shadowsize: the shadow maps' size: 0 low (1024, fastest), 1 medium (2048), 2 high (4096).\n");
@@ -930,6 +935,18 @@ int ladders3DSet(int i) {
     s_ladders3D = i;
     save();
     port_log("[ladders] 3D Ladders changed: %s\n", i ? "on" : "off");
+    return 1;
+}
+int textureLogGet() {
+    load();
+    return s_textureLog;
+}
+int textureLogSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_textureLog = i;
+    save();
+    port_log("[graphics] Texture Log changed: %s\n", i ? "on" : "off");
     return 1;
 }
 const char* const kSmoothNames[] = {"Off", "Characters", "Characters and Mario"};
@@ -1603,6 +1620,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "3D Ladders",
      "Flat ladders and climbable fences get depth, their rails and rungs with sides.", 0, nullptr,
      offOnCount, offOnName, ladders3DGet, ladders3DSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 121, "Texture Log",
+     "Every few seconds the log names the textures at the middle of the screen.", 0, nullptr,
+     offOnCount, offOnName, textureLogGet, textureLogSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 100, "Smooth Characters",
      "Low-poly people and enemies are shaded round, without flat faces.", 0, nullptr,
      smoothCount, smoothName, smoothGet, smoothSet},
@@ -1855,6 +1875,10 @@ float port_shadows_distance(void) {
 int port_shadows_map_size(void) {
     load();
     return kShadowMaps[s_shadowsMap < 0 || s_shadowsMap > 2 ? 2 : s_shadowsMap];
+}
+int port_texture_log(void) {
+    load();
+    return s_textureLog;
 }
 int port_smooth_characters(void) {
     load();

@@ -221,7 +221,9 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   without the game's lights get their corners' colours averaged where alike (`smoothColours`).
 - **Interior lights** (windows, lamps, screens lighting rooms, with shadows): a first try (guessing bright
   textures, point lights with Global Illumination, screen-space shadows) was removed on request (Nov 2026).
-  Start again texture by texture: find each window's and lamp's texture name, then list them.
+  Start again texture by texture: find each window's and lamp's texture name, then list them. The **Texture
+  Log** (Graphics page, Off: `GXPC_TextureLog`, `centreBatch` in `gx_render.cpp`) logs, every 240 frames, the
+  main camera's draws over the middle of the screen, nearest first, with both textures' pack names and sizes.
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 

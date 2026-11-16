@@ -2458,6 +2458,104 @@ static void probeBatch() {
     s_probeTold++;
 }
 
+// The Texture Log (Graphics page; GXPC_TextureLog from port_shadows.cpp, with the main camera's view
+// each frame): every four seconds, the main camera's draws over the middle of the screen are logged,
+// nearest first, with their textures (as the texture pack names them) and their size, so that a
+// lamp's or a window's texture can be known by pointing the camera at it.
+struct CentreHit {
+    float depth, size[3];
+    uint32_t verts;
+    char tex[2][160];
+    bool blended, character;
+};
+static bool s_centreOn, s_centreArmed;
+static float s_centreProj[7];
+static std::vector<CentreHit> s_centreHits;
+static uint32_t s_centreFrame;
+extern "C" void GXPC_TextureLog(int on) {
+    // last frame's look, told
+    if (s_centreArmed) {
+        s_centreArmed = false;
+        std::sort(s_centreHits.begin(), s_centreHits.end(), [](const CentreHit& a, const CentreHit& b) { return a.depth < b.depth; });
+        logmsg("texture log: %zu draws over the middle of the screen, nearest first", s_centreHits.size());
+        for (size_t i = 0; i < s_centreHits.size() && i < 8; i++) {
+            const CentreHit& h = s_centreHits[i];
+            logmsg("texture log:   %zu. %.0f away, %.0f x %.0f x %.0f, %u vertices, %s%s, texture 0 %s, texture 1 %s", i + 1,
+                   h.depth, h.size[0], h.size[1], h.size[2], h.verts, h.blended ? "blended" : "solid",
+                   h.character ? ", a character's" : "", h.tex[0], h.tex[1]);
+        }
+    }
+    s_centreOn = on != 0;
+    const uint32_t frame = GXPC_FrameCount();
+    if (!s_centreOn || frame - s_centreFrame < 240) return;
+    s_centreFrame = frame;
+    s_centreArmed = true;
+    s_centreHits.clear();
+    memcpy(s_centreProj, g.projection, sizeof s_centreProj);
+}
+static void centreBatch() {
+    if (!s_centreArmed || s_centreHits.size() >= 64 || (g.xfReg[XFR_PROJ + 6] & 1) || g.userClipOn) return;
+    if (memcmp(g.projection, s_centreProj, sizeof s_centreProj) != 0) return;  // the main camera's view only
+    const VtxFmtLayout& l = vtxFmtLayout(s_bfmt);
+    const uint32_t defIdx = g.xfReg[XFR_MATIDX_A] & 63;
+    const float p0 = g.projection[1], p1 = g.projection[2], p2 = g.projection[3], p3 = g.projection[4];
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    float nlo[2] = {1e30f, 1e30f}, nhi[2] = {-1e30f, -1e30f};
+    float nearest = 1e30f;
+    bool behind = false;
+    uint32_t n = 0;
+    auto take = [&](const uint8_t* vx) {
+        float pos[3];
+        memcpy(pos, vx, 12);
+        const uint32_t idx = (s_bfmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx;
+        float m[12];
+        memcpy(m, &g.xfMem[idx * 4], sizeof m);
+        float c[3];
+        for (int r = 0; r < 3; r++) {
+            c[r] = m[r * 4] * pos[0] + m[r * 4 + 1] * pos[1] + m[r * 4 + 2] * pos[2] + m[r * 4 + 3];
+            lo[r] = std::min(lo[r], c[r]);
+            hi[r] = std::max(hi[r], c[r]);
+        }
+        n++;
+        if (c[2] > -1.0f) {
+            behind = true;
+            return;
+        }
+        // where it lands on the screen (-1 to 1)
+        const float x = p0 * c[0] / -c[2] - p1, y = p2 * c[1] / -c[2] - p3;
+        nlo[0] = std::min(nlo[0], x), nhi[0] = std::max(nhi[0], x);
+        nlo[1] = std::min(nlo[1], y), nhi[1] = std::max(nhi[1], y);
+        nearest = std::min(nearest, -c[2]);
+    };
+    for (uint32_t i = 0; i < s_bcount; i++) take(s_bdata.data + size_t(i) * s_bstride);
+    for (const BatchSeg& sg : s_segs)
+        if (sg.arena)
+            for (uint32_t i = 0; i < sg.nverts; i++) take(sg.verts + size_t(i) * s_bstride);
+    if (!n || behind || nearest > 1e29f) return;
+    if (nlo[0] > 0.0f || nhi[0] < 0.0f || nlo[1] > 0.0f || nhi[1] < 0.0f) return;  // not over the middle
+    CentreHit h;
+    h.depth = nearest;
+    for (int k = 0; k < 3; k++) h.size[k] = hi[k] - lo[k];
+    h.verts = n;
+    h.blended = (g.bp[BP_CMODE0] & 1) != 0;
+    h.character = g.charDraw || g.shadowTag;
+    for (int map = 0; map < 2; map++) {
+        snprintf(h.tex[map], sizeof h.tex[map], "none");
+        const uint8_t* ptr = g.texImage[map];
+        if (!ptr) continue;
+        const uint32_t img0 = g.bp[bpTexReg(BP_TX_IMAGE0, map)], mode0 = g.bp[bpTexReg(BP_TX_MODE0, map)];
+        const uint32_t w = (img0 & 0x3FF) + 1, ht = ((img0 >> 10) & 0x3FF) + 1, fmt = (img0 >> 20) & 15;
+        int cw, ch;
+        if (efbCopyLookup(ptr, &cw, &ch)) {
+            snprintf(h.tex[map], sizeof h.tex[map], "a copy of the picture");
+            continue;
+        }
+        const std::string name = hiresName(ptr, fmt, w, ht, ((mode0 >> 5) & 3) != 0, nullptr, 0, false);
+        snprintf(h.tex[map], sizeof h.tex[map], "%s", name.c_str());
+    }
+    s_centreHits.push_back(h);
+}
+
 // A centring offset (game x) moved to the nearest whole pixel of the scaled EFB. At a fractional
 // internal resolution s_ox alone can put a centred draw's edges on pixel centres (107 x 1.5 =
 // 160.5 at 16:9 with FSR 1 Performance at 1440p), where which pixels it covers and which texel
@@ -4523,6 +4621,7 @@ void flushBatch() {
         }
     }
     if (s_probeArmed && s_bclass == PRIM_TRIS) probeBatch();  // the grab log
+    if (s_centreArmed && s_bclass == PRIM_TRIS && !g.shellOn) centreBatch();  // the Texture Log
     // 3D Ladders by texture: a ladder's draw again behind itself (not its reflection, not a layer's)
     if (g.ladders3D && !g.shellOn && !g.viewHidden && s_bclass == PRIM_TRIS && !g.userClipOn
         && !(g.xfReg[XFR_PROJ + 6] & 1) && ladderTexture())
