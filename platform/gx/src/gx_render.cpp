@@ -2478,7 +2478,7 @@ extern "C" void GXPC_TextureLog(int on) {
         s_centreArmed = false;
         std::sort(s_centreHits.begin(), s_centreHits.end(), [](const CentreHit& a, const CentreHit& b) { return a.depth < b.depth; });
         logmsg("texture log: %zu draws over the middle of the screen, nearest first", s_centreHits.size());
-        for (size_t i = 0; i < s_centreHits.size() && i < 8; i++) {
+        for (size_t i = 0; i < s_centreHits.size() && i < 12; i++) {
             const CentreHit& h = s_centreHits[i];
             logmsg("texture log:   %zu. %.0f away, %.0f x %.0f x %.0f, %u vertices, %s%s, texture 0 %s, texture 1 %s", i + 1,
                    h.depth, h.size[0], h.size[1], h.size[2], h.verts, h.blended ? "blended" : "solid",
@@ -2517,7 +2517,7 @@ static void centreBatch() {
             hi[r] = std::max(hi[r], c[r]);
         }
         n++;
-        if (c[2] > -1.0f) {
+        if (c[2] > -1.0f) {  // behind the camera: the rest of it may still be in front (a room's)
             behind = true;
             return;
         }
@@ -2531,7 +2531,12 @@ static void centreBatch() {
     for (const BatchSeg& sg : s_segs)
         if (sg.arena)
             for (uint32_t i = 0; i < sg.nverts; i++) take(sg.verts + size_t(i) * s_bstride);
-    if (!n || behind || nearest > 1e29f) return;
+    (void)behind;
+    if (!n || nearest > 1e29f) return;
+    // a card over the whole view (a haze, a tint: 4 corners, flat, very wide): not what is looked at
+    if (n == 4 && std::min(hi[0] - lo[0], std::min(hi[1] - lo[1], hi[2] - lo[2])) < 1.0f &&
+        std::max(hi[0] - lo[0], hi[1] - lo[1]) > 1500.0f)
+        return;
     if (nlo[0] > 0.0f || nhi[0] < 0.0f || nlo[1] > 0.0f || nhi[1] < 0.0f) return;  // not over the middle
     CentreHit h;
     h.depth = nearest;
