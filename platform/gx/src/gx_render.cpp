@@ -2024,6 +2024,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
         }
     }
     UNI(uPlight, plight, plight, glUniform4fv(sp->uPlight, 17, plight));
+    UNI(uPshadow, pshadow, g.pshadow, glUniform4fv(sp->uPshadow, 10, g.pshadow));
     float sway[44];
     memcpy(sway, g.sway, sizeof sway);
     sway[3] = g.swayDraw && g.swayActive && !s_castReplay ? 1.0f : 0.0f;
@@ -2508,7 +2509,7 @@ static void roomName(const void* list, const char* name) {
 }
 // Each frame, from the main camera as it sets its projection: the setting and its view
 extern "C" void GXPC_RoomLightsView(int mode, const float view[3][4]) {
-    s_roomMode = mode != 0;
+    s_roomMode = mode;
     s_roomViewOk = s_roomMode && view;
     if (!s_roomViewOk) return;
     for (int r = 0; r < 3; r++) {
@@ -2589,7 +2590,15 @@ void roomMeasureEnd() {
 }
 // The rooms' lights nearest the camera, after the game's (Global Illumination's) in `world` (8 floats
 // each, as GXPC_SetLights); returns the count
+// The room lights roomAdd gave last, nearest first (two at most), for their shadows: where, how far
+// they reach, and their near plane (a lamp's: past its own shade, which would hide all else)
+struct RoomAdded {
+    float p[3], fr, n;
+};
+static RoomAdded s_roomAdded[2];
+static int s_roomAddedN;
 static int roomAdd(float* world, int count) {
+    s_roomAddedN = 0;
     if (!s_roomMode || !s_roomViewOk || s_roomLights.empty() || count >= 8) return count;
     const float cam[3] = {s_roomInv[3], s_roomInv[7], s_roomInv[11]};
     static const float kRadius[2] = {700.0f, 1000.0f};
@@ -2611,6 +2620,13 @@ static int roomAdd(float* world, int count) {
         memcpy(o, l.p, sizeof l.p);
         o[3] = kRadius[l.kind];
         memcpy(o + 4, kColour[l.kind], 4 * sizeof(float));
+        if (s_roomAddedN < 2) {
+            RoomAdded& a = s_roomAdded[s_roomAddedN++];
+            memcpy(a.p, l.p, sizeof a.p);
+            a.fr = kRadius[l.kind];
+            const float n = l.size * 0.75f;
+            a.n = l.kind == kRoomLamp ? (n < 10.0f ? 10.0f : n > 200.0f ? 200.0f : n) : 20.0f;
+        }
         count++;
     }
     return count;
@@ -4040,6 +4056,7 @@ static void swayView(const float view[3][4]) {
     g.swayArmed = g.swayActive = true;
 }
 
+static void roomShadowFrame(const float view[3][4], const float* world, int count);
 extern "C" void GXPC_LightsView(const float view[3][4]) {
     flushBatch();
     swayView(view);  // Moving Vegetation's wind, seen from the same camera
@@ -4048,6 +4065,7 @@ extern "C" void GXPC_LightsView(const float view[3][4]) {
     if (g.plightCount) memcpy(world, g.plightWorld, size_t(g.plightCount) * 8 * sizeof(float));
     const int count = roomAdd(world, g.plightCount);
     g.plightShown = count;
+    roomShadowFrame(view, world, count);  // Interior Lights' shadows
     if (!view || !count) {
         g.plightArmed = g.plightActive = false;
         return;
@@ -4403,6 +4421,167 @@ static void shadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* s
     }
     glDisable(GL_POLYGON_OFFSET_FILL);
     s_shadowFilled[s_shadowWrite] = true;
+    glcUseProgram(sp->prog);
+    applyGlState();
+}
+
+// ------------------------------------------------------------------ Interior Lights' shadows
+// Interior Lights, Lights and Shadows: the two room lights nearest the camera (roomAdd's first two)
+// each have six depth maps, one for each way from the light (a cube's faces), side by side in one
+// texture (three across, two rows a light). What the main camera draws (writing depth, not a glow)
+// is drawn into all of them at once (flushBatch, roomShadowCast: each face an instance, kept to its
+// square), and the main camera's view reads last frame's (gx_shader.cpp pshadowLit): a room light
+// lights only what nothing stands in front of. Two textures, one drawn while the other is read.
+static const int kRoomShadowTile = 512;
+static GLuint s_rsTex[2], s_rsFbo[2];
+static int s_rsWrite;
+static uint32_t s_rsFrame = ~0u;
+static RoomAdded s_rsLights[2][2];  // [texture]: the lights drawn into it
+static int s_rsCount[2];
+
+static void roomShadowMake() {
+    if (s_rsFbo[0]) return;
+    glGenTextures(2, s_rsTex);
+    glGenFramebuffers(2, s_rsFbo);
+    glActiveTexture(GL_TEXTURE0 + kRoomShadowUnit);
+    for (int i = 0; i < 2; i++) {
+        glBindTexture(GL_TEXTURE_2D, s_rsTex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 3 * kRoomShadowTile, 4 * kRoomShadowTile, 0,
+                     GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_rsFbo[i]);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, s_rsTex[i], 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (st != GL_FRAMEBUFFER_COMPLETE) logmsg("interior lights: the shadow texture's framebuffer is not complete (0x%x)", st);
+    }
+    s_rsCount[0] = s_rsCount[1] = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    g_glc.fbo = s_efbFbo;
+    g_glc.activeUnit = -1;
+    logmsg("interior lights: two %dx%d shadow textures made", 3 * kRoomShadowTile, 4 * kRoomShadowTile);
+}
+
+// From GXPC_LightsView, with the main camera's view and the lights it gives the shader (world: 8
+// floats each, `count` of them): a new frame's texture cleared for this frame's nearest room lights,
+// and last frame's found among the lights (by where they are) to be read
+static void roomShadowFrame(const float view[3][4], const float* world, int count) {
+    float* u = g.pshadow;
+    if (s_roomMode < 2 || !view) {
+        g.pshadowCast = false;
+        u[12] = u[13] = 0.0f;
+        return;
+    }
+    roomShadowMake();
+    const uint32_t frame = GXPC_FrameCount();
+    if (frame != s_rsFrame) {
+        s_rsFrame = frame;
+        s_rsWrite ^= 1;
+        s_rsCount[s_rsWrite] = s_roomAddedN;
+        memcpy(s_rsLights[s_rsWrite], s_roomAdded, sizeof s_roomAdded);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_rsFbo[s_rsWrite]);
+        g_glc.fbo = s_rsFbo[s_rsWrite];
+        glcCap(GL_SCISSOR_TEST, g_glc.scissor, false);
+        if (g_glc.depthMask != GL_TRUE) {
+            g_glc.depthMask = GL_TRUE;
+            glDepthMask(GL_TRUE);
+        }
+        glClearDepth(1.0);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glActiveTexture(GL_TEXTURE0 + kRoomShadowUnit);
+        glBindTexture(GL_TEXTURE_2D, s_rsTex[s_rsWrite ^ 1]);
+        g_glc.activeUnit = -1;
+        glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+        g_glc.fbo = s_efbFbo;
+    }
+    memset(u, 0, sizeof g.pshadow);
+    for (int r = 0; r < 3; r++) u[r * 4] = view[0][r], u[r * 4 + 1] = view[1][r], u[r * 4 + 2] = view[2][r];
+    const int read = s_rsWrite ^ 1;
+    for (int li = 0; li < 2; li++) {
+        const RoomAdded* rd = li < s_rsCount[read] ? &s_rsLights[read][li] : nullptr;
+        const RoomAdded* wr = li < s_rsCount[s_rsWrite] ? &s_rsLights[s_rsWrite][li] : nullptr;
+        if (rd)  // its slot among the shader's lights, plus one (0: not among them)
+            for (int i = 0; i < count; i++)
+                if (memcmp(world + i * 8, rd->p, sizeof rd->p) == 0) {
+                    u[12 + li] = float(i + 1);
+                    break;
+                }
+        if (rd && u[12 + li] > 0.0f) {
+            for (int r = 0; r < 3; r++)
+                u[16 + li * 4 + r] = view[r][0] * rd->p[0] + view[r][1] * rd->p[1] + view[r][2] * rd->p[2] + view[r][3];
+            u[16 + li * 4 + 3] = rd->fr;
+            u[32 + li] = rd->n;
+        }
+        if (wr) {
+            for (int r = 0; r < 3; r++)
+                u[24 + li * 4 + r] = view[r][0] * wr->p[0] + view[r][1] * wr->p[1] + view[r][2] * wr->p[2] + view[r][3];
+            u[24 + li * 4 + 3] = wr->fr;
+            u[34 + li] = wr->n;
+        }
+    }
+    u[36] = 1.0f / float(3 * kRoomShadowTile);
+    u[37] = float(s_rsCount[s_rsWrite]);
+    g.pshadowCast = s_rsCount[s_rsWrite] > 0;
+}
+
+// The batch again, into each face of the nearest room lights, then the EFB's state back
+template <typename Ranges>
+static void roomShadowCast(const Ranges& ranges, GLenum mode, const ShaderProgram* sp, float texW[8], float texH[8]) {
+    const ShaderProgram* csp = shaderForCurrentState(6, false);
+    glcUseProgram(csp->prog);
+    GlCache& c = g_glc;
+    const GLuint fbo = s_rsFbo[s_rsWrite];
+    if (c.fbo != fbo) {
+        c.fbo = fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    }
+    const int w = 3 * kRoomShadowTile, h = 4 * kRoomShadowTile;
+    if (c.vp[0] != 0 || c.vp[1] != 0 || c.vp[2] != w || c.vp[3] != h) {
+        c.vp[0] = c.vp[1] = 0;
+        c.vp[2] = w;
+        c.vp[3] = h;
+        glViewport(0, 0, w, h);
+    }
+    glcCap(GL_SCISSOR_TEST, c.scissor, false);
+    glcCap(GL_CULL_FACE, c.cull, false);
+    glcCap(GL_BLEND, c.blend, false);
+    glcCap(GL_COLOR_LOGIC_OP, c.logic, false);
+    glcCap(GL_DEPTH_TEST, c.depth, true);
+    glcCap(GL_CLIP_DISTANCE0, c.clip0, true);  // each face kept to its square
+    glcCap(GL_CLIP_DISTANCE0 + 1, c.clip1, true);
+    glcCap(GL_CLIP_DISTANCE0 + 2, c.clip2, true);
+    glEnable(GL_CLIP_DISTANCE0 + 3);
+    glcCap(GL_DEPTH_CLAMP, c.depthClamp, false);
+    if (c.depthFunc != GL_LESS) {
+        c.depthFunc = GL_LESS;
+        glDepthFunc(GL_LESS);
+    }
+    if (c.depthMask != GL_TRUE) {
+        c.depthMask = GL_TRUE;
+        glDepthMask(GL_TRUE);
+    }
+    const GLboolean off[4] = {GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE};
+    if (memcmp(off, c.cmask, sizeof off) != 0) {
+        memcpy(c.cmask, off, sizeof off);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    }
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(1.5f, 4.0f);
+    uploadUniforms(csp, texW, texH);
+    const GLsizei faces = GLsizei(6 * s_rsCount[s_rsWrite]);
+    for (const auto& r : ranges) {
+        glcBindVertexArray(r.vao);
+        glDrawElementsInstancedBaseVertex(mode, r.count, GL_UNSIGNED_INT, reinterpret_cast<const void*>(r.iOff), faces,
+                                          r.base);
+    }
+    glDisable(GL_CLIP_DISTANCE0 + 3);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glcUseProgram(sp->prog);
     applyGlState();
 }
@@ -4815,6 +4994,10 @@ void flushBatch() {
         && !(g.xfReg[XFR_PROJ + 6] & 1) && ladderTexture())
         ladderLayers(ranges, mode, sp, texW, texH);
     if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn && !g.viewHidden) charCast(ranges, mode, sp);
+    // Interior Lights' shadows: what the main camera draws, into the nearest room lights' faces
+    if (g.pshadowCast && g.plightActive && s_bclass == PRIM_TRIS && !g.shellOn && !g.userClipOn && !g.shadowCastOnly
+        && !(g.xfReg[XFR_PROJ + 6] & 1) && !shadowNoCast())
+        roomShadowCast(ranges, mode, sp, texW, texH);
     if (g.shadowArmed && s_bclass == PRIM_TRIS && !g.shellOn) {  // a ladder's layers: its card casts once
         const char* why = g.shadowCastOnly ? (g.shadowMain ? nullptr : "not the main camera's view")
                           : g.shadowMain ? shadowNoCast() : "not the main camera's view";

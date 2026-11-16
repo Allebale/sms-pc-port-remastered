@@ -74,6 +74,7 @@
     X(PFNGLDELETESAMPLERSPROC, glDeleteSamplers)                                    \
     X(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers)                          \
     X(PFNGLDRAWELEMENTSBASEVERTEXPROC, glDrawElementsBaseVertex)                    \
+    X(PFNGLDRAWELEMENTSINSTANCEDBASEVERTEXPROC, glDrawElementsInstancedBaseVertex)  \
     X(PFNGLMULTIDRAWELEMENTSBASEVERTEXPROC, glMultiDrawElementsBaseVertex)          \
     X(PFNGLBINDBUFFERRANGEPROC, glBindBufferRange)                                  \
     X(PFNGLVERTEXATTRIB4FPROC, glVertexAttrib4f)                                    \
@@ -215,6 +216,7 @@ SMS_GX_GL_OPTIONAL_FUNCS(SMS_GX_ALIAS)
 #define glDeleteSamplers gx_glDeleteSamplers
 #define glDeleteRenderbuffers gx_glDeleteRenderbuffers
 #define glDrawElementsBaseVertex gx_glDrawElementsBaseVertex
+#define glDrawElementsInstancedBaseVertex gx_glDrawElementsInstancedBaseVertex
 #define glMultiDrawElementsBaseVertex gx_glMultiDrawElementsBaseVertex
 #define glBindBufferRange gx_glBindBufferRange
 #define glVertexAttrib4f gx_glVertexAttrib4f

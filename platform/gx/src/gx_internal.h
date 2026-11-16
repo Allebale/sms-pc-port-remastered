@@ -167,6 +167,12 @@ struct State {
     float plight[68];
     float plightProj[7];
     bool plightArmed, plightActive;
+    // Interior Lights' shadows (gx_render.cpp roomShadowFrame): the nearest two room lights' depth,
+    // six faces each, in one texture (u_pshadow: rows 0-2 view to world turn; 3 the lights' slots
+    // in u_plight read this frame, 4-5 those lights (view, far), 6-7 the lights drawn into now,
+    // 8 their near planes, 9 (a texel, lights drawn into now)). pshadowCast: casts are drawn
+    float pshadow[40];
+    bool pshadowCast;
 };
 
 extern State g;
@@ -454,12 +460,13 @@ struct UniformCache {
     float sand[12];
     float wetc[72];
     float shell[8];
+    float pshadow[40];
 };
 struct ShaderProgram {
     unsigned prog;
     int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
-        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc, uShell;
+        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc, uShell, uPshadow;
     int uGoopRef;  // a goop layer's colours (GXPC_SetGoopTint): -1 for every other program
     int uObjTint;  // one object's colour (GXPC_SetObjectTint): -1 for every other program
     mutable UniformCache uc;
@@ -477,7 +484,8 @@ const int kGrassColorUnit = 11, kGrassDepthUnit = 12, kGrassFlatUnit = 13;
 const int kGrassMaskUnit = 8;
 // `lines`: the program for a line batch, which draws each line as a quad
 // GXSetLineWidth wide (a geometry shader)
-// depthOnly: 0 the draw, 1 its depth only (the ordered depth pass), 2 into the sun's shadow map
+// depthOnly: 0 the draw, 1 its depth only (the ordered depth pass), 2 into the sun's shadow map,
+// 6 into Interior Lights' shadow texture (each face an instance)
 const ShaderProgram* shaderForCurrentState(int depthOnly = 0, bool lines = false);
 // Moving Vegetation: whether a display list is a plant's (registered as its model loaded), and its
 // model-space height (gx_render.cpp, from callDisplayList).
@@ -491,6 +499,8 @@ int boxOffScreen(const float lo[3], const float hi[3]);
 bool ladderLookup(const void* list, uint32_t size, float back[3]);  // 3D Ladders
 // The texture unit the sun's shadow map is bound on (gx_render.cpp), past the game's eight.
 const int kShadowUnit = 10;
+// Interior Lights' shadow texture (gx_render.cpp): past the sixteen others
+const int kRoomShadowUnit = 16;
 // The texture map whose goop layer the current state's program tints
 // (GXPC_SetGoopTint), as the last shaderForCurrentState saw it; -1 none.
 int goopMapNow();

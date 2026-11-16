@@ -144,6 +144,8 @@ uniform vec4 u_shadow[12];
 uniform vec4 u_sway[11];
 // 3D Ladders (gx_fifo.cpp): [0] the way back (model space) and how far, [1].x how dark
 uniform vec4 u_shell[2];
+// Interior Lights' shadows (gx_render.cpp roomShadowFrame; State::pshadow)
+uniform vec4 u_pshadow[10];
 in vec3 a_pos; in vec3 a_nrm; in vec3 a_bin; in vec3 a_tan;
 in vec4 a_clr0; in vec4 a_clr1;
 in vec2 a_tex0; in vec2 a_tex1; in vec2 a_tex2; in vec2 a_tex3;
@@ -376,6 +378,24 @@ static std::string genVS(const ShaderKey& k) {
     // camera (u_shadow rows 4-7: view space to the map), none of the camera's clipping
     // (rows 6-8), into its cascade's half of the texture (u_shadow[11].x: 0 the left, 1 the right),
     // clipped to that half
+    // Interior Lights' shadows: a caster's draw into a room light's six faces (depthOnly 6), each
+    // face an instance (two lights: twelve), each face a square of the texture (three across, two
+    // rows a light), seen from the light (u_pshadow rows 6-7) in the world's directions (rows 0-2),
+    // kept to its square
+    if (k.depthOnly == 6)
+        s += "  { int li = gl_InstanceID / 6, f = gl_InstanceID - li * 6;\n"
+             "    vec4 lp = u_pshadow[6 + li];\n"
+             "    vec3 d0 = vpos - lp.xyz;\n"
+             "    vec3 d = vec3(dot(u_pshadow[0].xyz, d0), dot(u_pshadow[1].xyz, d0), dot(u_pshadow[2].xyz, d0));\n"
+             "    vec3 q = f < 2 ? vec3(d.z, d.y, f == 0 ? d.x : -d.x) : f < 4 ? vec3(d.x, d.z, f == 2 ? d.y : -d.y)\n"
+             "                   : vec3(d.x, d.y, f == 4 ? d.z : -d.z);\n"
+             "    float n = u_pshadow[8][2 + li], fr = lp.w;\n"
+             "    float A = (fr + n) / (fr - n), B = -2.0 * fr * n / (fr - n);\n"
+             "    int col = f - (f / 3) * 3, row = li * 2 + f / 3;\n"
+             "    float cx = -1.0 + (2.0 * float(col) + 1.0) / 3.0, cy = -1.0 + (2.0 * float(row) + 1.0) / 4.0;\n"
+             "    gl_Position = vec4(cx * q.z + q.x / 3.0, cy * q.z + q.y * 0.25, A * q.z + B, q.z);\n"
+             "    gl_ClipDistance[0] = q.z - q.x; gl_ClipDistance[1] = q.z + q.x;\n"
+             "    gl_ClipDistance[2] = q.z - q.y; gl_ClipDistance[3] = q.z + q.y; }\n";
     if (k.depthOnly == 2)
         s += "  { vec4 sp = vec4(vpos, 1.0);\n"
              "    vec3 c = vec3(dot(u_shadow[6], sp), dot(u_shadow[7], sp), dot(u_shadow[8], sp));\n"
@@ -401,6 +421,39 @@ uniform vec4 u_shell[2];
 uniform vec4 u_shadow[12];
 uniform sampler2DShadow u_shadowMap;
 uniform vec4 u_plight[17];
+// Interior Lights' shadows (gx_render.cpp roomShadowFrame): how lit a point (view space) is by room
+// light li (0 or 1) of last frame's texture: its face (the way it lies from the light, most), then
+// 4 taps (each comparing 4 texels) kept inside the face's square. Looked up from a little toward the
+// camera (pn: the surface's, toward the camera), more the farther from the light (a texel's width).
+uniform vec4 u_pshadow[10];
+uniform sampler2DShadow u_pshadowMap;
+float pshadowLit(int li, vec3 vp, vec3 pn) {
+  vec4 lp = u_pshadow[4 + li];
+  vec3 d0 = vp - lp.xyz;
+  float dist = length(d0);
+  d0 += pn * (dist * 9.0 * u_pshadow[9].x + 2.0);
+  vec3 d = vec3(dot(u_pshadow[0].xyz, d0), dot(u_pshadow[1].xyz, d0), dot(u_pshadow[2].xyz, d0));
+  vec3 a = abs(d);
+  int f; vec3 q;
+  if (a.x >= a.y && a.x >= a.z) { f = d.x > 0.0 ? 0 : 1; q = vec3(d.z, d.y, a.x); }
+  else if (a.y >= a.z) { f = d.y > 0.0 ? 2 : 3; q = vec3(d.x, d.z, a.y); }
+  else { f = d.z > 0.0 ? 4 : 5; q = vec3(d.x, d.y, a.z); }
+  float n = u_pshadow[8][li], fr = lp.w;
+  if (q.z <= n) return 1.0;
+  float A = (fr + n) / (fr - n), B = -2.0 * fr * n / (fr - n);
+  float zr = 0.5 * (A + B / q.z) + 0.5;
+  if (zr >= 1.0) return 1.0;
+  int col = f - (f / 3) * 3, row = li * 2 + f / 3;
+  float t = u_pshadow[9].x * 3.0;  // a texel, in a square's own width
+  vec2 uv = q.xy / q.z * 0.5 + 0.5;
+  float lit = 0.0;
+  for (int i = 0; i < 4; i++) {
+    vec2 o = vec2(i == 1 || i == 3 ? 0.75 : -0.75, i >= 2 ? 0.75 : -0.75) * t;
+    vec2 s = clamp(uv + o, vec2(1.5 * t), vec2(1.0 - 1.5 * t));
+    lit += textureLod(u_pshadowMap, vec3((float(col) + s.x) / 3.0, (float(row) + s.y) * 0.25, zr), 0.0);
+  }
+  return lit * 0.25;
+}
 // Shadows: how lit a point is in a cascade's map (c: its clip space; tile 0 near, 1 far; the two
 // side by side in the texture), 3 by 3 taps (each comparing 4 texels), kept to the cascade's half.
 // Soft Shadow Edges (u_shadow[11].w: how wide the soft edge is, in units): 16 taps over a disc
@@ -728,7 +781,7 @@ static std::string genFS(const ShaderKey& k) {
     s += "  vec4 color = vec4(outc) / 255.0;\n";
     // Shadows: a blended draw's see-through parts (water's surface) cast no shadow into the sun's
     // map; a caster needs nothing more (its colour is not kept), so its program stays small
-    if (k.depthOnly == 2)
+    if (k.depthOnly == 2 || k.depthOnly == 6)
         return s + "  if (u_shadow[11].y > 1.5) {\n"
                    "    if (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) >= color.a) discard;\n"
                    "  } else if (u_shadow[11].y > 0.5 && color.a < 0.9) discard;\n  o_color = color;\n}\n";
@@ -868,6 +921,9 @@ static std::string genFS(const ShaderKey& k) {
          "      float d = length(L);\n"
          "      float a = lp.w > 1.0 ? clamp(1.0 - d / lp.w, 0.0, 1.0) : 0.0;\n"
          "      if (!(a > 0.0)) continue;\n"
+         // Interior Lights' shadows: its two nearest room lights' (u_pshadow[3]: their slots, plus one)
+         "      if (float(i) == u_pshadow[3].x - 1.0) a *= pshadowLit(0, v_wp, pn);\n"
+         "      else if (float(i) == u_pshadow[3].y - 1.0) a *= pshadowLit(1, v_wp, pn);\n"
          "      lsum += lc.rgb * (lc.a * a * a * (max(dot(pn, L / max(d, 1.0)), 0.0) * 0.7 + 0.3));\n"
          "    }\n"
          "    if (!(lsum.r + lsum.g + lsum.b >= 0.0) || lsum.r + lsum.g + lsum.b > 30.0) lsum = vec3(0.0);\n"
@@ -969,6 +1025,9 @@ static void setupProgram(GLuint p, ShaderProgram& sp, bool aside = false) {
     sp.uWet = glGetUniformLocation(p, "u_wet");
     sp.uWetc = glGetUniformLocation(p, "u_wetc");
     sp.uShell = glGetUniformLocation(p, "u_shell");
+    sp.uPshadow = glGetUniformLocation(p, "u_pshadow");
+    loc = glGetUniformLocation(p, "u_pshadowMap");
+    if (loc >= 0) glUniform1i(loc, kRoomShadowUnit);
     sp.uGoopRef = glGetUniformLocation(p, "u_goopref");
     sp.uObjTint = glGetUniformLocation(p, "u_objtint");
     loc = glGetUniformLocation(p, "u_goop");
@@ -1656,7 +1715,7 @@ const ShaderProgram* shaderForCurrentState(int depthOnly, bool lines) {
     // a character's draw (not a mirror's copy) while some are wet: Wet Characters
     else if (depthOnly == 0 && g.charDraw && g.wetChars[0] > 0.0f && !g.userClipOn) k.depthOnly = 4;
     else if (depthOnly == 0 && g.shellOn) k.depthOnly = 5;  // 3D Ladders: a layer of a ladder's card
-    if (depthOnly == 2) k.earlyZ = 0;  // a shadow caster: its alpha test discards before depth
+    if (depthOnly == 2 || depthOnly == 6) k.earlyZ = 0;  // a shadow caster: its alpha test discards before depth
     if (depthOnly != 0 || lines)  // nothing to tint: their programs are as ever
         for (uint32_t st = 0; st < 16; st++) k.order[st] &= ~(kOrderGoop | kOrderTint);
     key.indScale[0] = k.numInd ? g.bp[BP_RAS1_SS0] : 0;
