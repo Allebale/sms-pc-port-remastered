@@ -4063,7 +4063,10 @@ extern "C" void GXPC_LightsView(const float view[3][4]) {
     // the game's lights (Global Illumination's), then the rooms' nearest (Interior Lights)
     float world[64];
     if (g.plightCount) memcpy(world, g.plightWorld, size_t(g.plightCount) * 8 * sizeof(float));
-    const int count = roomAdd(world, g.plightCount);
+    // the rooms' get two at least (the game's farthest left out: they come nearest first)
+    int game = g.plightCount;
+    if (s_roomMode && s_roomViewOk && !s_roomLights.empty() && game > 6) game = 6;
+    const int count = roomAdd(world, game);
     g.plightShown = count;
     roomShadowFrame(view, world, count);  // Interior Lights' shadows
     if (!view || !count) {
@@ -4438,6 +4441,7 @@ static int s_rsWrite;
 static uint32_t s_rsFrame = ~0u;
 static RoomAdded s_rsLights[2][2];  // [texture]: the lights drawn into it
 static int s_rsCount[2];
+static uint32_t s_rsCast, s_rsCastLast, s_rsTold = ~0u;  // for the log: draws cast this frame, last frame
 
 static void roomShadowMake() {
     if (s_rsFbo[0]) return;
@@ -4482,6 +4486,8 @@ static void roomShadowFrame(const float view[3][4], const float* world, int coun
     const uint32_t frame = GXPC_FrameCount();
     if (frame != s_rsFrame) {
         s_rsFrame = frame;
+        s_rsCastLast = s_rsCast;
+        s_rsCast = 0;
         s_rsWrite ^= 1;
         s_rsCount[s_rsWrite] = s_roomAddedN;
         memcpy(s_rsLights[s_rsWrite], s_roomAdded, sizeof s_roomAdded);
@@ -4528,6 +4534,20 @@ static void roomShadowFrame(const float view[3][4], const float* world, int coun
     u[36] = 1.0f / float(3 * kRoomShadowTile);
     u[37] = float(s_rsCount[s_rsWrite]);
     g.pshadowCast = s_rsCount[s_rsWrite] > 0;
+    // the log, every four seconds: which lights cast, how many draws went in, which are read
+    if (frame % 240 == 0 && frame != s_rsTold) {
+        s_rsTold = frame;
+        if (!s_rsCount[s_rsWrite]) {
+            logmsg("interior lights: shadows from none (no room light near; %d of the game's lights)", g.plightCount);
+        } else {
+            const RoomAdded* a = s_rsLights[s_rsWrite];
+            logmsg("interior lights: shadows from %d (at %.0f %.0f %.0f, near %.0f; at %.0f %.0f %.0f, near %.0f), "
+                   "%u draws cast last frame, slots read %.0f %.0f",
+                   s_rsCount[s_rsWrite], a[0].p[0], a[0].p[1], a[0].p[2], a[0].n, s_rsCount[s_rsWrite] > 1 ? a[1].p[0] : 0.0f,
+                   s_rsCount[s_rsWrite] > 1 ? a[1].p[1] : 0.0f, s_rsCount[s_rsWrite] > 1 ? a[1].p[2] : 0.0f,
+                   s_rsCount[s_rsWrite] > 1 ? a[1].n : 0.0f, s_rsCastLast, u[12] - 1.0f, u[13] - 1.0f);
+        }
+    }
 }
 
 // The batch again, into each face of the nearest room lights, then the EFB's state back
@@ -4575,6 +4595,7 @@ static void roomShadowCast(const Ranges& ranges, GLenum mode, const ShaderProgra
     glPolygonOffset(1.5f, 4.0f);
     uploadUniforms(csp, texW, texH);
     const GLsizei faces = GLsizei(6 * s_rsCount[s_rsWrite]);
+    s_rsCast++;
     for (const auto& r : ranges) {
         glcBindVertexArray(r.vao);
         glDrawElementsInstancedBaseVertex(mode, r.count, GL_UNSIGNED_INT, reinterpret_cast<const void*>(r.iOff), faces,

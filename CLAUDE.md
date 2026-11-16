@@ -239,6 +239,8 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   view batch that would cast a sun shadow is drawn once more, instanced 6 or 12 times (depthOnly 6, a face per
   instance, `gl_ClipDistance[0..3]` keep it to its square); the shader's light loop reads last frame's
   (`pshadowLit`, `u_pshadow`, unit 16). A lamp's near plane is past its own shade (0.75 of its size).
+  Room lights always get two of the eight slots (the game's farthest fires dropped); without that, Sirena's hotel
+  (8 fire lights near Mario) had no room lights at all. `interior lights: shadows from` log line every 4 s.
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 
