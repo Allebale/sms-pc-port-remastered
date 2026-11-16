@@ -956,7 +956,7 @@ static void smoothColours(uint8_t* out, uint32_t count, uint32_t fmt, uint32_t s
 extern "C" void GXPC_SmoothCharacters(int mode) {
     s_smoothFrame++;
     // the log, every 10 seconds or so while on
-    if (g.smoothChars && s_smoothFrame % 600 == 0) {
+    if (g.smoothChars && s_smoothFrame % 600 == 0 && getenv("SMS_SMOOTH_LOG")) {  // (it works: quiet unless asked)
         logmsg("smooth characters: %u corners drawn (%u lit by the game's lights, %u not: their colours are "
                "painted on), %u smoothed (%u changed), %u with neither normals nor colours; %zu points known",
                s_smoothLit + s_smoothUnlit, s_smoothLit, s_smoothUnlit, s_smoothDone, s_smoothChanged,
