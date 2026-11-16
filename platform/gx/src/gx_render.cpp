@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include <algorithm>
+#include <chrono>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -2604,16 +2605,30 @@ extern "C" void GXPC_RoomLightsLook(float strength, float shadow, float distance
     s_roomShadowAmt = shadow < 0.0f ? 0.0f : shadow > 1.0f ? 1.0f : shadow;
     s_roomDist      = distance > 500.0f ? distance : 500.0f;
 }
-// No light comes or goes all at once as the camera moves: each fades out toward the edge (Distance,
-// or nearer, where the next light would have no room left), and a light's shadow fades out as it
-// nears the third nearest's distance (only two cast). s_roomShadowCut: that distance, for the shadows
-static float s_roomShadowCut;
-static const float kRoomShadowFade = 400.0f;
-static float roomFadeWidth() { return s_roomDist * 0.25f; }
+// No light comes or goes all at once: the room lights in use (s_roomActive, kRoomSlots of the eight)
+// change over time. One no longer among the nearest fades out (kRoomFade seconds) and gives up its
+// slot only then; a new one fades in. The two that cast shadows change the same way: a light's shadow
+// fades out before another light's fades in. Near the edge of Distance, lights fade with distance.
+static const int kRoomSlots = 4;
+static const float kRoomFade = 0.6f;
+struct RoomActive {
+    int idx;           // into s_roomLights
+    float w, sw;       // how much of its light, of its shadow (0 to 1)
+    bool want, shadow; // among the nearest; one of the two that cast
+};
+static std::vector<RoomActive> s_roomActive;
+static std::chrono::steady_clock::time_point s_roomLast;
 static int roomAdd(float* world, int count) {
     s_roomAddedN = 0;
-    s_roomShadowCut = 0.0f;
-    if (!s_roomMode || !s_roomViewOk || s_roomLights.empty() || count >= 8) return count;
+    if (!s_roomMode || !s_roomViewOk || s_roomLights.empty() || count >= 8) {
+        s_roomActive.clear();
+        return count;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    float dt = std::chrono::duration<float>(now - s_roomLast).count();
+    s_roomLast = now;
+    dt = dt < 0.0f ? 0.0f : dt > 0.1f ? 0.1f : dt;
+    const float step = dt / kRoomFade;
     const float cam[3] = {s_roomInv[3], s_roomInv[7], s_roomInv[11]};
     static const float kRadius[2] = {700.0f, 1000.0f};
     static const float kColour[2][4] = {
@@ -2624,32 +2639,67 @@ static int roomAdd(float* world, int count) {
     for (size_t i = 0; i < s_roomLights.size(); i++) {
         const RoomLight& l = s_roomLights[i];
         const float dx = l.p[0] - cam[0], dy = l.p[1] - cam[1], dz = l.p[2] - cam[2];
-        byDist.push_back(std::make_pair(dx * dx + dy * dy + dz * dz, int(i)));
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < s_roomDist * s_roomDist) byDist.push_back(std::make_pair(d2, int(i)));
     }
     std::sort(byDist.begin(), byDist.end());
-    const size_t slots = size_t(8 - count);
-    float cut = s_roomDist;
-    if (byDist.size() > slots) cut = std::min(cut, sqrtf(byDist[slots].first));
-    s_roomShadowCut = byDist.size() > 2 && slots > 2 ? std::min(cut, sqrtf(byDist[2].first)) : cut;
-    for (size_t k = 0; k < byDist.size() && count < 8; k++) {
-        const RoomLight& l = s_roomLights[byDist[k].second];
-        const float w = (cut - sqrtf(byDist[k].first)) / roomFadeWidth();
-        if (!(w > 0.0f)) break;
+    const size_t slots = std::min(size_t(8 - count), size_t(kRoomSlots));
+    if (byDist.size() > slots) byDist.resize(slots);
+    // which are wanted: the nearest; the two nearest of those cast
+    for (RoomActive& a : s_roomActive) a.want = false;
+    for (size_t k = 0; k < byDist.size(); k++) {
+        bool have = false;
+        for (RoomActive& a : s_roomActive)
+            if (a.idx == byDist[k].second) a.want = have = true;
+        if (!have && s_roomActive.size() < slots) s_roomActive.push_back(RoomActive{byDist[k].second, 0.0f, 0.0f, true, false});
+    }
+    for (RoomActive& a : s_roomActive) a.w = a.want ? std::min(1.0f, a.w + step) : a.w - step;
+    s_roomActive.erase(std::remove_if(s_roomActive.begin(), s_roomActive.end(),
+                                      [](const RoomActive& a) { return a.w <= 0.0f && !a.want; }),
+                       s_roomActive.end());
+    int shadows = 0;
+    for (RoomActive& a : s_roomActive) {
+        // its shadow wanted: one of the two nearest wanted lights
+        bool cast = false;
+        for (size_t k = 0; k < byDist.size() && k < 2; k++) cast = cast || byDist[k].second == a.idx;
+        if (a.shadow) {
+            a.sw = cast ? std::min(1.0f, a.sw + step) : a.sw - step;
+            if (a.sw <= 0.0f) a.shadow = false, a.sw = 0.0f;
+        }
+        if (a.shadow) shadows++;
+    }
+    for (RoomActive& a : s_roomActive) {  // a free place among the two: a wanted shadow starts
+        if (shadows >= 2) break;
+        bool cast = false;
+        for (size_t k = 0; k < byDist.size() && k < 2; k++) cast = cast || byDist[k].second == a.idx;
+        if (cast && !a.shadow) a.shadow = true, a.sw = 0.0f, shadows++;
+    }
+    for (const RoomActive& a : s_roomActive) {
+        if (count >= 8) break;
+        const RoomLight& l = s_roomLights[a.idx];
+        const float dx = l.p[0] - cam[0], dy = l.p[1] - cam[1], dz = l.p[2] - cam[2];
+        const float edge = (s_roomDist - sqrtf(dx * dx + dy * dy + dz * dz)) / (s_roomDist * 0.25f);
         float* o = world + count * 8;
         memcpy(o, l.p, sizeof l.p);
         o[3] = kRadius[l.kind];
         memcpy(o + 4, kColour[l.kind], 4 * sizeof(float));
-        o[7] *= s_roomStrength * (w < 1.0f ? w : 1.0f);
-        if (s_roomAddedN < 2) {
-            RoomAdded& a = s_roomAdded[s_roomAddedN++];
-            memcpy(a.p, l.p, sizeof a.p);
-            a.fr = kRadius[l.kind];
+        o[7] *= s_roomStrength * std::max(0.0f, a.w) * (edge < 0.0f ? 0.0f : edge > 1.0f ? 1.0f : edge);
+        if (a.shadow && s_roomAddedN < 2) {
+            RoomAdded& r = s_roomAdded[s_roomAddedN++];
+            memcpy(r.p, l.p, sizeof r.p);
+            r.fr = kRadius[l.kind];
             const float n = l.size * 0.75f;
-            a.n = l.kind == kRoomLamp ? (n < 10.0f ? 10.0f : n > 200.0f ? 200.0f : n) : 20.0f;
+            r.n = l.kind == kRoomLamp ? (n < 10.0f ? 10.0f : n > 200.0f ? 200.0f : n) : 20.0f;
         }
         count++;
     }
     return count;
+}
+// How much of a room light's shadow shows now (by where it is): 0 when it casts none
+static float roomShadowAmount(const float p[3]) {
+    for (const RoomActive& a : s_roomActive)
+        if (a.shadow && memcmp(s_roomLights[a.idx].p, p, 3 * sizeof(float)) == 0) return a.sw;
+    return 0.0f;
 }
 
 // The Texture Log (Graphics page; GXPC_TextureLog from port_shadows.cpp, with the main camera's view
@@ -2677,6 +2727,7 @@ extern "C" void GXPC_NameClear(void) {  // a new stage
     s_listNames.clear();
     s_roomLists.clear();
     s_roomLights.clear();
+    s_roomActive.clear();
 }
 extern "C" void GXPC_TextureLog(int on) {
     if (g_pickArmed) {  // last frame's, told
@@ -4083,9 +4134,9 @@ extern "C" void GXPC_LightsView(const float view[3][4]) {
     // the game's lights (Global Illumination's), then the rooms' nearest (Interior Lights)
     float world[64];
     if (g.plightCount) memcpy(world, g.plightWorld, size_t(g.plightCount) * 8 * sizeof(float));
-    // the rooms' get two at least (the game's farthest left out: they come nearest first)
+    // the rooms' get kRoomSlots at least (the game's farthest left out: they come nearest first)
     int game = g.plightCount;
-    if (s_roomMode && s_roomViewOk && !s_roomLights.empty() && game > 6) game = 6;
+    if (s_roomMode && s_roomViewOk && !s_roomLights.empty() && game > 8 - kRoomSlots) game = 8 - kRoomSlots;
     const int count = roomAdd(world, game);
     g.plightShown = count;
     roomShadowFrame(view, world, count);  // Interior Lights' shadows
@@ -4540,9 +4591,7 @@ static void roomShadowFrame(const float view[3][4], const float* world, int coun
                 }
         if (rd && u[12 + li] > 0.0f) {
             // how dark its shadow is: faded out as it nears the third nearest's distance
-            const float dx = rd->p[0] - s_roomInv[3], dy = rd->p[1] - s_roomInv[7], dz = rd->p[2] - s_roomInv[11];
-            const float sw = (s_roomShadowCut - sqrtf(dx * dx + dy * dy + dz * dz)) / kRoomShadowFade;
-            u[14 + li] = s_roomShadowAmt * (sw < 0.0f ? 0.0f : sw > 1.0f ? 1.0f : sw);
+            u[14 + li] = s_roomShadowAmt * roomShadowAmount(rd->p);
             for (int r = 0; r < 3; r++)
                 u[16 + li * 4 + r] = view[r][0] * rd->p[0] + view[r][1] * rd->p[1] + view[r][2] * rd->p[2] + view[r][3];
             u[16 + li * 4 + 3] = rd->fr;

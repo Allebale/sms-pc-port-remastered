@@ -239,11 +239,13 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   view batch that would cast a sun shadow is drawn once more, instanced 6 or 12 times (depthOnly 6, a face per
   instance, `gl_ClipDistance[0..3]` keep it to its square); the shader's light loop reads last frame's
   (`pshadowLit`, `u_pshadow`, unit 16). A lamp's near plane is past its own shade (0.75 of its size).
-  Room lights always get two of the eight slots (the game's farthest fires dropped); without that, Sirena's hotel
+  Room lights always get slots of the eight (the game's farthest fires dropped); without that, Sirena's hotel
   (8 fire lights near Mario) had no room lights at all. `interior lights: shadows from` log line every 4 s.
   Interior Lights Strength, Shadow Strength and Distance (`GXPC_RoomLightsLook`). Nothing pops on or off as the
-  camera moves: each light fades out over the last quarter of Distance (or before the next light that has no slot
-  left), and a light's shadow fades out over 400 units as it nears the third nearest light (`s_roomShadowCut`).
+  camera moves: room lights keep 4 of the 8 slots (`kRoomSlots`); the ones in use (`s_roomActive`) change over
+  time, a light no longer among the nearest fading out over 0.6 s before another fades into its slot, and the two
+  shadows hand over the same way. Lights also fade over the last quarter of Distance. (A first try faded by
+  distance to the next light: with windows close together it dimmed every light to almost nothing.)
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 
