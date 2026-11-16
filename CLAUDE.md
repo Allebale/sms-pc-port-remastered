@@ -210,7 +210,11 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
 ## Planned features
 
 - **No grass through goop**: where goop covers grassy ground, the goop shows (no blades through it).
-- **Smooth vertex normals**: smooth the shading of low-poly models (averaged vertex normals), so they look less blocky.
+- **Smooth vertex normals**: tried as **Smooth Characters** (Graphics page, Nov 2026, Off; Off in every preset
+  until tested): the registered characters' (and, with Characters and Mario, Mario's own) display lists are
+  drawn from their commands (not the display-list cache) and each corner's normal becomes the average of the
+  normals the model has at that point (same place, same matrix, same list) within about 63 degrees of its own
+  (`smoothNormals` in `gx_fifo.cpp`, learnt as drawn, kept 3 frames). The level and objects are left as they are.
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 

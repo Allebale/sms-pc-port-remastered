@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <algorithm>
+#include <unordered_map>
 #include <atomic>
 #include <deque>
 #include <map>
@@ -846,6 +847,75 @@ static void buildSetup(DecSetup& S, const VtxLayout& L) {
     if (at != L.size) fatal("vertex loader: attributes take %u of the vertex's %u bytes", at, L.size);
 }
 
+// Smooth Characters: low-poly people and enemies (and Mario) are made of flat faces, each corner
+// carrying its face's normal, so the light shows every face. Each corner's normal becomes the
+// average of the normals the model uses at that point (the same place under the same matrix, in the
+// same display list): the faces' edges are shaded round. Only normals within kSmoothAngle of the
+// corner's own are taken in, so hard edges (a cap's brim, a shoe's sole) stay hard. The normals a
+// point has are learnt as it is drawn and kept a few frames (a model whose normals the game moves
+// keeps up); a list is drawn from its commands, not the display-list cache, while this is on.
+namespace {
+struct SmoothPoint {
+    float n[6][3];
+    uint32_t seen[6];
+    uint8_t count;
+};
+std::unordered_map<uint64_t, SmoothPoint> s_smooth;
+uint32_t s_smoothFrame;
+const float kSmoothCos = 0.45f;  // about 63 degrees
+uint64_t smoothKey(const void* list, const float* pos, uint8_t mtx) {
+    // the place to a hundredth of a unit (corners written twice for their faces land together)
+    uint64_t h = 1469598103934665603ull ^ uint64_t(uintptr_t(list));
+    for (int k = 0; k < 3; k++) {
+        const int64_t q = int64_t(llroundf(pos[k] * 100.0f));
+        h = (h ^ uint64_t(q)) * 1099511628211ull;
+    }
+    return (h ^ mtx) * 1099511628211ull;
+}
+}  // namespace
+static void smoothNormals(uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride) {
+    const VtxFmtLayout& lay = vtxFmtLayout(fmt);
+    if (s_smooth.size() > 400000) s_smooth.clear();  // a long play: start over
+    const uint32_t now = s_smoothFrame;
+    for (uint32_t v = 0; v < count; v++) {
+        uint8_t* vert = out + size_t(v) * stride;
+        const float* pos = reinterpret_cast<const float*>(vert);
+        float* n = reinterpret_cast<float*>(vert + lay.nrm);
+        const float len = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (len < 1e-6f) continue;
+        const float own[3] = {n[0] / len, n[1] / len, n[2] / len};
+        SmoothPoint& sp = s_smooth[smoothKey(g.smoothList, pos, (fmt & VF_MTX) ? vert[lay.mtx] : 0)];
+        // learn this face's normal at the point (or see it again)
+        int at = -1, oldest = 0;
+        for (int i = 0; i < sp.count; i++) {
+            if (own[0] * sp.n[i][0] + own[1] * sp.n[i][1] + own[2] * sp.n[i][2] > 0.999f) at = i;
+            if (sp.seen[i] < sp.seen[oldest]) oldest = i;
+        }
+        if (at < 0) at = sp.count < 6 ? sp.count++ : oldest;
+        memcpy(sp.n[at], own, sizeof own);
+        sp.seen[at] = now;
+        // the average of the point's normals near this one
+        float sum[3] = {0, 0, 0};
+        for (int i = 0; i < sp.count; i++) {
+            if (now - sp.seen[i] > 3) continue;  // not drawn lately: the model has changed
+            const float d = own[0] * sp.n[i][0] + own[1] * sp.n[i][1] + own[2] * sp.n[i][2];
+            if (d < kSmoothCos) continue;
+            for (int k = 0; k < 3; k++) sum[k] += sp.n[i][k];
+        }
+        const float sl = sqrtf(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
+        if (sl < 1e-6f) continue;
+        for (int k = 0; k < 3; k++) n[k] = sum[k] / sl * len;  // the length it had (scaled normals stay so)
+    }
+}
+extern "C" void GXPC_SmoothCharacters(int mode) {
+    s_smoothFrame++;
+    mode = mode < 0 ? 0 : mode > 2 ? 2 : mode;
+    if (g.smoothChars == mode) return;
+    flushBatch();
+    g.smoothChars = mode;
+    s_smooth.clear();
+}
+
 static void dlRecordPrimitive(uint8_t opcode, const uint8_t* p, uint32_t count, int vat, const DecSetup& S,
                               const uint8_t* out);
 static struct DlEntry* s_dlRec = nullptr;  // the display list being recorded into the cache
@@ -868,6 +938,7 @@ static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t 
     uint8_t* out = primitiveBegin(opcode, count, S.fmt, stride);
     if (!L.pos.mode) memset(out, 0, size_t(count) * stride);  // no position: keep the slot defined
     for (int k = 0; k < nops; k++) ops[k].fn(ops[k], p, L.size, out, stride, count);
+    if (g.smoothDraw && (S.fmt & VF_NRM) && !(S.fmt & VF_NBT)) smoothNormals(out, count, S.fmt, stride);
     primitiveEnd(opcode, count);
     if (s_dlRec) dlRecordPrimitive(opcode, p, count, vat, S, out);
     return p + size_t(count) * L.size;
@@ -1250,14 +1321,31 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
     float minY, maxY;
     // Round Shadows Under Characters: a character's list on its own, casting no sun shadow
     // (Wet Characters: drawn with the wet ones' spheres)
-    if ((g.shadowRound || g.shadowFarLevel || g.charMask || g.wetChars[0] > 0.0f) && data && !s_dlRec && characterLookup(data, size)) {
-        flushBatch();
-        g.shadowNoCast = true;
-        g.charDraw     = true;
+    // (Smooth Characters: its normals smoothed)
+    const bool charFx = g.shadowRound || g.shadowFarLevel || g.charMask || g.wetChars[0] > 0.0f;
+    if ((charFx || g.smoothChars) && data && !s_dlRec && characterLookup(data, size)) {
+        if (charFx) {
+            flushBatch();
+            g.shadowNoCast = true;
+            g.charDraw     = true;
+        }
+        g.smoothDraw = g.smoothChars != 0;
+        g.smoothList = data;
         callDisplayListInner(data, size);
-        flushBatch();
-        g.shadowNoCast = false;
-        g.charDraw     = false;
+        g.smoothDraw = false;
+        if (charFx) {
+            flushBatch();
+            g.shadowNoCast = false;
+            g.charDraw     = false;
+        }
+        return;
+    }
+    // Smooth Characters' Mario too: his own draw (GXPC_ShadowTag)
+    if (g.smoothChars == 2 && g.shadowTag && data && !s_dlRec) {
+        g.smoothDraw = true;
+        g.smoothList = data;
+        callDisplayListInner(data, size);
+        g.smoothDraw = false;
         return;
     }
     // 3D Ladders: a ladder's or fence's card drawn again behind itself, layer by layer (u_shell), a
@@ -1298,7 +1386,7 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
 }
 
 static void callDisplayListInner(const uint8_t* data, uint32_t size) {
-    if (!data || !dlCacheEnabled() || !rendererReady() || s_dlRec) {
+    if (!data || g.smoothDraw || !dlCacheEnabled() || !rendererReady() || s_dlRec) {
         runCommands(data, size);
         return;
     }

@@ -89,6 +89,9 @@ int port_shadows_together(void);
 // Skip Off-Screen Objects: shapes out of the view are not drawn (still cast their shadows)
 void GXPC_SkipOffScreen(int on);
 int port_skip_off_screen(void);
+// Smooth Characters: people's and enemies' (2: and Mario's) flat faces shaded round (gx_fifo.cpp)
+void GXPC_SmoothCharacters(int mode);
+int port_smooth_characters(void);
 int port_shadows_far_level_only(void);
 float port_shadows_softness(void);
 // Around Mario's own draw (port_wet_mario_draw): for the log, whether his batches cast.

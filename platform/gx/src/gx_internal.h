@@ -139,6 +139,11 @@ struct State {
     // sphere (centre, radius) and (wetness, waterline's d)); characters' draws are wet inside them
     float wetChars[72];
     bool charDraw;  // a registered character's display list is being drawn (gx_fifo.cpp)
+    // Smooth Characters (GXPC_SmoothCharacters; gx_fifo.cpp): 0 off, 1 the registered characters, 2 and
+    // Mario. smoothDraw: one of their display lists (smoothList) is being drawn, its normals smoothed
+    int smoothChars;
+    bool smoothDraw;
+    const void* smoothList;
     // 3D Ladders (GXPC_Ladders3D, GXPC_LadderRegister): on; and while a ladder's card is drawn again
     // behind itself, u_shell: [0] the way back (model space) and how far, [1] how dark (1 none)
     bool ladders3D;
