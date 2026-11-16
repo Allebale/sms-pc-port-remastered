@@ -231,7 +231,7 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   `port_shadows.cpp` at stage setup: material and owner). Light by material name.
   **Interior Lights** (Graphics page, Off; step 1, lights only): `kRoomLights` in `gx_render.cpp` lists the
   materials by the start of their names (found with the Texture Log): Hotel Lacrima's lampshades `_3kasa`
-  (`_3kasa_16`, texture `tex1_128x128_m_dcfc514562a71028_14`), its windows `_1Fmado` (`_1Fmado_12`). A listed
+  (`_3kasa_16`, texture `tex1_128x128_m_dcfc514562a71028_14`), its windows `_1Fmado` (`_1Fmado_12`) and the daylight in them `_GYAKKO` (`_GYAKKO_4(2)`, the hotel's big arched window). A listed
   list's first main-camera draw is decoded and its corners grouped in the world (`roomMeasure`): each group a
   light (`interior lights:` log lines), joining Global Illumination's eight (`roomAdd`, `g.plightShown`).
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.

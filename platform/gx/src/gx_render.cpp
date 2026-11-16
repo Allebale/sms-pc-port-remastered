@@ -2473,6 +2473,7 @@ struct RoomLightKind {
 static const RoomLightKind kRoomLights[] = {
     {"_3kasa", kRoomLamp},     // Super Mario Eclipse's Hotel Lacrima: the lampshades (_3kasa_16)
     {"_1Fmado", kRoomWindow},  // ...its windows (_1Fmado_12)
+    {"_GYAKKO", kRoomWindow},  // ...the daylight in its windows ("gyakkou": backlight; _GYAKKO_4(2), the big arched one)
     {nullptr, 0},
 };
 struct RoomLight {
