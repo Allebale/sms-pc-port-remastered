@@ -2008,7 +2008,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     const bool plain = !logic && !sub
                        && (!blend || (srcf != 0 && srcf != 2 && srcf != 3 && dstf != 1 && dstf != 2 && dstf != 3));
     const bool tested = g.bp[BP_ZMODE] & 1;
-    plight[64] = g.plightActive && plain && tested ? float(g.plightCount) : 0.0f;
+    plight[64] = g.plightActive && plain && tested ? float(g.plightShown) : 0.0f;
     if (g.plightActive && !(plain && tested)) {  // for the log: each kind left unlit, once
         static uint32_t s_told[24];
         static int s_toldCount;
@@ -3111,7 +3111,7 @@ extern "C" void GXPC_AOFrame(int mode, float strength, float distance, int view,
     s_aoView     = view;
     s_aoStrength = strength;
     s_aoDistance = distance;
-    g.aoArmed    = (mode > 0 || view > 0) && s_ready;
+    g.aoArmed    = (mode > 0 || view > 0 || interiorShadowsWanted()) && s_ready;  // (Interior Lights' shadows too)
     if (g.aoArmed) memcpy(g.aoProj, g.projection, sizeof g.aoProj);
 }
 
@@ -3538,6 +3538,451 @@ extern "C" void GXPC_SetLights(const float* lights, int count) {
     if (count) memcpy(g.plightWorld, lights, size_t(count) * 8 * sizeof(float));
 }
 
+// ------------------------------------------------------------------ Interior Lights
+// Rooms lit by what lights them (Interior Lights, Graphics page; ext/core/game/port_shadows.cpp tells
+// it each frame with the main camera's view, GXPC_InteriorView). The game's windows, lamps and
+// screens are painted textures, not lights: a draw of the main camera's whose first texture is one
+// (kInteriorTextures, by the texture pack's name, or guessed indoors from the texture: mostly very
+// bright, small, a window blue-ish and flat) becomes a light where it is, kept for the stage. The
+// nearest are added to Global Illumination's eight point lights (GXPC_LightsView); with Lights and
+// Shadows, the two nearest the camera cast shadows (interiorShadows: the picture's own depth, a
+// march from each pixel toward the light; what is in front darkens what that light added).
+enum { kIntLamp = 0, kIntWindow = 1, kIntScreen = 2, kIntFire = 3, kIntNone = -1 };
+struct InteriorTexture {
+    const char* name;  // as the texture pack names it (the interior log tells it)
+    int kind;          // kIntLamp ... kIntFire, or kIntNone: never a light (a wrong guess)
+};
+static const InteriorTexture kInteriorTextures[] = {
+    {nullptr, 0},
+};
+struct InteriorLight {
+    float p[3];  // where (the world), already moved off a window into the room
+    int kind;
+    float size;  // across, units
+    uint32_t seen;
+};
+static int s_intMode;        // 0 off, 1 lights, 2 lights and shadows
+static bool s_intIndoors;    // no sun: a guess may be made
+static bool s_intViewOk;     // this frame's main view known
+static float s_intView[12], s_intInv[12], s_intProj[7];
+static std::vector<InteriorLight> s_intLights;
+static bool s_intNextMain;   // the next GXPC_LightsView is the main camera's
+static float s_intMain[68];  // its lights in its view (as g.plight), for the shadows' pass
+static int s_intMainCount, s_intMainFirst;  // how many; the first of them that is a room's light
+struct IntTexKey {
+    const void* ptr;
+    uint32_t img0;
+    bool operator==(const IntTexKey& o) const { return ptr == o.ptr && img0 == o.img0; }
+};
+struct IntTexHash {
+    size_t operator()(const IntTexKey& k) const { return std::hash<const void*>()(k.ptr) ^ k.img0; }
+};
+struct IntTexInfo {
+    int listed;           // a kind from kInteriorTextures, kIntNone never, -2 not listed
+    float bright, blue;   // the share of very bright texels; how much bluer than red it is
+    std::string name;
+};
+static std::unordered_map<IntTexKey, IntTexInfo, IntTexHash> s_intTex;
+
+static const char* intKindName(int k) {
+    return k == kIntLamp ? "a lamp" : k == kIntWindow ? "a window" : k == kIntScreen ? "a screen" : k == kIntFire ? "a fire" : "none";
+}
+
+// What the first texture is: listed, or how bright (once for each texture)
+static const IntTexInfo* interiorTexture() {
+    const uint8_t* ptr = g.texImage[0];
+    if (!ptr) return nullptr;
+    const uint32_t img0 = g.bp[bpTexReg(BP_TX_IMAGE0, 0)];
+    const IntTexKey key{ptr, img0};
+    auto it = s_intTex.find(key);
+    if (it != s_intTex.end()) return &it->second;
+    IntTexInfo info{-2, 0.0f, 0.0f, std::string()};
+    int cw, ch;
+    if (!efbCopyLookup(ptr, &cw, &ch)) {  // a copy of the picture is never a light
+        const uint32_t w = (img0 & 0x3FF) + 1, h = ((img0 >> 10) & 0x3FF) + 1, fmt = (img0 >> 20) & 15;
+        const uint32_t mode0 = g.bp[bpTexReg(BP_TX_MODE0, 0)];
+        info.name = hiresName(ptr, fmt, w, h, ((mode0 >> 5) & 3) != 0, nullptr, 0, false);
+        for (const InteriorTexture* t = kInteriorTextures; t->name; t++)
+            if (info.name == t->name) info.listed = t->kind;
+        // how bright: not the palette's (C4, C8, C14X2: their colours are elsewhere), nor huge ones
+        if (info.listed == -2 && fmt != 8 && fmt != 9 && fmt != 10 && w * h <= 512 * 512) {
+            static std::vector<uint8_t> rgba;
+            rgba.resize(size_t(w) * h * 4);
+            decodeTexture(ptr, fmt, w, h, nullptr, 0, rgba.data());
+            uint32_t solid = 0, bright = 0;
+            double r = 0, b = 0;
+            for (size_t i = 0; i < size_t(w) * h; i++) {
+                const uint8_t* q = &rgba[i * 4];
+                if (q[3] < 128) continue;
+                solid++;
+                const float lum = (0.3f * q[0] + 0.59f * q[1] + 0.11f * q[2]) / 255.0f;
+                if (lum > 0.82f) bright++;
+                r += q[0], b += q[2];
+            }
+            if (solid * 5 >= w * h && solid) {
+                info.bright = float(bright) / float(solid);
+                info.blue = float((b - r) / (255.0 * solid));
+            }
+        }
+    }
+    return &(s_intTex[key] = info);
+}
+
+// A batch of the main camera's drawn: its texture a light's? Each group of its corners (a lamp's,
+// a window's: one batch may hold several) a light where it is.
+static void interiorProbe() {
+    if (!s_intIndoors && !kInteriorTextures[0].name) return;  // outdoors only listed ones are lights
+    const IntTexInfo* tex = interiorTexture();
+    if (!tex || tex->listed == kIntNone) return;
+    const bool listed = tex->listed >= 0;
+    if (!listed && (!s_intIndoors || tex->bright < 0.45f)) return;
+    // the corners, grouped by where they are (model space)
+    struct Group {
+        float lo[3], hi[3], sum[3];
+        int n;
+    };
+    Group groups[16];
+    int ng = 0;
+    const uint32_t total = s_bcount + [] {
+        uint32_t n = 0;
+        for (const BatchSeg& sg : s_segs)
+            if (sg.arena) n += sg.nverts;
+        return n;
+    }();
+    if (!total || total > 20000) return;
+    auto add = [&](const uint8_t* v) {
+        float p[3];
+        memcpy(p, v, 12);
+        int at = -1;
+        for (int i = 0; i < ng && at < 0; i++) {
+            const float cx = groups[i].sum[0] / groups[i].n, cy = groups[i].sum[1] / groups[i].n, cz = groups[i].sum[2] / groups[i].n;
+            const float dx = p[0] - cx, dy = p[1] - cy, dz = p[2] - cz;
+            if (dx * dx + dy * dy + dz * dz < 250.0f * 250.0f) at = i;
+        }
+        if (at < 0) {
+            if (ng == 16) return;
+            at = ng++;
+            Group& gr = groups[at];
+            for (int k = 0; k < 3; k++) gr.lo[k] = gr.hi[k] = p[k], gr.sum[k] = 0.0f;
+            gr.n = 0;
+        }
+        Group& gr = groups[at];
+        for (int k = 0; k < 3; k++) {
+            gr.lo[k] = std::min(gr.lo[k], p[k]);
+            gr.hi[k] = std::max(gr.hi[k], p[k]);
+            gr.sum[k] += p[k];
+        }
+        gr.n++;
+    };
+    for (uint32_t i = 0; i < s_bcount; i++) add(s_bdata.data + size_t(i) * s_bstride);
+    for (const BatchSeg& sg : s_segs)
+        if (sg.arena)
+            for (uint32_t i = 0; i < sg.nverts; i++) add(sg.verts + size_t(i) * s_bstride);
+    // model to view (the draw's position matrix), then to the world
+    float m[12];
+    memcpy(m, &g.xfMem[(g.xfReg[XFR_MATIDX_A] & 63) * 4], sizeof m);
+    const float cam[3] = {s_intInv[3], s_intInv[7], s_intInv[11]};
+    const uint32_t now = GXPC_FrameCount();
+    for (int i = 0; i < ng; i++) {
+        const Group& gr = groups[i];
+        if (gr.n < 3) continue;
+        float c[3], ext[3], scale = 0.0f;
+        for (int k = 0; k < 3; k++) c[k] = (gr.lo[k] + gr.hi[k]) * 0.5f;
+        // the matrix's scale (its first column's length)
+        scale = std::sqrt(m[0] * m[0] + m[4] * m[4] + m[8] * m[8]);
+        for (int k = 0; k < 3; k++) ext[k] = (gr.hi[k] - gr.lo[k]) * scale;
+        const float big = std::max(ext[0], std::max(ext[1], ext[2]));
+        int thin = 0;
+        for (int k = 1; k < 3; k++)
+            if (ext[k] < ext[thin]) thin = k;
+        const bool flat = ext[thin] < 0.2f * big;
+        int kind = tex->listed;
+        if (!listed) {  // a guess: small and bright, a window bluish and flat
+            if (big < 15.0f || big > 700.0f) continue;
+            if (tex->blue > 0.06f && flat && big >= 60.0f) kind = kIntWindow;
+            else if (tex->blue > 0.06f && big < 160.0f) kind = kIntScreen;
+            else if (tex->blue <= 0.06f && big < 300.0f) kind = kIntLamp;
+            else continue;
+        }
+        float v[3], w[3];
+        for (int r = 0; r < 3; r++) v[r] = m[r * 4] * c[0] + m[r * 4 + 1] * c[1] + m[r * 4 + 2] * c[2] + m[r * 4 + 3];
+        for (int r = 0; r < 3; r++) w[r] = s_intInv[r * 4] * v[0] + s_intInv[r * 4 + 1] * v[1] + s_intInv[r * 4 + 2] * v[2] + s_intInv[r * 4 + 3];
+        if (kind == kIntWindow) {  // off the pane, into the room (the side the camera is on)
+            float nm[3] = {0, 0, 0}, nv[3], nw[3];
+            nm[thin] = 1.0f;
+            for (int r = 0; r < 3; r++) nv[r] = m[r * 4] * nm[0] + m[r * 4 + 1] * nm[1] + m[r * 4 + 2] * nm[2];
+            for (int r = 0; r < 3; r++) nw[r] = s_intInv[r * 4] * nv[0] + s_intInv[r * 4 + 1] * nv[1] + s_intInv[r * 4 + 2] * nv[2];
+            const float nl = std::sqrt(nw[0] * nw[0] + nw[1] * nw[1] + nw[2] * nw[2]);
+            if (nl > 1e-6f) {
+                const float side = (cam[0] - w[0]) * nw[0] + (cam[1] - w[1]) * nw[1] + (cam[2] - w[2]) * nw[2];
+                const float k = (side < 0.0f ? -1.0f : 1.0f) * 140.0f / nl;
+                for (int r = 0; r < 3; r++) w[r] += nw[r] * k;
+            }
+        }
+        // known already (seen again), or new
+        bool known = false;
+        for (InteriorLight& l : s_intLights) {
+            const float dx = l.p[0] - w[0], dy = l.p[1] - w[1], dz = l.p[2] - w[2];
+            if (l.kind == kind && dx * dx + dy * dy + dz * dz < 80.0f * 80.0f) {
+                l.seen = now;
+                known = true;
+                break;
+            }
+        }
+        if (known || s_intLights.size() >= 128) continue;
+        s_intLights.push_back(InteriorLight{{w[0], w[1], w[2]}, kind, big, now});
+        static int s_told;
+        if (s_told < 40) {
+            s_told++;
+            logmsg("interior lights: %s at %.0f %.0f %.0f, %.0f across, from %s (%s)", intKindName(kind), w[0], w[1], w[2],
+                   big, tex->name.c_str(), listed ? "listed" : "guessed");
+        }
+    }
+}
+
+// Each frame, from the main camera as it sets its projection: the setting, whether the stage is
+// indoors (no sun), and its view (world to view)
+extern "C" void GXPC_InteriorView(int mode, int indoors, const float view[3][4]) {
+    s_intMode = mode < 0 ? 0 : mode > 2 ? 2 : mode;
+    s_intIndoors = indoors != 0;
+    s_intViewOk = s_intMode && view;
+    if (!s_intViewOk) return;
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 4; c++) s_intView[r * 4 + c] = view[r][c];
+    for (int r = 0; r < 3; r++) {
+        s_intInv[r * 4 + 0] = view[0][r], s_intInv[r * 4 + 1] = view[1][r], s_intInv[r * 4 + 2] = view[2][r];
+        s_intInv[r * 4 + 3] = -(view[0][r] * view[0][3] + view[1][r] * view[1][3] + view[2][r] * view[2][3]);
+    }
+    memcpy(s_intProj, g.projection, sizeof s_intProj);
+    s_intNextMain = true;
+}
+// A new stage: its lights are its own
+extern "C" void GXPC_InteriorClear(void) {
+    s_intLights.clear();
+    s_intTex.clear();
+    s_intMainCount = 0;
+}
+
+// The room's lights nearest the camera, after the game's (Global Illumination's) in `world` (8
+// floats each, as GXPC_SetLights); returns the count
+static int interiorAdd(float* world, int count) {
+    if (!s_intMode || !s_intViewOk || s_intLights.empty() || count >= 8) return count;
+    const float cam[3] = {s_intInv[3], s_intInv[7], s_intInv[11]};
+    static const float kRadius[4] = {650.0f, 950.0f, 380.0f, 700.0f};
+    static const float kColour[4][4] = {
+        {1.0f, 0.82f, 0.58f, 0.8f},  // a lamp: warm
+        {0.85f, 0.92f, 1.0f, 0.7f},  // a window: daylight
+        {0.6f, 0.8f, 1.0f, 0.55f},   // a screen: cool
+        {1.0f, 0.55f, 0.22f, 0.9f},  // a fire: orange
+    };
+    int order[128];
+    float dist[128];
+    int n = 0;
+    for (size_t i = 0; i < s_intLights.size() && n < 128; i++) {
+        const InteriorLight& l = s_intLights[i];
+        const float dx = l.p[0] - cam[0], dy = l.p[1] - cam[1], dz = l.p[2] - cam[2];
+        const float d = dx * dx + dy * dy + dz * dz;
+        if (d > 5000.0f * 5000.0f) continue;
+        order[n] = int(i), dist[n] = d, n++;
+    }
+    const float t = float(GXPC_FrameCount() % 72000) / 60.0f;
+    for (int k = 0; k < n && count < 8; k++) {
+        int best = k;
+        for (int j = k + 1; j < n; j++)
+            if (dist[j] < dist[best]) best = j;
+        std::swap(order[k], order[best]);
+        std::swap(dist[k], dist[best]);
+        const InteriorLight& l = s_intLights[order[k]];
+        float* o = world + count * 8;
+        memcpy(o, l.p, sizeof l.p);
+        o[3] = kRadius[l.kind] * (l.kind == kIntWindow ? std::min(1.6f, std::max(0.8f, l.size / 250.0f)) : 1.0f);
+        memcpy(o + 4, kColour[l.kind], 4 * sizeof(float));
+        if (l.kind == kIntFire) o[7] *= 0.85f + 0.1f * std::sin(t * 13.0f + l.p[0] * 0.013f);
+        count++;
+    }
+    return count;
+}
+
+// Lights and Shadows: what the two room's lights nearest the camera add, taken away where something
+// stands between (the picture's depth, from each pixel toward the light), drawn multiplied onto the
+// picture as the main camera's scene ends (with Ambient Occlusion's pass, gx_api.cpp)
+static const char* kIntShadowFs = R"(#version 330 core
+uniform sampler2D u_depth;
+uniform vec4 u_lin;
+uniform vec4 u_f;
+uniform vec4 u_pm;
+uniform vec4 u_vm;
+uniform vec2 u_es;
+uniform vec4 u_l[16];  // the lights in the view: place, reach; colour, strength
+uniform vec4 u_n;      // x how many, y the first that is a room's, z w the two that shade (-1 none)
+in vec2 v_uv;
+out vec4 o_color;
+float viewZ(float d) { return u_lin.x / (d * u_lin.y + u_lin.z); }
+vec3 posAt(vec2 uv, float d) {
+  float z = viewZ(d);
+  vec2 ndc = (uv * u_es - u_vm.zw) / u_vm.xy;
+  return vec3((ndc.x + u_pm.y) / u_pm.x * -z, (ndc.y + u_pm.w) / u_pm.z * -z, z);
+}
+vec2 toUV(vec3 p) {
+  vec2 ndc = vec2(u_pm.x * p.x / -p.z - u_pm.y, u_pm.z * p.y / -p.z - u_pm.w);
+  return (u_vm.zw + u_vm.xy * ndc) / u_es;
+}
+vec3 lightOf(int i, vec3 P, vec3 N) {
+  vec4 lp = u_l[i * 2], lc = u_l[i * 2 + 1];
+  vec3 L = lp.xyz - P;
+  float d = length(L);
+  float a = lp.w > 1.0 ? clamp(1.0 - d / lp.w, 0.0, 1.0) : 0.0;
+  return lc.rgb * (lc.a * a * a * (max(dot(N, L / max(d, 1.0)), 0.0) * 0.7 + 0.3));
+}
+void main() {
+  float d = textureLod(u_depth, v_uv, 0.0).r;
+  if (d >= 0.999999) { o_color = vec4(1.0); return; }
+  vec3 P = posAt(v_uv, d);
+  // the face, from points 3 pixels off (the depth is stored in steps), the nearer side's
+  vec2 tx = vec2(u_f.z * 3.0, 0.0), ty = vec2(0.0, u_f.w * 3.0);
+  vec3 px1 = posAt(v_uv + tx, textureLod(u_depth, v_uv + tx, 0.0).r), px0 = posAt(v_uv - tx, textureLod(u_depth, v_uv - tx, 0.0).r);
+  vec3 py1 = posAt(v_uv + ty, textureLod(u_depth, v_uv + ty, 0.0).r), py0 = posAt(v_uv - ty, textureLod(u_depth, v_uv - ty, 0.0).r);
+  vec3 dx = abs(px1.z - P.z) < abs(P.z - px0.z) ? px1 - P : P - px0;
+  vec3 dy = abs(py1.z - P.z) < abs(P.z - py0.z) ? py1 - P : P - py0;
+  vec3 N = cross(dx, dy);
+  N = dot(N, N) > 1e-12 ? normalize(N) : vec3(0.0, 0.0, 1.0);
+  if (dot(N, P) > 0.0) N = -N;
+  int n = int(u_n.x);
+  vec3 lsum = vec3(0.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= n) break;
+    lsum += lightOf(i, P, N);
+  }
+  vec3 lost = vec3(0.0);
+  for (int s = 0; s < 2; s++) {
+    int i = int(s == 0 ? u_n.z : u_n.w);
+    if (i < 0) continue;
+    vec3 li = lightOf(i, P, N);
+    if (li.r + li.g + li.b < 0.003) continue;
+    vec3 L = u_l[i * 2].xyz - P;
+    float dl = length(L);
+    if (dl < 40.0) continue;
+    // from just off the face toward the light, the last bit left out (the lamp's own shape)
+    vec3 S0 = P + N * 4.0;
+    float reach = max(dl - 60.0, 0.0);
+    vec3 dir = L / dl;
+    float occ = 0.0;
+    float jit = fract(sin(dot(v_uv, vec2(12.9898, 78.233))) * 43758.5453);
+    for (int k = 0; k < 20; k++) {
+      float t = (float(k) + 0.5 + jit * 0.8) / 20.0;
+      vec3 S = S0 + dir * (reach * t * t);
+      if (S.z > -1.0) break;
+      vec2 uv = toUV(S);
+      if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) break;
+      float sd = textureLod(u_depth, uv, 0.0).r;
+      if (sd >= 0.999999) continue;
+      float sz = viewZ(sd);
+      float front = sz - S.z;  // how far in front of the ray the picture's surface is
+      if (front > 3.0 && front < 220.0) { occ = 1.0; break; }
+    }
+    lost += li * occ;
+  }
+  vec3 k = (vec3(1.0) + 1.5 * (lsum - lost)) / (vec3(1.0) + 1.5 * lsum);
+  o_color = vec4(clamp(k, 0.0, 1.0), 1.0);
+}
+)";
+static GLuint s_isProg, s_isVao, s_isDepthTex, s_isDepthFbo;
+static GLint s_isLin, s_isF, s_isPm, s_isVm, s_isEs, s_isL, s_isN;
+static int s_isW, s_isH;
+void interiorShadows() {
+    if (!s_ready || s_intMode != 2 || !s_intViewOk || s_intMainCount <= s_intMainFirst) return;
+    if (g.xfReg[XFR_PROJ + 6] & 1) return;
+    const float fy = xff(XFR_PROJ + 2), A = xff(XFR_PROJ + 4), B = xff(XFR_PROJ + 5);
+    const float vz0 = xff(XFR_VIEWPORT + 2), vz1 = xff(XFR_VIEWPORT + 5);
+    if (fy == 0.0f || vz0 == 0.0f) return;
+    const int W = scaled(s_efbW), H = scaled(EFB_H);
+    if (!s_isProg) {
+        s_isProg = compileProgram(kPostVs, kIntShadowFs);
+        glUseProgram(s_isProg);
+        glUniform1i(glGetUniformLocation(s_isProg, "u_flip"), 0);
+        glUniform1i(glGetUniformLocation(s_isProg, "u_depth"), kAoDepthUnit);
+        s_isLin = glGetUniformLocation(s_isProg, "u_lin");
+        s_isF   = glGetUniformLocation(s_isProg, "u_f");
+        s_isPm  = glGetUniformLocation(s_isProg, "u_pm");
+        s_isVm  = glGetUniformLocation(s_isProg, "u_vm");
+        s_isEs  = glGetUniformLocation(s_isProg, "u_es");
+        s_isL   = glGetUniformLocation(s_isProg, "u_l");
+        s_isN   = glGetUniformLocation(s_isProg, "u_n");
+        glGenVertexArrays(1, &s_isVao);
+        g_glc.prog = ~0u;
+    }
+    if (W != s_isW || H != s_isH) {
+        if (s_isDepthFbo) {
+            glDeleteFramebuffers(1, &s_isDepthFbo);
+            glDeleteTextures(1, &s_isDepthTex);
+        }
+        s_isW = W, s_isH = H;
+        glGenTextures(1, &s_isDepthTex);
+        glGenFramebuffers(1, &s_isDepthFbo);
+        glActiveTexture(GL_TEXTURE0 + kAoDepthUnit);
+        glBindTexture(GL_TEXTURE_2D, s_isDepthTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, W, H, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_isDepthFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, s_isDepthTex, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            logmsg("interior lights: the shadows' depth buffer is not complete");
+        logmsg("interior lights: shadows' buffer made (%dx%d)", W, H);
+    }
+    // the two room's lights nearest the camera (the lights are nearest first)
+    float n[4] = {float(s_intMainCount), float(s_intMainFirst), float(s_intMainFirst), -1.0f};
+    if (s_intMainCount > s_intMainFirst + 1) n[3] = float(s_intMainFirst + 1);
+    // the depth, resolved
+    const GLuint src = efbReadFbo(0, 0, W, H, GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_isDepthFbo);
+    glBlitFramebuffer(0, 0, W, H, 0, 0, W, H, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_COLOR_LOGIC_OP);
+    glDisable(GL_CLIP_DISTANCE0);
+    glDisable(GL_CLIP_DISTANCE0 + 1);
+    glDisable(GL_CLIP_DISTANCE0 + 2);
+    glDepthMask(GL_FALSE);
+    glActiveTexture(GL_TEXTURE0 + kAoDepthUnit);
+    glBindTexture(GL_TEXTURE_2D, s_isDepthTex);
+    glBindSampler(kAoDepthUnit, 0);
+    glBindVertexArray(s_isVao);
+    s_xmap = drawXMap();
+    float vpm[8];
+    drawViewport(vpm);
+    const float lin[4] = {-vz0 * B, 16777215.0f, vz0 * A - vz1, 0.0f};
+    const float f[4] = {0.0f, 0.0f, 1.0f / float(W), 1.0f / float(H)};
+    const float pm[4] = {xff(XFR_PROJ), xff(XFR_PROJ + 1), xff(XFR_PROJ + 2), xff(XFR_PROJ + 3)};
+    const float vm[4] = {vpm[0], vpm[1], vpm[4] - 342.0f, vpm[5] - 342.0f};
+    const float es[2] = {float(s_efbW), float(EFB_H)};
+    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    glViewport(0, 0, W, H);
+    glEnable(GL_BLEND);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_ZERO, GL_SRC_COLOR, GL_ZERO, GL_ONE);  // multiplied onto the picture
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+    glUseProgram(s_isProg);
+    glUniform4fv(s_isLin, 1, lin);
+    glUniform4fv(s_isF, 1, f);
+    glUniform4fv(s_isPm, 1, pm);
+    glUniform4fv(s_isVm, 1, vm);
+    glUniform2fv(s_isEs, 1, es);
+    glUniform4fv(s_isL, 16, s_intMain);
+    glUniform4fv(s_isN, 1, n);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    s_drawGen++;
+    glcInvalidate();
+}
+bool interiorShadowsWanted() { return s_intMode == 2; }
+
 // ------------------------------------------------------------------ Moving Vegetation
 // Plants that sway (ext/core/game/port_vegetation.cpp): the display lists of the models' leafy
 // materials, registered as each model loads (each checked by its size and first bytes, so that a
@@ -3760,16 +4205,30 @@ static void swayView(const float view[3][4]) {
 extern "C" void GXPC_LightsView(const float view[3][4]) {
     flushBatch();
     swayView(view);  // Moving Vegetation's wind, seen from the same camera
-    if (!view || !g.plightCount) {
+    // the game's lights (Global Illumination's), then the rooms' nearest (Interior Lights)
+    float world[64];
+    if (g.plightCount) memcpy(world, g.plightWorld, size_t(g.plightCount) * 8 * sizeof(float));
+    const int count = interiorAdd(world, g.plightCount);
+    const bool main = s_intNextMain;
+    s_intNextMain = false;
+    if (main) s_intMainCount = 0;
+    if (!view || !count) {
         g.plightArmed = g.plightActive = false;
         return;
     }
-    for (int i = 0; i < g.plightCount; i++) {
-        const float* w = g.plightWorld + i * 8;
+    for (int i = 0; i < count; i++) {
+        const float* w = world + i * 8;
         for (int r = 0; r < 3; r++)
             g.plight[i * 8 + r] = view[r][0] * w[0] + view[r][1] * w[1] + view[r][2] * w[2] + view[r][3];
         g.plight[i * 8 + 3] = w[3];
         memcpy(g.plight + i * 8 + 4, w + 4, 4 * sizeof(float));
+    }
+    for (int i = count; i < 8; i++) memset(g.plight + i * 8, 0, 8 * sizeof(float));
+    g.plightShown = count;  // the shader's count: the game's and the rooms'
+    if (main) {  // Interior Lights' shadows: the main camera's lights, in its view
+        memcpy(s_intMain, g.plight, sizeof s_intMain);
+        s_intMainCount = count;
+        s_intMainFirst = g.plightCount;
     }
     memcpy(g.plightProj, g.projection, sizeof g.plightProj);
     g.plightArmed = g.plightActive = true;
@@ -4526,6 +4985,10 @@ void flushBatch() {
     if (g.ladders3D && !g.shellOn && !g.viewHidden && s_bclass == PRIM_TRIS && !g.userClipOn
         && !(g.xfReg[XFR_PROJ + 6] & 1) && ladderTexture())
         ladderLayers(ranges, mode, sp, texW, texH);
+    // Interior Lights: a window's, a lamp's, a screen's draw of the main camera's is a light
+    if (s_intViewOk && s_bclass == PRIM_TRIS && !g.shellOn && !g.viewHidden && !g.userClipOn
+        && !(g.xfReg[XFR_PROJ + 6] & 1) && memcmp(g.projection, s_intProj, sizeof s_intProj) == 0)
+        interiorProbe();
     if (g.charMask && s_bclass == PRIM_TRIS && !g.shellOn && !g.viewHidden) charCast(ranges, mode, sp);
     if (g.shadowArmed && s_bclass == PRIM_TRIS && !g.shellOn) {  // a ladder's layers: its card casts once
         const char* why = g.shadowCastOnly ? (g.shadowMain ? nullptr : "not the main camera's view")

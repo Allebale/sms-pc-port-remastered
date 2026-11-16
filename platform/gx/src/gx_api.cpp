@@ -644,6 +644,7 @@ void GXSetProjectionv(f32* ptr) {
         flushBatch();
         g.aoArmed = false;
         aoApply();
+        interiorShadows();  // Interior Lights' shadows, on the scene with its shade
     }
     g.userClipOn = false;  // the port's clip plane is for the camera it was set for
     traceNoteProjection(ptr);

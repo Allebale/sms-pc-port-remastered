@@ -89,6 +89,11 @@ int port_shadows_together(void);
 // Skip Off-Screen Objects: shapes out of the view are not drawn (still cast their shadows)
 void GXPC_SkipOffScreen(int on);
 int port_skip_off_screen(void);
+// Interior Lights: windows, lamps and screens light rooms (gx_render.cpp); 0 off, 1 lights, 2 and
+// their shadows. From the main camera each frame: whether it is indoors (no sun), and its view.
+void GXPC_InteriorView(int mode, int indoors, const float view[3][4]);
+void GXPC_InteriorClear(void);
+int port_interior_lights(void);
 // Smooth Characters: people's and enemies' (2: and Mario's) flat faces shaded round (gx_fifo.cpp)
 void GXPC_SmoothCharacters(int mode);
 int port_smooth_characters(void);
