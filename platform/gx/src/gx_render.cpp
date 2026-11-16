@@ -3583,6 +3583,8 @@ struct IntTexInfo {
     std::string name;
 };
 static std::unordered_map<IntTexKey, IntTexInfo, IntTexHash> s_intTex;
+// the log (every 10 seconds or so while on): what was looked at, and why it was no light
+static uint32_t s_intProbes, s_intNoTex, s_intUnmeasured, s_intDim, s_intWrongSize, s_intFound;
 
 static const char* intKindName(int k) {
     return k == kIntLamp ? "a lamp" : k == kIntWindow ? "a window" : k == kIntScreen ? "a screen" : k == kIntFire ? "a fire" : "none";
@@ -3596,7 +3598,7 @@ static const IntTexInfo* interiorTexture() {
     const IntTexKey key{ptr, img0};
     auto it = s_intTex.find(key);
     if (it != s_intTex.end()) return &it->second;
-    IntTexInfo info{-2, 0.0f, 0.0f, std::string()};
+    IntTexInfo info{-2, -1.0f, 0.0f, std::string()};  // bright -1: not measured
     int cw, ch;
     if (!efbCopyLookup(ptr, &cw, &ch)) {  // a copy of the picture is never a light
         const uint32_t w = (img0 & 0x3FF) + 1, h = ((img0 >> 10) & 0x3FF) + 1, fmt = (img0 >> 20) & 15;
@@ -3619,6 +3621,7 @@ static const IntTexInfo* interiorTexture() {
                 if (lum > 0.82f) bright++;
                 r += q[0], b += q[2];
             }
+            info.bright = 0.0f;
             if (solid * 5 >= w * h && solid) {
                 info.bright = float(bright) / float(solid);
                 info.blue = float((b - r) / (255.0 * solid));
@@ -3633,9 +3636,20 @@ static const IntTexInfo* interiorTexture() {
 static void interiorProbe() {
     if (!s_intIndoors && !kInteriorTextures[0].name) return;  // outdoors only listed ones are lights
     const IntTexInfo* tex = interiorTexture();
-    if (!tex || tex->listed == kIntNone) return;
+    s_intProbes++;
+    if (!tex || tex->listed == kIntNone) {
+        s_intNoTex++;
+        return;
+    }
     const bool listed = tex->listed >= 0;
-    if (!listed && (!s_intIndoors || tex->bright < 0.45f)) return;
+    if (!listed && tex->bright < 0.0f) {
+        s_intUnmeasured++;
+        return;
+    }
+    if (!listed && (!s_intIndoors || tex->bright < 0.45f)) {
+        s_intDim++;
+        return;
+    }
     // the corners, grouped by where they are (model space)
     struct Group {
         float lo[3], hi[3], sum[3];
@@ -3698,11 +3712,17 @@ static void interiorProbe() {
         const bool flat = ext[thin] < 0.2f * big;
         int kind = tex->listed;
         if (!listed) {  // a guess: small and bright, a window bluish and flat
-            if (big < 15.0f || big > 700.0f) continue;
+            if (big < 15.0f || big > 700.0f) {
+                s_intWrongSize++;
+                continue;
+            }
             if (tex->blue > 0.06f && flat && big >= 60.0f) kind = kIntWindow;
             else if (tex->blue > 0.06f && big < 160.0f) kind = kIntScreen;
             else if (tex->blue <= 0.06f && big < 300.0f) kind = kIntLamp;
-            else continue;
+            else {
+                s_intWrongSize++;
+                continue;
+            }
         }
         float v[3], w[3];
         for (int r = 0; r < 3; r++) v[r] = m[r * 4] * c[0] + m[r * 4 + 1] * c[1] + m[r * 4 + 2] * c[2] + m[r * 4 + 3];
@@ -3729,6 +3749,7 @@ static void interiorProbe() {
                 break;
             }
         }
+        s_intFound++;
         if (known || s_intLights.size() >= 128) continue;
         s_intLights.push_back(InteriorLight{{w[0], w[1], w[2]}, kind, big, now});
         static int s_told;
@@ -3746,6 +3767,30 @@ extern "C" void GXPC_InteriorView(int mode, int indoors, const float view[3][4])
     s_intMode = mode < 0 ? 0 : mode > 2 ? 2 : mode;
     s_intIndoors = indoors != 0;
     s_intViewOk = s_intMode && view;
+    // the log, every 10 seconds or so while on: what was looked at, the brightest textures seen
+    static uint32_t s_told;
+    const uint32_t frame = GXPC_FrameCount();
+    if (s_intMode && frame - s_told >= 600) {
+        s_told = frame;
+        logmsg("interior lights: %s; %u draws looked at: %u with no texture or not a light, %u textures not "
+               "measured (palette or huge), %u too dim (or outdoors), %u the wrong size, %u lights; %zu lights known",
+               s_intIndoors ? "indoors" : "outdoors (only listed textures)", s_intProbes, s_intNoTex, s_intUnmeasured,
+               s_intDim, s_intWrongSize, s_intFound, s_intLights.size());
+        // the five brightest textures measured
+        const IntTexInfo* top[5] = {};
+        for (const auto& kv : s_intTex) {
+            const IntTexInfo* t = &kv.second;
+            for (int i = 0; i < 5; i++)
+                if (!top[i] || t->bright > top[i]->bright) {
+                    for (int j = 4; j > i; j--) top[j] = top[j - 1];
+                    top[i] = t;
+                    break;
+                }
+        }
+        for (int i = 0; i < 5 && top[i] && top[i]->bright > 0.0f; i++)
+            logmsg("interior lights:   bright %.2f, blue %.2f: %s", top[i]->bright, top[i]->blue, top[i]->name.c_str());
+        s_intProbes = s_intNoTex = s_intUnmeasured = s_intDim = s_intWrongSize = s_intFound = 0;
+    }
     if (!s_intViewOk) return;
     for (int r = 0; r < 3; r++)
         for (int c = 0; c < 4; c++) s_intView[r * 4 + c] = view[r][c];

@@ -861,6 +861,7 @@ struct SmoothPoint {
     uint8_t count;
 };
 std::unordered_map<uint64_t, SmoothPoint> s_smooth;
+uint32_t s_smoothLit, s_smoothUnlit, s_smoothNoNormals, s_smoothDone, s_smoothChanged;
 uint32_t s_smoothFrame;
 const float kSmoothCos = 0.45f;  // about 63 degrees
 uint64_t smoothKey(const void* list, const float* pos, uint8_t mtx) {
@@ -904,16 +905,70 @@ static void smoothNormals(uint8_t* out, uint32_t count, uint32_t fmt, uint32_t s
         }
         const float sl = sqrtf(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
         if (sl < 1e-6f) continue;
+        s_smoothDone++;
+        if (std::fabs(sum[0] / sl - own[0]) + std::fabs(sum[1] / sl - own[1]) + std::fabs(sum[2] / sl - own[2]) > 0.02f)
+            s_smoothChanged++;
         for (int k = 0; k < 3; k++) n[k] = sum[k] / sl * len;  // the length it had (scaled normals stay so)
+    }
+}
+// The same for a model whose shading is painted on its corners (no light of the game's: SMS's
+// people mostly), the colours: each corner's becomes the average of the colours the model has at that
+// point that are near its own (a hat's edge against a face stays a hard edge).
+struct SmoothColour {
+    uint8_t c[6][4];
+    uint32_t seen[6];
+    uint8_t count;
+};
+std::unordered_map<uint64_t, SmoothColour> s_smoothClr;
+static void smoothColours(uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride) {
+    const VtxFmtLayout& lay = vtxFmtLayout(fmt);
+    if (s_smoothClr.size() > 400000) s_smoothClr.clear();
+    const uint32_t now = s_smoothFrame;
+    for (uint32_t v = 0; v < count; v++) {
+        uint8_t* vert = out + size_t(v) * stride;
+        const float* pos = reinterpret_cast<const float*>(vert);
+        uint8_t* c = vert + lay.clr[0];
+        SmoothColour& sc = s_smoothClr[smoothKey(g.smoothList, pos, (fmt & VF_MTX) ? vert[lay.mtx] : 0) ^ 0x9E3779B97F4A7C15ull];
+        int at = -1, oldest = 0;
+        for (int i = 0; i < sc.count; i++) {
+            if (memcmp(sc.c[i], c, 4) == 0) at = i;
+            if (sc.seen[i] < sc.seen[oldest]) oldest = i;
+        }
+        if (at < 0) at = sc.count < 6 ? sc.count++ : oldest;
+        memcpy(sc.c[at], c, 4);
+        sc.seen[at] = now;
+        int sum[4] = {0, 0, 0, 0}, n = 0;
+        for (int i = 0; i < sc.count; i++) {
+            if (now - sc.seen[i] > 3) continue;
+            const int d = std::abs(int(sc.c[i][0]) - c[0]) + std::abs(int(sc.c[i][1]) - c[1]) + std::abs(int(sc.c[i][2]) - c[2]);
+            if (d > 110) continue;  // another colour: an edge the model means
+            for (int k = 0; k < 4; k++) sum[k] += sc.c[i][k];
+            n++;
+        }
+        if (n < 2) continue;
+        s_smoothDone++;
+        uint8_t avg[4];
+        for (int k = 0; k < 4; k++) avg[k] = uint8_t((sum[k] + n / 2) / n);
+        if (std::abs(int(avg[0]) - c[0]) + std::abs(int(avg[1]) - c[1]) + std::abs(int(avg[2]) - c[2]) > 6) s_smoothChanged++;
+        memcpy(c, avg, 3);  // its own alpha kept
     }
 }
 extern "C" void GXPC_SmoothCharacters(int mode) {
     s_smoothFrame++;
+    // the log, every 10 seconds or so while on
+    if (g.smoothChars && s_smoothFrame % 600 == 0) {
+        logmsg("smooth characters: %u corners drawn (%u lit by the game's lights, %u not: their colours are "
+               "painted on), %u smoothed (%u changed), %u with neither normals nor colours; %zu points known",
+               s_smoothLit + s_smoothUnlit, s_smoothLit, s_smoothUnlit, s_smoothDone, s_smoothChanged,
+               s_smoothNoNormals, s_smooth.size());
+        s_smoothLit = s_smoothUnlit = s_smoothNoNormals = s_smoothDone = s_smoothChanged = 0;
+    }
     mode = mode < 0 ? 0 : mode > 2 ? 2 : mode;
     if (g.smoothChars == mode) return;
     flushBatch();
     g.smoothChars = mode;
     s_smooth.clear();
+    s_smoothClr.clear();
 }
 
 static void dlRecordPrimitive(uint8_t opcode, const uint8_t* p, uint32_t count, int vat, const DecSetup& S,
@@ -938,7 +993,14 @@ static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t 
     uint8_t* out = primitiveBegin(opcode, count, S.fmt, stride);
     if (!L.pos.mode) memset(out, 0, size_t(count) * stride);  // no position: keep the slot defined
     for (int k = 0; k < nops; k++) ops[k].fn(ops[k], p, L.size, out, stride, count);
-    if (g.smoothDraw && (S.fmt & VF_NRM) && !(S.fmt & VF_NBT)) smoothNormals(out, count, S.fmt, stride);
+    if (g.smoothDraw) {
+        // (the log: how much of what is drawn is smoothed, and lit by the game's lights at all)
+        const bool lit = (g.xfReg[XFR_COLOR0CTRL] & 2) != 0;
+        (lit ? s_smoothLit : s_smoothUnlit) += count;
+        if (lit && (S.fmt & VF_NRM) && !(S.fmt & VF_NBT)) smoothNormals(out, count, S.fmt, stride);
+        else if (!lit && (S.fmt & VF_CLR0)) smoothColours(out, count, S.fmt, stride);
+        else s_smoothNoNormals += count;
+    }
     primitiveEnd(opcode, count);
     if (s_dlRec) dlRecordPrimitive(opcode, p, count, vat, S, out);
     return p + size_t(count) * L.size;
