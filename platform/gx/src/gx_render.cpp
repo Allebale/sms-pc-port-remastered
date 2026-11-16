@@ -2009,7 +2009,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     const bool plain = !logic && !sub
                        && (!blend || (srcf != 0 && srcf != 2 && srcf != 3 && dstf != 1 && dstf != 2 && dstf != 3));
     const bool tested = g.bp[BP_ZMODE] & 1;
-    plight[64] = g.plightActive && plain && tested ? float(g.plightCount) : 0.0f;
+    plight[64] = g.plightActive && plain && tested ? float(g.plightShown) : 0.0f;
     if (g.plightActive && !(plain && tested)) {  // for the log: each kind left unlit, once
         static uint32_t s_told[24];
         static int s_toldCount;
@@ -2458,6 +2458,163 @@ static void probeBatch() {
     s_probeTold++;
 }
 
+// ------------------------------------------------------------------ Interior Lights
+// The rooms' lamps and windows light them (Interior Lights, Graphics page). They are known by their
+// material's name, found with the Texture Log (kRoomLights). A named display list (GXPC_NameList)
+// whose material is listed is measured the first time the main camera draws it: its corners in the
+// world, grouped (one material holds every lamp of a room), each group a light where it is (a
+// window's moved off the glass into the room). They join Global Illumination's eight point lights
+// (GXPC_LightsView), the nearest the camera first.
+enum { kRoomLamp = 0, kRoomWindow = 1 };
+struct RoomLightKind {
+    const char* material;  // the start of the material's name
+    int kind;
+};
+static const RoomLightKind kRoomLights[] = {
+    {"_3kasa", kRoomLamp},     // Super Mario Eclipse's Hotel Lacrima: the lampshades (_3kasa_16)
+    {"_1Fmado", kRoomWindow},  // ...its windows (_1Fmado_12)
+    {nullptr, 0},
+};
+struct RoomLight {
+    float p[3];
+    int kind;
+    float size;
+};
+static std::vector<RoomLight> s_roomLights;
+static std::unordered_map<const void*, int> s_roomLists;  // a light's display list: its kind (+0x100 measured)
+static int s_roomMode;
+static bool s_roomViewOk;
+static float s_roomInv[12], s_roomProj[7];
+static const void* s_roomMeasuring;
+static int s_roomMeasureKind;
+struct RoomGroup {
+    float lo[3], hi[3], sum[3];
+    int n;
+};
+static std::vector<RoomGroup> s_roomGroups;
+
+static void roomName(const void* list, const char* name) {
+    // the material's own name: up to " (its owner)"
+    const char* end = strstr(name, " (");
+    const size_t len = end ? size_t(end - name) : strlen(name);
+    for (const RoomLightKind* k = kRoomLights; k->material; k++) {
+        const size_t kl = strlen(k->material);
+        if (len >= kl && strncmp(name, k->material, kl) == 0) {
+            s_roomLists[list] = k->kind;
+            return;
+        }
+    }
+}
+// Each frame, from the main camera as it sets its projection: the setting and its view
+extern "C" void GXPC_RoomLightsView(int mode, const float view[3][4]) {
+    s_roomMode = mode != 0;
+    s_roomViewOk = s_roomMode && view;
+    if (!s_roomViewOk) return;
+    for (int r = 0; r < 3; r++) {
+        s_roomInv[r * 4 + 0] = view[0][r], s_roomInv[r * 4 + 1] = view[1][r], s_roomInv[r * 4 + 2] = view[2][r];
+        s_roomInv[r * 4 + 3] = -(view[0][r] * view[0][3] + view[1][r] * view[1][3] + view[2][r] * view[2][3]);
+    }
+    memcpy(s_roomProj, g.projection, sizeof s_roomProj);
+}
+// A light's display list about to be drawn by the main camera, not yet measured: drawn from its
+// commands this once (gx_fifo.cpp), its corners taken (roomMeasure)
+bool roomMeasureBegin(const void* list) {
+    if (!s_roomViewOk || s_roomLists.empty()) return false;
+    auto it = s_roomLists.find(list);
+    if (it == s_roomLists.end() || it->second >= 0x100) return false;
+    if ((g.xfReg[XFR_PROJ + 6] & 1) || g.userClipOn || memcmp(g.projection, s_roomProj, sizeof s_roomProj) != 0) return false;
+    s_roomMeasuring = list;
+    s_roomMeasureKind = it->second;
+    s_roomGroups.clear();
+    return true;
+}
+void roomMeasure(const uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride) {
+    const VtxFmtLayout& l = vtxFmtLayout(fmt);
+    const uint32_t defIdx = g.xfReg[XFR_MATIDX_A] & 63;
+    for (uint32_t v = 0; v < count; v++) {
+        const uint8_t* vx = out + size_t(v) * stride;
+        float pos[3], m[12], c[3], w[3];
+        memcpy(pos, vx, 12);
+        memcpy(m, &g.xfMem[((fmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx) * 4], sizeof m);
+        for (int r = 0; r < 3; r++) c[r] = m[r * 4] * pos[0] + m[r * 4 + 1] * pos[1] + m[r * 4 + 2] * pos[2] + m[r * 4 + 3];
+        for (int r = 0; r < 3; r++) w[r] = s_roomInv[r * 4] * c[0] + s_roomInv[r * 4 + 1] * c[1] + s_roomInv[r * 4 + 2] * c[2] + s_roomInv[r * 4 + 3];
+        RoomGroup* at = nullptr;
+        for (RoomGroup& gr : s_roomGroups) {
+            const float dx = w[0] - gr.sum[0] / gr.n, dy = w[1] - gr.sum[1] / gr.n, dz = w[2] - gr.sum[2] / gr.n;
+            if (dx * dx + dy * dy + dz * dz < 250.0f * 250.0f) {
+                at = &gr;
+                break;
+            }
+        }
+        if (!at) {
+            if (s_roomGroups.size() >= 64) continue;
+            s_roomGroups.push_back(RoomGroup{{w[0], w[1], w[2]}, {w[0], w[1], w[2]}, {0, 0, 0}, 0});
+            at = &s_roomGroups.back();
+        }
+        for (int k = 0; k < 3; k++) {
+            at->lo[k] = std::min(at->lo[k], w[k]);
+            at->hi[k] = std::max(at->hi[k], w[k]);
+            at->sum[k] += w[k];
+        }
+        at->n++;
+    }
+}
+void roomMeasureEnd() {
+    const void* list = s_roomMeasuring;
+    s_roomMeasuring = nullptr;
+    if (!list) return;
+    s_roomLists[list] = s_roomMeasureKind + 0x100;
+    const float cam[3] = {s_roomInv[3], s_roomInv[7], s_roomInv[11]};
+    int made = 0;
+    for (const RoomGroup& gr : s_roomGroups) {
+        if (gr.n < 3) continue;
+        RoomLight l;
+        l.kind = s_roomMeasureKind;
+        float ext[3];
+        for (int k = 0; k < 3; k++) l.p[k] = (gr.lo[k] + gr.hi[k]) * 0.5f, ext[k] = gr.hi[k] - gr.lo[k];
+        l.size = std::max(ext[0], std::max(ext[1], ext[2]));
+        if (l.kind == kRoomWindow) {  // off the glass, into the room: the side the camera is on
+            int thin = 0;
+            for (int k = 1; k < 3; k++)
+                if (ext[k] < ext[thin]) thin = k;
+            l.p[thin] += cam[thin] >= l.p[thin] ? 140.0f : -140.0f;
+        }
+        s_roomLights.push_back(l);
+        made++;
+        logmsg("interior lights: %s at %.0f %.0f %.0f, %.0f across", l.kind == kRoomWindow ? "a window" : "a lamp",
+               l.p[0], l.p[1], l.p[2], l.size);
+    }
+    if (!made) logmsg("interior lights: a light's material drawn, but no light found in it");
+}
+// The rooms' lights nearest the camera, after the game's (Global Illumination's) in `world` (8 floats
+// each, as GXPC_SetLights); returns the count
+static int roomAdd(float* world, int count) {
+    if (!s_roomMode || !s_roomViewOk || s_roomLights.empty() || count >= 8) return count;
+    const float cam[3] = {s_roomInv[3], s_roomInv[7], s_roomInv[11]};
+    static const float kRadius[2] = {700.0f, 1000.0f};
+    static const float kColour[2][4] = {
+        {1.0f, 0.82f, 0.58f, 0.8f},  // a lamp: warm
+        {0.85f, 0.92f, 1.0f, 0.7f},  // a window: daylight
+    };
+    std::vector<std::pair<float, int>> byDist;
+    for (size_t i = 0; i < s_roomLights.size(); i++) {
+        const RoomLight& l = s_roomLights[i];
+        const float dx = l.p[0] - cam[0], dy = l.p[1] - cam[1], dz = l.p[2] - cam[2];
+        byDist.push_back(std::make_pair(dx * dx + dy * dy + dz * dz, int(i)));
+    }
+    std::sort(byDist.begin(), byDist.end());
+    for (size_t k = 0; k < byDist.size() && count < 8; k++) {
+        const RoomLight& l = s_roomLights[byDist[k].second];
+        if (byDist[k].first > 6000.0f * 6000.0f) break;
+        float* o = world + count * 8;
+        memcpy(o, l.p, sizeof l.p);
+        o[3] = kRadius[l.kind];
+        memcpy(o + 4, kColour[l.kind], 4 * sizeof(float));
+        count++;
+    }
+    return count;
+}
+
 // The Texture Log (Graphics page; GXPC_TextureLog from port_shadows.cpp, with the main camera's view
 // each frame): every four seconds, one frame's draws are decoded afresh (not from the display-list
 // cache) and each triangle of the main camera's view under the middle of the screen is found; the
@@ -2475,9 +2632,15 @@ struct PickHit {
 static std::vector<PickHit> s_pickHits;
 static std::unordered_map<const void*, std::string> s_listNames;
 extern "C" void GXPC_NameList(const void* list, const char* name) {
-    if (list && name) s_listNames[list] = name;
+    if (!list || !name) return;
+    s_listNames[list] = name;
+    roomName(list, name);  // Interior Lights: a lamp's or a window's
 }
-extern "C" void GXPC_NameClear(void) { s_listNames.clear(); }
+extern "C" void GXPC_NameClear(void) {  // a new stage
+    s_listNames.clear();
+    s_roomLists.clear();
+    s_roomLights.clear();
+}
 extern "C" void GXPC_TextureLog(int on) {
     if (g_pickArmed) {  // last frame's, told
         g_pickArmed = false;
@@ -3879,12 +4042,17 @@ static void swayView(const float view[3][4]) {
 extern "C" void GXPC_LightsView(const float view[3][4]) {
     flushBatch();
     swayView(view);  // Moving Vegetation's wind, seen from the same camera
-    if (!view || !g.plightCount) {
+    // the game's lights (Global Illumination's), then the rooms' nearest (Interior Lights)
+    float world[64];
+    if (g.plightCount) memcpy(world, g.plightWorld, size_t(g.plightCount) * 8 * sizeof(float));
+    const int count = roomAdd(world, g.plightCount);
+    g.plightShown = count;
+    if (!view || !count) {
         g.plightArmed = g.plightActive = false;
         return;
     }
-    for (int i = 0; i < g.plightCount; i++) {
-        const float* w = g.plightWorld + i * 8;
+    for (int i = 0; i < count; i++) {
+        const float* w = world + i * 8;
         for (int r = 0; r < 3; r++)
             g.plight[i * 8 + r] = view[r][0] * w[0] + view[r][1] * w[1] + view[r][2] * w[2] + view[r][3];
         g.plight[i * 8 + 3] = w[3];

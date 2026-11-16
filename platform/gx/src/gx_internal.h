@@ -163,6 +163,7 @@ struct State {
     // 16 vec4s, then (count, ...)); lit while what is drawn is that view's (its projection).
     float plightWorld[64];
     int plightCount;
+    int plightShown;  // in the shader: the game's and Interior Lights' (gx_render.cpp GXPC_LightsView)
     float plight[68];
     float plightProj[7];
     bool plightArmed, plightActive;
@@ -227,6 +228,10 @@ void flushBatch();
 // The Texture Log (gx_render.cpp): one frame's draws looked at, each primitive's triangles under the
 // middle of the screen found as it is decoded (gx_fifo.cpp), with its display list (named by the game)
 extern bool g_pickArmed;
+// Interior Lights (gx_render.cpp): a lamp's or a window's display list measured as it is first drawn
+bool roomMeasureBegin(const void* list);
+void roomMeasure(const uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride);
+void roomMeasureEnd();
 void pickTriangles(uint8_t op, const uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride, const void* list);
 
 // Changes made while the game runs, by the settings menu (gx_settings.cpp), on the GL thread.

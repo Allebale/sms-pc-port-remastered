@@ -974,6 +974,7 @@ extern "C" void GXPC_SmoothCharacters(int mode) {
 static void dlRecordPrimitive(uint8_t opcode, const uint8_t* p, uint32_t count, int vat, const DecSetup& S,
                               const uint8_t* out);
 static const void* s_curList;  // the display list being drawn (the Texture Log's names)
+static const void* s_roomMeasuring;  // Interior Lights: the light's list being measured
 static struct DlEntry* s_dlRec = nullptr;  // the display list being recorded into the cache
 
 static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t count, const VtxLayout& L, int vat) {
@@ -1003,6 +1004,7 @@ static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t 
         else s_smoothNoNormals += count;
     }
     if (g_pickArmed) pickTriangles(opcode, out, count, S.fmt, stride, s_curList);  // the Texture Log
+    if (s_roomMeasuring && s_curList == s_roomMeasuring) roomMeasure(out, count, S.fmt, stride);  // Interior Lights
     primitiveEnd(opcode, count);
     if (s_dlRec) dlRecordPrimitive(opcode, p, count, vat, S, out);
     return p + size_t(count) * L.size;
@@ -1460,6 +1462,14 @@ static void callDisplayListBody(const uint8_t* data, uint32_t size) {
 }
 
 static void callDisplayListInner(const uint8_t* data, uint32_t size) {
+    // Interior Lights: a lamp's or a window's list, its first draw by the main camera: measured
+    if (data && !s_dlRec && !s_roomMeasuring && roomMeasureBegin(data)) {
+        s_roomMeasuring = data;
+        runCommands(data, size);
+        s_roomMeasuring = nullptr;
+        roomMeasureEnd();
+        return;
+    }
     if (!data || g.smoothDraw || g_pickArmed || !dlCacheEnabled() || !rendererReady() || s_dlRec) {
         runCommands(data, size);
         return;

@@ -94,6 +94,10 @@ int port_skip_off_screen(void);
 void GXPC_TextureLog(int on);
 void GXPC_NameList(const void* list, const char* name);
 void GXPC_NameClear(void);
+// Interior Lights (Graphics page): the rooms' lamps and windows (known by their materials' names) light
+// them (gx_render.cpp); from the main camera each frame, with its view
+void GXPC_RoomLightsView(int mode, const float view[3][4]);
+int port_interior_lights(void);
 int port_texture_log(void);
 // Smooth Characters: people's and enemies' (2: and Mario's) flat faces shaded round (gx_fifo.cpp)
 void GXPC_SmoothCharacters(int mode);

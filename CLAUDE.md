@@ -229,6 +229,11 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   frame is decoded afresh (no display-list cache) and each primitive's triangles under the screen's middle are
   found exactly (`pickTriangles`), with their display list's name (`GXPC_NameList`, from `nameModels` in
   `port_shadows.cpp` at stage setup: material and owner). Light by material name.
+  **Interior Lights** (Graphics page, Off; step 1, lights only): `kRoomLights` in `gx_render.cpp` lists the
+  materials by the start of their names (found with the Texture Log): Hotel Lacrima's lampshades `_3kasa`
+  (`_3kasa_16`, texture `tex1_128x128_m_dcfc514562a71028_14`), its windows `_1Fmado` (`_1Fmado_12`). A listed
+  list's first main-camera draw is decoded and its corners grouped in the world (`roomMeasure`): each group a
+  light (`interior lights:` log lines), joining Global Illumination's eight (`roomAdd`, `g.plightShown`).
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 
