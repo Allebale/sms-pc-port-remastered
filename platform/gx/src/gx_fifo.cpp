@@ -1391,12 +1391,13 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
             g.shadowNoCast = true;
             g.charDraw     = true;
         }
+        if (g.smoothChars && !charFx) flushBatch();  // (its own batch: its shading is the smooth one)
         g.smoothDraw = g.smoothChars != 0;
         g.smoothList = data;
         callDisplayListInner(data, size);
+        flushBatch();  // (drawn with its flags still on)
         g.smoothDraw = false;
         if (charFx) {
-            flushBatch();
             g.shadowNoCast = false;
             g.charDraw     = false;
         }
@@ -1404,9 +1405,11 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
     }
     // Smooth Characters' Mario too: his own draw (GXPC_ShadowTag)
     if (g.smoothChars == 2 && g.shadowTag && data && !s_dlRec) {
+        flushBatch();
         g.smoothDraw = true;
         g.smoothList = data;
         callDisplayListInner(data, size);
+        flushBatch();
         g.smoothDraw = false;
         return;
     }

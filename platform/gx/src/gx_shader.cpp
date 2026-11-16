@@ -825,8 +825,14 @@ static std::string genFS(const ShaderKey& k) {
          "    vec3 fn = cross(dFdx(v_wp), dFdy(v_wp));\n"
          "    fn = dot(fn, fn) > 1e-12 ? normalize(fn) : vec3(0.0, 0.0, 1.0);\n"
          "    if (dot(fn, v_wp) > 0.0) fn = -fn;\n"
+         // Smooth Characters (u_wet[0].w): the model's own smooth normal (on the face's side) in place
+         // of the flat face's, and the side turned from the sun shaded smoothly, as it would be: a
+         // low-poly character is not lit and shaded face by face
+         "    bool smoothN = u_wet[0].w > 0.5 && dot(v_wn, v_wn) > 1e-8;\n"
+         "    if (smoothN) { vec3 sn = normalize(v_wn); fn = dot(sn, fn) < 0.0 ? -sn : sn; }\n"
          "    float nl = dot(fn, u_shadow[10].xyz);\n"
-         "    if (nl > 0.0) {\n"
+         "    float away = smoothN ? 1.0 - smoothstep(-0.2, 0.15, nl) : 0.0;\n"
+         "    if (nl > 0.0 || away > 0.0) {\n"
          "      float lean = 1.0 + 2.0 * (1.0 - nl);\n"
          "      vec3 sp0 = v_wp + u_shadow[10].xyz * u_shadow[11].z;\n"
          "      float sb = min(u_shadow[11].w, 5.0) * 0.15;\n"  // Soft Shadow Edges: pushed out a little more
@@ -838,11 +844,12 @@ static std::string genFS(const ShaderKey& k) {
          "      float wn = a.z < 1.0 ? 1.0 - smoothstep(0.8, 0.95, ea) : 0.0;\n"
          "      float dark = 0.0;\n"
          "      bool soft = u_shadow[11].w > 0.0;\n"
+         "      if (nl <= 0.0) wn = 0.0, eb = 2.0;\n"
          "      if (wn > 0.0) dark = wn * (1.0 - shadowLit(a, 0.0, soft ? shadowSlope(fn, u_shadow[0], u_shadow[1], u_shadow[2]) : vec2(0.0)));\n"
          "      if (wn < 1.0 && eb < 1.0 && b.z < 1.0)\n"
          "        dark += (1.0 - wn) * (1.0 - shadowLit(b, 1.0, soft ? shadowSlope(fn, u_shadow[3], u_shadow[4], u_shadow[5]) : vec2(0.0))) * (1.0 - smoothstep(0.75, 1.0, eb));\n"
          // a little blue, as shade lit by the sky is
-         "      color.rgb *= 1.0 - u_shadow[9].x * dark * smoothstep(0.0, 0.2, nl) * vec3(1.0, 0.94, 0.8);\n"
+         "      color.rgb *= 1.0 - u_shadow[9].x * max(dark * smoothstep(0.0, 0.2, nl), away) * vec3(1.0, 0.94, 0.8);\n"
          "    }\n"
          "  }\n"
          // Fire Lights (u_plight[16].x lights, while their view is drawn): each a warm light that
