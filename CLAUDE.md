@@ -246,6 +246,9 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   time, a light no longer among the nearest fading out over 0.6 s before another fades into its slot, and the two
   shadows hand over the same way. Lights also fade over the last quarter of Distance. (A first try faded by
   distance to the next light: with windows close together it dimmed every light to almost nothing.)
+  The nearest are picked by distance to Mario (`s_roomFocus`, Real Shadows' focus), a lamp counted as half as far:
+  picked by the camera, a close camera in Sirena's hotel took the panels over the doors (`_1Fmado`, logged as
+  windows) and the lamp over Mario never cast.
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 

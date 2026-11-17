@@ -2617,6 +2617,11 @@ struct RoomActive {
     bool want, shadow; // among the nearest; one of the two that cast
 };
 static std::vector<RoomActive> s_roomActive;
+// Mario, in the world (GXPC_ShadowFrame's focus, each frame Real Shadows are on): the lights are
+// picked by how near they are to him, not to the camera (else a near camera takes the lights near
+// itself, and the lamp over Mario goes without a shadow); a lamp counts as half as far as a window
+static float s_roomFocus[3];
+static uint32_t s_roomFocusFrame = ~0u;
 static std::chrono::steady_clock::time_point s_roomLast;
 static int roomAdd(float* world, int count) {
     s_roomAddedN = 0;
@@ -2635,12 +2640,16 @@ static int roomAdd(float* world, int count) {
         {1.0f, 0.82f, 0.58f, 0.8f},  // a lamp: warm
         {0.85f, 0.92f, 1.0f, 0.7f},  // a window: daylight
     };
+    const uint32_t frame = GXPC_FrameCount();
+    const float* ref = s_roomFocusFrame != ~0u && frame - s_roomFocusFrame < 4 ? s_roomFocus : cam;
     std::vector<std::pair<float, int>> byDist;
     for (size_t i = 0; i < s_roomLights.size(); i++) {
         const RoomLight& l = s_roomLights[i];
         const float dx = l.p[0] - cam[0], dy = l.p[1] - cam[1], dz = l.p[2] - cam[2];
-        const float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < s_roomDist * s_roomDist) byDist.push_back(std::make_pair(d2, int(i)));
+        if (dx * dx + dy * dy + dz * dz >= s_roomDist * s_roomDist) continue;  // Distance: from the camera
+        const float fx = l.p[0] - ref[0], fy = l.p[1] - ref[1], fz = l.p[2] - ref[2];
+        const float d2 = (fx * fx + fy * fy + fz * fz) * (l.kind == kRoomLamp ? 0.25f : 1.0f);
+        byDist.push_back(std::make_pair(d2, int(i)));
     }
     std::sort(byDist.begin(), byDist.end());
     const size_t slots = std::min(size_t(8 - count), size_t(kRoomSlots));
@@ -4302,6 +4311,8 @@ extern "C" void GXPC_ShadowFrame(const float view[3][4], const float sun[3], con
     }
     shadowMake();
     const uint32_t frame = GXPC_FrameCount();
+    memcpy(s_roomFocus, focus, sizeof s_roomFocus);  // Interior Lights: picked near Mario
+    s_roomFocusFrame = frame;
     if (frame != s_shadowFrame) {  // a new frame: last frame's maps are read, the others drawn
         s_shadowFrame = frame;
         s_shadowWrite ^= 1;
