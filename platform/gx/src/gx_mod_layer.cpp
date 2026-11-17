@@ -109,7 +109,9 @@ unsigned textureFor(uint32_t id) {
 }
 
 void initGl() {
-    s_prog = gx::compileInternalProgram(kVs, kFs);
+    // named as kVs places them: with the Vulkan renderer nothing a mod draws showed without them
+    static const char* const kAttribs[] = {"a_pos", "a_uv", "a_color", nullptr};
+    s_prog = gx::compileInternalProgram(kVs, kFs, kAttribs);
     s_uWindow = glGetUniformLocation(s_prog, "u_window");
     s_uTex = glGetUniformLocation(s_prog, "u_tex");
     glGenVertexArrays(1, &s_vao);

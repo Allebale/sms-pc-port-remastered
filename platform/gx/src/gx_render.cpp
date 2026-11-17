@@ -403,7 +403,7 @@ void traceProbe();
 void (*g_displayCopyHook)(const void* xfb) = nullptr;
 bool rendererReady() { return s_ready; }
 
-static GLuint compileProgram(const char* vs, const char* fs) {
+static GLuint compileProgram(const char* vs, const char* fs, const char* const* attribs = nullptr) {
     auto sh = [](GLenum t, const char* src) {
         GLuint s = glCreateShader(t);
         glShaderSource(s, 1, &src, nullptr);
@@ -422,12 +422,17 @@ static GLuint compileProgram(const char* vs, const char* fs) {
     glAttachShader(p, v);
     glAttachShader(p, f);
     glBindFragDataLocation(p, 0, "o_color");
+    // the vertex inputs' places by name: the Vulkan renderer's GL (glvk) takes them only so, not from the
+    // shader's layout(location = N), and fails the link of any input not given one
+    for (GLuint i = 0; attribs && attribs[i]; i++) glBindAttribLocation(p, i, attribs[i]);
     glLinkProgram(p);
     glDeleteShader(v);
     glDeleteShader(f);
     return p;
 }
-unsigned compileInternalProgram(const char* vs, const char* fs) { return compileProgram(vs, fs); }
+unsigned compileInternalProgram(const char* vs, const char* fs, const char* const* attribs) {
+    return compileProgram(vs, fs, attribs);
+}
 
 // EFB -> texture conversion.  The output is what sampling the GX texture of
 // the copy's format would return, so later draws can use it directly.
