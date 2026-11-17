@@ -103,6 +103,9 @@ void GXPC_RoomLightsLook(float strength, float shadow, float distance);
 float port_interior_strength(void);
 float port_interior_shadow(void);
 float port_interior_distance(void);
+// Fire Shadows: the nearest of Global Illumination's fires cast shadows (gx_render.cpp)
+void GXPC_FireShadows(int on);
+int port_fire_shadows(void);
 int port_texture_log(void);
 // Smooth Characters: people's and enemies' (2: and Mario's) flat faces shaded round (gx_fifo.cpp)
 void GXPC_SmoothCharacters(int mode);

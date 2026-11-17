@@ -2486,6 +2486,7 @@ struct RoomLight {
 static std::vector<RoomLight> s_roomLights;
 static std::unordered_map<const void*, int> s_roomLists;  // a light's display list: its kind (+0x100 measured)
 static int s_roomMode;
+static bool s_roomInvOk;
 static bool s_roomViewOk;
 static float s_roomInv[12], s_roomProj[7];
 static const void* s_roomMeasuring;
@@ -2512,7 +2513,8 @@ static void roomName(const void* list, const char* name) {
 extern "C" void GXPC_RoomLightsView(int mode, const float view[3][4]) {
     s_roomMode = mode;
     s_roomViewOk = s_roomMode && view;
-    if (!s_roomViewOk) return;
+    s_roomInvOk = view != nullptr;  // the camera, for Fire Shadows too
+    if (!view) return;
     for (int r = 0; r < 3; r++) {
         s_roomInv[r * 4 + 0] = view[0][r], s_roomInv[r * 4 + 1] = view[1][r], s_roomInv[r * 4 + 2] = view[2][r];
         s_roomInv[r * 4 + 3] = -(view[0][r] * view[0][3] + view[1][r] * view[1][3] + view[2][r] * view[2][3]);
@@ -2612,9 +2614,9 @@ extern "C" void GXPC_RoomLightsLook(float strength, float shadow, float distance
 static const int kRoomSlots = 4;
 static const float kRoomFade = 0.6f;
 struct RoomActive {
-    int idx;           // into s_roomLights
-    float w, sw;       // how much of its light, of its shadow (0 to 1)
-    bool want, shadow; // among the nearest; one of the two that cast
+    int idx;    // into s_roomLights
+    float w;    // how much of its light (0 to 1)
+    bool want;  // among the nearest
 };
 static std::vector<RoomActive> s_roomActive;
 // Mario, in the world (GXPC_ShadowFrame's focus, each frame Real Shadows are on): the lights are
@@ -2624,7 +2626,6 @@ static float s_roomFocus[3];
 static uint32_t s_roomFocusFrame = ~0u;
 static std::chrono::steady_clock::time_point s_roomLast;
 static int roomAdd(float* world, int count) {
-    s_roomAddedN = 0;
     if (!s_roomMode || !s_roomViewOk || s_roomLights.empty() || count >= 8) {
         s_roomActive.clear();
         return count;
@@ -2660,29 +2661,12 @@ static int roomAdd(float* world, int count) {
         bool have = false;
         for (RoomActive& a : s_roomActive)
             if (a.idx == byDist[k].second) a.want = have = true;
-        if (!have && s_roomActive.size() < slots) s_roomActive.push_back(RoomActive{byDist[k].second, 0.0f, 0.0f, true, false});
+        if (!have && s_roomActive.size() < slots) s_roomActive.push_back(RoomActive{byDist[k].second, 0.0f, true});
     }
     for (RoomActive& a : s_roomActive) a.w = a.want ? std::min(1.0f, a.w + step) : a.w - step;
     s_roomActive.erase(std::remove_if(s_roomActive.begin(), s_roomActive.end(),
                                       [](const RoomActive& a) { return a.w <= 0.0f && !a.want; }),
                        s_roomActive.end());
-    int shadows = 0;
-    for (RoomActive& a : s_roomActive) {
-        // its shadow wanted: one of the two nearest wanted lights
-        bool cast = false;
-        for (size_t k = 0; k < byDist.size() && k < 2; k++) cast = cast || byDist[k].second == a.idx;
-        if (a.shadow) {
-            a.sw = cast ? std::min(1.0f, a.sw + step) : a.sw - step;
-            if (a.sw <= 0.0f) a.shadow = false, a.sw = 0.0f;
-        }
-        if (a.shadow) shadows++;
-    }
-    for (RoomActive& a : s_roomActive) {  // a free place among the two: a wanted shadow starts
-        if (shadows >= 2) break;
-        bool cast = false;
-        for (size_t k = 0; k < byDist.size() && k < 2; k++) cast = cast || byDist[k].second == a.idx;
-        if (cast && !a.shadow) a.shadow = true, a.sw = 0.0f, shadows++;
-    }
     for (const RoomActive& a : s_roomActive) {
         if (count >= 8) break;
         const RoomLight& l = s_roomLights[a.idx];
@@ -2693,21 +2677,98 @@ static int roomAdd(float* world, int count) {
         o[3] = kRadius[l.kind];
         memcpy(o + 4, kColour[l.kind], 4 * sizeof(float));
         o[7] *= s_roomStrength * std::max(0.0f, a.w) * (edge < 0.0f ? 0.0f : edge > 1.0f ? 1.0f : edge);
-        if (a.shadow && s_roomAddedN < 2) {
-            RoomAdded& r = s_roomAdded[s_roomAddedN++];
-            memcpy(r.p, l.p, sizeof r.p);
-            r.fr = kRadius[l.kind];
-            const float n = l.size * 0.75f;
-            r.n = l.kind == kRoomLamp ? (n < 10.0f ? 10.0f : n > 200.0f ? 200.0f : n) : 20.0f;
-        }
         count++;
     }
     return count;
 }
-// How much of a room light's shadow shows now (by where it is): 0 when it casts none
-static float roomShadowAmount(const float p[3]) {
-    for (const RoomActive& a : s_roomActive)
-        if (a.shadow && memcmp(s_roomLights[a.idx].p, p, 3 * sizeof(float)) == 0) return a.sw;
+// The two lights that cast shadows (Interior Lights' Lights and Shadows: the room lights in use;
+// Fire Shadows: the fires of Global Illumination, not the Shine Sprites), the nearest to Mario (a
+// lamp or a fire counted as half as far as a window). They change as the room lights do: one no
+// longer among the two fades its shadow out (kRoomFade) before another's fades in. Found again each
+// frame by where they are (a fire may move a little).
+struct Caster {
+    float p[3], fr, n;
+    float sw, amt;  // how much of its shadow shows (0 to 1), and how dark it is at most
+    bool want;
+};
+static std::vector<Caster> s_casters;
+static std::chrono::steady_clock::time_point s_castLast;
+static bool s_fireShadows;
+extern "C" void GXPC_FireShadows(int on) { s_fireShadows = on != 0; }
+static bool samePlace(const float* a, const float* b) {
+    const float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+    return dx * dx + dy * dy + dz * dz < 60.0f * 60.0f;
+}
+// world: the lights given the shader, `game` of them the game's (fires, Shine Sprites), then the rooms'
+static void roomCasters(const float* world, int count, int game) {
+    s_roomAddedN = 0;
+    const bool rooms = s_roomMode >= 2 && s_roomViewOk, fires = s_fireShadows && s_roomInvOk;
+    if (!rooms && !fires) {
+        s_casters.clear();
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    float dt = std::chrono::duration<float>(now - s_castLast).count();
+    s_castLast = now;
+    dt = dt < 0.0f ? 0.0f : dt > 0.1f ? 0.1f : dt;
+    const float step = dt / kRoomFade;
+    const float cam[3] = {s_roomInv[3], s_roomInv[7], s_roomInv[11]};
+    const uint32_t frame = GXPC_FrameCount();
+    const float* ref = s_roomFocusFrame != ~0u && frame - s_roomFocusFrame < 4 ? s_roomFocus : cam;
+    struct Cand {
+        float score;
+        Caster c;
+    };
+    std::vector<Cand> cands;
+    auto score = [&](const float* p, float k) {
+        const float dx = p[0] - ref[0], dy = p[1] - ref[1], dz = p[2] - ref[2];
+        return (dx * dx + dy * dy + dz * dz) * k;
+    };
+    if (fires)
+        for (int i = 0; i < game; i++) {
+            const float* w = world + i * 8;
+            if (w[5] > 0.7f) continue;  // a Shine Sprite's (golden; a fire's is orange): its own model would hide it
+            cands.push_back(Cand{score(w, 0.25f), Caster{{w[0], w[1], w[2]}, w[3], 30.0f, 0.0f, 1.0f, true}});
+        }
+    if (rooms)  // the room lights in use come after the game's, in s_roomActive's order
+        for (size_t k = 0; k < s_roomActive.size() && game + int(k) < count; k++) {
+            const RoomActive& a = s_roomActive[k];
+            if (!a.want) continue;
+            const RoomLight& l = s_roomLights[a.idx];
+            const float* w = world + (game + int(k)) * 8;
+            const float nl = l.size * 0.75f;
+            const float n = l.kind == kRoomLamp ? (nl < 10.0f ? 10.0f : nl > 200.0f ? 200.0f : nl) : 20.0f;
+            cands.push_back(Cand{score(w, l.kind == kRoomLamp ? 0.25f : 1.0f),
+                                 Caster{{w[0], w[1], w[2]}, w[3], n, 0.0f, s_roomShadowAmt, true}});
+        }
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
+    if (cands.size() > 2) cands.resize(2);
+    for (Caster& c : s_casters) {
+        c.want = false;
+        for (const Cand& d : cands)
+            if (samePlace(c.p, d.c.p)) {
+                memcpy(c.p, d.c.p, sizeof c.p);
+                c.fr = d.c.fr, c.n = d.c.n, c.amt = d.c.amt, c.want = true;
+            }
+        c.sw = c.want ? std::min(1.0f, c.sw + step) : c.sw - step;
+    }
+    s_casters.erase(std::remove_if(s_casters.begin(), s_casters.end(), [](const Caster& c) { return c.sw <= 0.0f && !c.want; }),
+                    s_casters.end());
+    for (const Cand& d : cands) {
+        bool have = false;
+        for (const Caster& c : s_casters) have = have || samePlace(c.p, d.c.p);
+        if (!have && s_casters.size() < 2) s_casters.push_back(d.c);
+    }
+    for (const Caster& c : s_casters) {
+        RoomAdded& r = s_roomAdded[s_roomAddedN++];
+        memcpy(r.p, c.p, sizeof r.p);
+        r.fr = c.fr, r.n = c.n;
+    }
+}
+// How much of a light's shadow shows now (by where it is): 0 when it casts none
+static float casterAmount(const float p[3]) {
+    for (const Caster& c : s_casters)
+        if (samePlace(c.p, p)) return std::max(0.0f, c.sw) * c.amt;
     return 0.0f;
 }
 
@@ -4148,7 +4209,8 @@ extern "C" void GXPC_LightsView(const float view[3][4]) {
     if (s_roomMode && s_roomViewOk && !s_roomLights.empty() && game > 8 - kRoomSlots) game = 8 - kRoomSlots;
     const int count = roomAdd(world, game);
     g.plightShown = count;
-    roomShadowFrame(view, world, count);  // Interior Lights' shadows
+    roomCasters(world, count, game);      // which two cast shadows
+    roomShadowFrame(view, world, count);  // Interior Lights' and Fire Shadows' shadows
     if (!view || !count) {
         g.plightArmed = g.plightActive = false;
         return;
@@ -4559,7 +4621,7 @@ static void roomShadowMake() {
 // and last frame's found among the lights (by where they are) to be read
 static void roomShadowFrame(const float view[3][4], const float* world, int count) {
     float* u = g.pshadow;
-    if (s_roomMode < 2 || !view) {
+    if (!(s_roomMode >= 2 || s_fireShadows) || !view) {
         g.pshadowCast = false;
         u[12] = u[13] = 0.0f;
         return;
@@ -4596,13 +4658,13 @@ static void roomShadowFrame(const float view[3][4], const float* world, int coun
         const RoomAdded* wr = li < s_rsCount[s_rsWrite] ? &s_rsLights[s_rsWrite][li] : nullptr;
         if (rd)  // its slot among the shader's lights, plus one (0: not among them)
             for (int i = 0; i < count; i++)
-                if (memcmp(world + i * 8, rd->p, sizeof rd->p) == 0) {
+                if (samePlace(world + i * 8, rd->p)) {
                     u[12 + li] = float(i + 1);
                     break;
                 }
         if (rd && u[12 + li] > 0.0f) {
             // how dark its shadow is: faded out as it nears the third nearest's distance
-            u[14 + li] = s_roomShadowAmt * roomShadowAmount(rd->p);
+            u[14 + li] = casterAmount(rd->p);
             for (int r = 0; r < 3; r++)
                 u[16 + li * 4 + r] = view[r][0] * rd->p[0] + view[r][1] * rd->p[1] + view[r][2] * rd->p[2] + view[r][3];
             u[16 + li * 4 + 3] = rd->fr;
@@ -4622,7 +4684,7 @@ static void roomShadowFrame(const float view[3][4], const float* world, int coun
     if (frame % 240 == 0 && frame != s_rsTold) {
         s_rsTold = frame;
         if (!s_rsCount[s_rsWrite]) {
-            logmsg("interior lights: shadows from none (no room light near; %d of the game's lights)", g.plightCount);
+            logmsg("interior lights: shadows from none (no room light or fire near; %d of the game's lights)", g.plightCount);
         } else {
             const RoomAdded* a = s_rsLights[s_rsWrite];
             logmsg("interior lights: shadows from %d (at %.0f %.0f %.0f, near %.0f; at %.0f %.0f %.0f, near %.0f), "

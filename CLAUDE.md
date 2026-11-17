@@ -249,6 +249,11 @@ Hooks into the game's own code are the `decomp-patches/*.patch` files, applied i
   The nearest are picked by distance to Mario (`s_roomFocus`, Real Shadows' focus), a lamp counted as half as far:
   picked by the camera, a close camera in Sirena's hotel took the panels over the doors (`_1Fmado`, logged as
   windows) and the lamp over Mario never cast.
+  **Fire Shadows** (Graphics page, Off; `GXPC_FireShadows`): Global Illumination's fires join the shadow casters.
+  `roomCasters` picks the two that cast from the fires (not Shine Sprites: told apart by colour, golden green 0.84
+  against a fire's 0.55; their own model would hide everything) and the room lights in use, nearest Mario (fires
+  and lamps counted half as far), handing over with the same 0.6 s fade; matched by place within 60 units, as a
+  fire can move. Fire near plane 30, full darkness (Interior Lights Shadow Strength is for room lights only).
 - **First person pipes**: in first person (the First Person mod), going through a pipe shows no pipe walls around you: looking up, the world outside shows through. Allebale will describe it more.
 - **First person manhole tunnels** (Delfino Plaza): they have only a floor (the game's camera looks down there). Walls and a ceiling drawn from the collision (Nov 2026) kept a faint haze of the surface over them that nothing found removed (not the specular pass's alpha, the see-through pass, the screen composite or drawing them last), so it was removed; Allebale will do it with a level editor later.
 

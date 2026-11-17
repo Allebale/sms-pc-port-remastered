@@ -81,6 +81,7 @@ int s_grassDistance = 2;  // Grass Distance: into kGrassDistances
 int s_grassFlatten = 2;   // Grass Flattening: 0 low .. 4 insane
 int s_grassMario = 0;     // Mario Grass Flattening: 0 dives and landings, 1 always, 2 never
 int s_fireLights = 0;     // Global Illumination (was Fire Lights; the fires and the Shine Sprites light up what is round them)
+int s_fireShadows = 0;   // Fire Shadows: 1 the two nearest fires cast shadows (Global Illumination's lights)
 int s_fireReach = 2;      // Fire Light Intensity: into kFireReaches
 int s_ao = 0;             // Ambient Occlusion: 0 off, 1 fine detail, 2 large shapes, 3 both
 int s_aoStrength = 1;     // Ambient Occlusion Strength: into kAoStrengths
@@ -308,6 +309,8 @@ void load() {
             s_aoDistance = value < 0 ? 0 : value > 3 ? 3 : value;
         } else if (sscanf(line, " firelightreach = %d", &value) == 1) {
             s_fireReach = value < 0 ? 0 : value > 4 ? 4 : value;
+        } else if (sscanf(line, " fireshadows = %d", &value) == 1) {
+            s_fireShadows = value != 0;
         } else if (sscanf(line, " firelights = %d", &value) == 1) {
             s_fireLights = value != 0;
         } else if (sscanf(line, " grassmario = %d", &value) == 1) {
@@ -459,6 +462,8 @@ void save() {
     fprintf(f, "grassmario = %d\n", s_grassMario);
     fprintf(f, "# firelights: Global Illumination: 1 fires and Shine Sprites light up what is around them (and in reflections), 0 not.\n");
     fprintf(f, "firelights = %d\n", s_fireLights);
+    fprintf(f, "# fireshadows: 1 the nearest fires cast shadows (with Global Illumination), 0 not.\n");
+    fprintf(f, "fireshadows = %d\n", s_fireShadows);
     fprintf(f, "# firelightreach: how far a fire's or a Shine Sprite's light goes: 0 very short, 1 short, 2 normal, 3 far, 4 very far.\n");
     fprintf(f, "firelightreach = %d\n", s_fireReach);
     fprintf(f, "# ambientocclusion: shade where surfaces close in: 0 off, 1 fine detail, 2 large shapes, 3 both.\n");
@@ -783,6 +788,19 @@ int fireLightsSet(int i) {
     s_fireLights = i;
     save();
     port_log("[lights] Global Illumination changed: %s\n", i ? "on" : "off");
+    return 1;
+}
+
+int fireShadowsGet() {
+    load();
+    return s_fireShadows;
+}
+int fireShadowsSet(int i) {
+    if (i < 0 || i > 1) return 0;
+    load();
+    s_fireShadows = i;
+    save();
+    port_log("[lights] Fire Shadows changed: %s\n", i ? "on" : "off");
     return 1;
 }
 
@@ -1485,6 +1503,7 @@ const EffectValue kEffects[] = {
     {"Moving Vegetation", {"Off", "Very Windy", "Breezy", "Gentle"}},
     {"Global Illumination", {"Off", "On", "On", "On"}},
     {"Fire Light Intensity", {"Normal", "Very Far", "Far", "Normal"}},
+    {"Fire Shadows", {"Off", "Off", "Off", "Off"}},
     {"Sandy Mario", {"Off", "Heavy", "Heavy", "Heavy"}},
     {"Ambient Occlusion", {"Off", "Large Shapes", "Large Shapes", "Off"}},
     {"Ambient Occlusion Strength", {"Medium", "High", "Medium", "Medium"}},
@@ -1638,6 +1657,9 @@ const PortSetting kPuddleSettings[] = {
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 109, "Fire Light Intensity",
      "How far a fire's or a Shine Sprite's light reaches, with Global Illumination on.", 0, nullptr, fireReachCount,
      fireReachName, fireReachGet, fireReachSet},
+    {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 109, "Fire Shadows",
+     "The nearest fires cast shadows from their light, with Global Illumination on.", 0, nullptr, offOnCount,
+     offOnName, fireShadowsGet, fireShadowsSet},
     {nullptr, PORT_SETTINGS_PAGE_GRAPHICS, 111, "Sandy Mario",
      "Sand sticks to Mario where he touches it (shoes, a belly slide, a fall) and falls away over 20 seconds.",
      0, nullptr, sandyCount, sandyName, sandyGet, sandySet},
@@ -1978,6 +2000,10 @@ int port_shadows_map_size(void) {
 int port_interior_lights(void) {
     load();
     return s_interiorLights;
+}
+int port_fire_shadows(void) {
+    load();
+    return s_fireShadows;
 }
 float port_interior_strength(void) {
     load();
