@@ -411,8 +411,10 @@ enum OverlaySlot {
 // Where GXPC_PresentXFB last put the game's picture in the window (from its top left).
 struct PresentRect { int x, y, w, h; };
 PresentRect lastPresentRect();
-// A GL program from GLSL 330 sources (vertex, fragment), its output o_color.
-unsigned compileInternalProgram(const char* vs, const char* fs);
+// A GL program from GLSL 330 sources (vertex, fragment), its output o_color. attribs: the vertex
+// inputs' names in their locations' order (0, 1, ...), null-terminated; the Vulkan renderer needs them
+// for any shader with vertex inputs (it does not read layout(location = N)).
+unsigned compileInternalProgram(const char* vs, const char* fs, const char* const* attribs = nullptr);
 // Native mods' drawing (gx_mod_layer.cpp), on the GL thread over the presented
 // picture, under the port's own menus.
 void modLayerRender(int winW, int winH);
