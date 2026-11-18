@@ -1,0 +1,30 @@
+Reason: a Dango's head (port_dango_head.h): a Dango stack whose model folder has a head.bmd beside its default.bmd shows it on the top ball (ext/core/game/port_dango_head.cpp): Christmas Mountain's snowman, three balls with a head on top. Without one (all the game's own Dangos) nothing changes.
+
+--- a/src/Enemy/hamukuri.cpp	2026-11-18 23:13:36.794083216 +0100
++++ b/src/Enemy/hamukuri.cpp	2026-11-18 23:13:36.795560310 +0100
+@@ -1,3 +1,6 @@
++#ifdef TARGET_PC
++#include "port_dango_head.h"
++#endif
+ #include <Enemy/HamuKuri.hpp>
+ #include <Enemy/Graph.hpp>
+ #include <Enemy/Conductor.hpp>
+@@ -1978,10 +1981,18 @@
+ 	THamuKuri::init(param_1);
+ 	mSpine->initWith(&TNerveDangoHamuKuriWait::theNerve());
+ 	mActorType = 0x10000010;
++#ifdef TARGET_PC
++	// port: a Dango's head (port_dango_head.h): a head.bmd beside its model
++	port_dango_head_init(this);
++#endif
+ }
+ 
+ void TDangoHamuKuri::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
++#ifdef TARGET_PC
++	// port: a Dango's head (port_dango_head.h): the top ball wears it
++	port_dango_head_update(this);
++#endif
+ 	if (mBoss
+ 	    && !(mBoss->mSpine->getCurrentNerve()
+ 	                 == &TNerveWalkerGenerate::theNerve()
