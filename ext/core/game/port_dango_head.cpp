@@ -31,7 +31,11 @@ struct Ball {
 
 Ball gBalls[kMost];
 int gCount = 0;
-void* gStage = 0;   // the director the list belongs to: a new stage starts it again
+// A new stage starts the list again: a stage's balls are all made while it loads (init), before any of
+// them moves (update), so an init after an update is the next stage's. The director's address alone
+// didn't tell: a stage loaded again (Mario lost a life) can get its director at the same address, and
+// the list kept the old stage's freed balls, filled up and left the new balls without heads.
+bool gMoved = false;
 
 Ball* find(TDangoHamuKuri* dango)
 {
@@ -57,9 +61,8 @@ void swapTo(TDangoHamuKuri* dango, MActor* from, MActor* to)
 
 void port_dango_head_init(TDangoHamuKuri* dango)
 {
-	void* stage = (void*)gpMarDirector;
-	if (stage != gStage) {
-		gStage = stage;
+	if (gMoved) {
+		gMoved = false;
 		gCount = 0;
 	}
 	if (gCount >= kMost || !dango->mManager)
@@ -87,7 +90,8 @@ void port_dango_head_init(TDangoHamuKuri* dango)
 
 void port_dango_head_update(TDangoHamuKuri* dango)
 {
-	if (!gCount || (void*)gpMarDirector != gStage)
+	gMoved = true;
+	if (!gCount)
 		return;
 	Ball* ball = find(dango);
 	if (!ball)
