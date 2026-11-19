@@ -415,8 +415,26 @@ int playerAim(void* m, short* yaw, short* tilt)
 	return 1;
 }
 
+// player->set_hidden_parts' SMS_PLAYER_PART_CAP: his cap and the hair drawn without it (TMarioCap's first two
+// models) left out as he is entered for drawing, in every view, unless he wears the diving helmet. The cap
+// shows them again as it works out his next frame, so this is done each time.
+void hideCap(void* m)
+{
+	const int i = PortPlayerIndex(m);
+	TMario* mario = (TMario*)m;
+	if (!m || i < 0 || i > 1 || m != (void*)PortPlayerMario(i) || !(s_hiddenParts[i] & PORT_PLAYER_PART_CAP))
+		return;
+	TMarioCap* cap = mario->mCap;
+	if (!cap || cap->isModelActive(TMarioCap::E_CAP_MODEL_HELMET))
+		return;
+	for (int k = 0; k < 2; k++)
+		if (cap->unk10[k] && cap->unk10[k]->getModelData())
+			cap->unk10[k]->getModelData()->onFlag1OnAllShapes();
+}
+
 int hidePlayerModel(void* m)
 {
+	hideCap(m);
 	if (!modh_wants(SMS_EV_HIDE_PLAYER_MODEL))
 		return 0;
 	if (PortPlayers() == 2 && PortPlayerIndex(m) != PortViewer())

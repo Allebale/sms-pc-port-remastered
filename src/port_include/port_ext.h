@@ -403,6 +403,7 @@ int port_ext_player_aim(void* mario, short* yaw, short* tilt);
 // from it); FLUDD (not drawn; it still sprays)
 #define PORT_PLAYER_PART_HEAD  1u
 #define PORT_PLAYER_PART_FLUDD 2u
+#define PORT_PLAYER_PART_CAP   4u // his cap, or the hair drawn without it, in every view (ext/modapi: hidePlayerModel)
 unsigned port_ext_hidden_player_parts(void* mario);
 void port_ext_pad_read(void* status);
 int port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,

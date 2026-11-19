@@ -1103,7 +1103,7 @@ int apiPlayerSetHiddenParts(uint32_t parts)
 	if (!m)
 		return 0;
 	const int p       = modg_player_now(); // the player now (co-op: each their own)
-	m->hiddenParts[p] = parts & (SMS_PLAYER_PART_HEAD | SMS_PLAYER_PART_FLUDD);
+	m->hiddenParts[p] = parts & (SMS_PLAYER_PART_HEAD | SMS_PLAYER_PART_FLUDD | SMS_PLAYER_PART_CAP);
 	return applyHiddenParts(p);
 }
 
@@ -1213,7 +1213,8 @@ const SmsGrassApi s_grass = {sizeof(SmsGrassApi), SMS_GRASS_MAGIC, apiGrassPress
 const SmsPartsApi s_parts = {sizeof(SmsPartsApi),       SMS_PARTS_MAGIC,          modg_parts_joint,
                              modg_parts_joint_count,    modg_parts_joint_name,    modg_parts_tint,
                              modg_parts_material_count, modg_parts_material_name,
-                             modg_parts_player_part,    modg_parts_yoshi_color};
+                             modg_parts_player_part,    modg_parts_yoshi_color,
+                             modg_parts_hide};
 
 // ------------------------------------------------------------------ FLUDD held in view (first person)
 // ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one

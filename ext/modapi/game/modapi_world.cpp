@@ -716,6 +716,33 @@ extern "C" const char* modg_parts_material_name(SmsObject o, int index)
 	return names->getName((u16)index);
 }
 
+// The parts drawn with a material whose name holds `material` left out of drawing (their shapes' visible
+// flag: J3DShpFlag_Visible set hides one), or drawn again
+extern "C" int modg_parts_hide(SmsObject o, const char* material, int hidden)
+{
+	J3DModel* md = partsModel(o);
+	if (!md)
+		return 0;
+	J3DModelData* data = md->getModelData();
+	JUTNameTab* names  = data->getMaterialName();
+	int parts          = 0;
+	for (u16 i = 0; i < data->getMaterialNum(); i++) {
+		const char* name = names ? names->getName(i) : 0;
+		if (material && material[0] && (!name || !strstr(name, material)))
+			continue;
+		J3DMaterial* mat = data->getMaterialNodePointer(i);
+		J3DShape* shape  = mat ? mat->getShape() : 0;
+		if (!shape)
+			continue;
+		if (hidden)
+			shape->onFlag(J3DShpFlag_Visible);
+		else
+			shape->offFlag(J3DShpFlag_Visible);
+		parts++;
+	}
+	return parts;
+}
+
 extern "C" SmsObject modg_parts_player_part(int which)
 {
 	if (which < 0 || which > 2 || !playerPartModel(which))
