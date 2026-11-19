@@ -1214,7 +1214,8 @@ const SmsPartsApi s_parts = {sizeof(SmsPartsApi),       SMS_PARTS_MAGIC,        
                              modg_parts_joint_count,    modg_parts_joint_name,    modg_parts_tint,
                              modg_parts_material_count, modg_parts_material_name,
                              modg_parts_player_part,    modg_parts_yoshi_color,
-                             modg_parts_hide};
+                             modg_parts_hide,           modg_parts_vertex_count,  modg_parts_vertex,
+                             modg_parts_set_vertex};
 
 // ------------------------------------------------------------------ FLUDD held in view (first person)
 // ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one

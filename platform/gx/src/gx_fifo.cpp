@@ -1690,6 +1690,7 @@ void GXPC_AddBigEndianRange(const void* p, uint32_t size) {
     s_beHitLo = 1;
     s_beHitHi = 0;
 }
+int GXPC_IsBigEndianData(const void* p) { return s_defaultArrayBE || isBigEndianData(p) ? 1 : 0; }
 void GXPC_RemoveBigEndianRange(const void* p) {
     s_beRanges.erase(reinterpret_cast<uintptr_t>(p));
     s_beGen++;

@@ -185,6 +185,8 @@ void GXPC_SetDefaultArrayBigEndian(int bigEndian);
  * into a registered range are then read big-endian automatically. */
 void GXPC_AddBigEndianRange(const void* ptr, uint32_t size);
 void GXPC_RemoveBigEndianRange(const void* ptr);
+/* 1 when data at ptr is in a registered big-endian range (read in its on-disc byte order). */
+int GXPC_IsBigEndianData(const void* ptr);
 
 /* The write-gather pipe (0xCC008000).  GXVert.h's inline writers and direct
  * `GXWGFifo.u8 = ...` stores must end up here on PC; see README.md. */

@@ -37,6 +37,7 @@
 #include <MoveBG/MapObjManager.hpp>
 #include <Player/WaterGun.hpp>
 #include <Player/Yoshi.hpp>
+#include <sms_gx/gx_pc.h>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Strategic/HitActor.hpp>
@@ -741,6 +742,100 @@ extern "C" int modg_parts_hide(SmsObject o, const char* material, int hidden)
 		parts++;
 	}
 	return parts;
+}
+
+// A model's vertex positions (api->parts' vertex, set_vertex): its position array as the file has it (each
+// vertex in its own joint's frame when it hangs on one), in the array's own number format and byte order
+namespace {
+struct PosArray {
+	u8* base;
+	int type, frac, comps;
+	bool be;
+	u32 count;
+};
+bool posArray(SmsObject o, PosArray& a)
+{
+	J3DModel* md = partsModel(o);
+	if (!md)
+		return false;
+	J3DVertexData& vd = md->getModelData()->getVertexData();
+	a.base           = (u8*)vd.getVtxPosArray();
+	a.count          = vd.getVtxNum();
+	a.type = -1, a.frac = 0, a.comps = 3;
+	for (GXVtxAttrFmtList* f = vd.getVtxAttrFmtList(); f && f->attr != GX_VA_NULL; f++)
+		if (f->attr == GX_VA_POS) {
+			a.type = f->type, a.frac = f->frac, a.comps = f->cnt == GX_POS_XY ? 2 : 3;
+			break;
+		}
+	if (!a.base || a.type < 0 || a.type > GX_F32)
+		return false;
+	a.be = GXPC_IsBigEndianData(a.base) != 0;
+	return true;
+}
+int compSize(int type) { return type == GX_F32 ? 4 : (type == GX_S16 || type == GX_U16) ? 2 : 1; }
+float readComp(const PosArray& a, const u8* p)
+{
+	u32 raw = 0;
+	const int n = compSize(a.type);
+	for (int k = 0; k < n; k++)
+		raw |= (u32)p[a.be ? k : n - 1 - k] << (8 * (n - 1 - k));
+	float scale = 1.0f / (float)(1 << a.frac);
+	switch (a.type) {
+	case GX_U8: return (float)(u8)raw * scale;
+	case GX_S8: return (float)(s8)raw * scale;
+	case GX_U16: return (float)(u16)raw * scale;
+	case GX_S16: return (float)(s16)raw * scale;
+	default: {
+		float f;
+		memcpy(&f, &raw, 4);
+		return f;
+	}
+	}
+}
+void writeComp(const PosArray& a, u8* p, float value)
+{
+	u32 raw;
+	float scaled = value * (float)(1 << a.frac);
+	float rounded = scaled < 0 ? scaled - 0.5f : scaled + 0.5f;
+	switch (a.type) {
+	case GX_U8: raw = (u8)(rounded < 0 ? 0 : (rounded > 255 ? 255 : rounded)); break;
+	case GX_S8: raw = (u8)(s8)(rounded < -128 ? -128 : (rounded > 127 ? 127 : rounded)); break;
+	case GX_U16: raw = (u16)(rounded < 0 ? 0 : (rounded > 65535 ? 65535 : rounded)); break;
+	case GX_S16: raw = (u16)(s16)(rounded < -32768 ? -32768 : (rounded > 32767 ? 32767 : rounded)); break;
+	default: memcpy(&raw, &value, 4); break;
+	}
+	const int n = compSize(a.type);
+	for (int k = 0; k < n; k++)
+		p[a.be ? k : n - 1 - k] = (u8)(raw >> (8 * (n - 1 - k)));
+}
+} // namespace
+
+extern "C" int modg_parts_vertex_count(SmsObject o)
+{
+	PosArray a;
+	return posArray(o, a) ? (int)a.count : 0;
+}
+
+extern "C" int modg_parts_vertex(SmsObject o, int index, float out[3])
+{
+	PosArray a;
+	if (!out || !posArray(o, a) || index < 0 || (u32)index >= a.count)
+		return 0;
+	const u8* p = a.base + (size_t)index * a.comps * compSize(a.type);
+	for (int c = 0; c < 3; c++)
+		out[c] = c < a.comps ? readComp(a, p + c * compSize(a.type)) : 0.0f;
+	return 1;
+}
+
+extern "C" int modg_parts_set_vertex(SmsObject o, int index, const float in[3])
+{
+	PosArray a;
+	if (!in || !posArray(o, a) || index < 0 || (u32)index >= a.count)
+		return 0;
+	u8* p = a.base + (size_t)index * a.comps * compSize(a.type);
+	for (int c = 0; c < a.comps; c++)
+		writeComp(a, p + c * compSize(a.type), in[c]);
+	return 1;
 }
 
 extern "C" SmsObject modg_parts_player_part(int which)
