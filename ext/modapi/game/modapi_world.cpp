@@ -28,6 +28,10 @@
 #include <Player/NozzleBase.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DShape.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DPacket.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
 #include <Player/SplashManager.hpp>
 #include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
@@ -592,6 +596,95 @@ extern "C" int modg_clean_goop(const SmsVec3* at, float radius)
 		return 0;
 	gpPollution->clean(at->x, at->y, at->z, radius);
 	return 1;
+}
+
+// ------------------------------------------------------------------ a model's parts (api->parts)
+
+namespace {
+J3DModel* partsModel(SmsObject o)
+{
+	TLiveActor* a = liveActor(o);
+	if (!a)
+		return 0;
+	J3DModel* md = a->getMActor() ? a->getMActor()->getModel() : a->getModel();
+	return md && md->getModelData() ? md : 0;
+}
+} // namespace
+
+// Joint `name` (NULL or "" the first) of an actor's model, as it was last posed: its matrix
+extern "C" int modg_parts_joint(SmsObject o, const char* name, float out[3][4])
+{
+	J3DModel* md = partsModel(o);
+	if (!md || !out)
+		return 0;
+	J3DModelData* data = md->getModelData();
+	int index          = 0;
+	if (name && name[0]) {
+		JUTNameTab* names = data->getJointName();
+		index             = names ? names->getIndex(name) : -1;
+	}
+	if (index < 0 || index >= (int)data->getJointNum())
+		return 0;
+	MtxPtr m = md->getAnmMtx(index);
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 4; c++)
+			out[r][c] = m[r][c];
+	return 1;
+}
+
+extern "C" int modg_parts_joint_count(SmsObject o)
+{
+	J3DModel* md = partsModel(o);
+	return md ? (int)md->getModelData()->getJointNum() : 0;
+}
+
+extern "C" const char* modg_parts_joint_name(SmsObject o, int index)
+{
+	J3DModel* md      = partsModel(o);
+	JUTNameTab* names = md ? md->getModelData()->getJointName() : 0;
+	if (!names || index < 0 || index >= (int)md->getModelData()->getJointNum())
+		return 0;
+	return names->getName((u16)index);
+}
+
+// The parts drawn with a material whose name holds `material`, of this actor's model only (its own
+// shape packets), drawn in a colour: game->object_set_tint's, a part at a time
+extern "C" int modg_parts_tint(SmsObject o, const char* material, SmsColor color)
+{
+	J3DModel* md = partsModel(o);
+	if (!md || !md->getShapePacketArray())
+		return 0;
+	J3DModelData* data = md->getModelData();
+	JUTNameTab* names  = data->getMaterialName();
+	int parts          = 0;
+	for (u16 i = 0; i < data->getMaterialNum(); i++) {
+		const char* name = names ? names->getName(i) : 0;
+		if (material && material[0] && (!name || !strstr(name, material)))
+			continue;
+		J3DMaterial* mat = data->getMaterialNodePointer(i);
+		J3DShape* shape  = mat ? mat->getShape() : 0;
+		if (!shape || shape->getIndex() >= data->getShapeNum())
+			continue;
+		J3DShapePacket* packet = md->getShapePacket((u16)shape->getIndex());
+		port_ext_set_model_tint(packet, packet, (unsigned)sizeof(J3DShapePacket), color);
+		parts++;
+	}
+	return parts;
+}
+
+extern "C" int modg_parts_material_count(SmsObject o)
+{
+	J3DModel* md = partsModel(o);
+	return md ? (int)md->getModelData()->getMaterialNum() : 0;
+}
+
+extern "C" const char* modg_parts_material_name(SmsObject o, int index)
+{
+	J3DModel* md      = partsModel(o);
+	JUTNameTab* names = md ? md->getModelData()->getMaterialName() : 0;
+	if (!names || index < 0 || index >= (int)md->getModelData()->getMaterialNum())
+		return 0;
+	return names->getName((u16)index);
 }
 
 // ------------------------------------------------------------------ actors' models scaled (actor->set_model_scale)

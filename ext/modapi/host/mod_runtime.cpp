@@ -1206,6 +1206,14 @@ void apiGrassBurn(float x, float y, float z, float r, int ms) { port_grass_goop(
 const SmsGrassApi s_grass = {sizeof(SmsGrassApi), SMS_GRASS_MAGIC, apiGrassPress,        apiGrassBurn,
                              port_grass_burning,  port_grass_fires, port_grass_extinguish};
 
+// ------------------------------------------------------------------ a model's parts (Allebale's fork)
+// An actor's joints and one part's colour (ext/modapi/game/modapi_world.cpp), for a mod's own things
+// worn or held. Nothing in the game calls these.
+
+const SmsPartsApi s_parts = {sizeof(SmsPartsApi),       SMS_PARTS_MAGIC,          modg_parts_joint,
+                             modg_parts_joint_count,    modg_parts_joint_name,    modg_parts_tint,
+                             modg_parts_material_count, modg_parts_material_name};
+
 // ------------------------------------------------------------------ FLUDD held in view (first person)
 // ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one
 // unloads
@@ -1856,6 +1864,7 @@ const SmsApi g_api = {
 	&s_heldFludd,       &s_water,          &s_actor,          &s_models,
 	&s_reflections,
 	&s_grass,
+	&s_parts,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)

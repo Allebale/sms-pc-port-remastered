@@ -120,6 +120,13 @@ int modg_actor_push(SmsObject o, float dx, float dz);
 int modg_actor_send(SmsObject o, SmsObject sender, uint32_t message);
 int modg_actor_wall_defeat(SmsObject o);
 int modg_actor_set_model_scale(SmsObject o, float scale);
+// api->parts (Remastered): an actor's model by its parts
+int modg_parts_joint(SmsObject o, const char* name, float out[3][4]);
+int modg_parts_joint_count(SmsObject o);
+const char* modg_parts_joint_name(SmsObject o, int index);
+int modg_parts_tint(SmsObject o, const char* material, SmsColor color);
+int modg_parts_material_count(SmsObject o);
+const char* modg_parts_material_name(SmsObject o, int index);
 void modg_actor_unscale_all(void);
 int modg_actor_kind(SmsObject o);
 SmsObject modg_actor_owner(SmsObject o);
