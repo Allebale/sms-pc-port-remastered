@@ -36,6 +36,9 @@
 #include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <Player/WaterGun.hpp>
+#include <Player/Yoshi.hpp>
+#include <M3DUtil/M3UModelMario.hpp>
+#include <M3DUtil/MActor.hpp>
 #include <Strategic/HitActor.hpp>
 #include <Strategic/LiveActor.hpp>
 #include <System/EmitterViewObj.hpp>
@@ -601,8 +604,34 @@ extern "C" int modg_clean_goop(const SmsVec3* at, float radius)
 // ------------------------------------------------------------------ a model's parts (api->parts)
 
 namespace {
+// Handles for the player's own models (api->parts' player_part): addresses of this array, never objects
+char s_playerParts[3];
+J3DModel* playerPartModel(int which)
+{
+	TMario* m = gpMarioOriginal;
+	if (!m)
+		return 0;
+	switch (which) {
+	case SMS_PARTS_MARIO:
+		return m->getM3UModel() ? m->getM3UModel()->getModel() : 0;
+	case SMS_PARTS_YOSHI: {
+		TYoshi* y = SMS_GetYoshi();
+		return y && y->isHatched() && y->mActor ? y->mActor->getModel() : 0;
+	}
+	case SMS_PARTS_FLUDD: {
+		TWaterGun* g = m->getFludd();
+		return g && g->mFluddModel ? g->mFluddModel->getModel() : 0;
+	}
+	}
+	return 0;
+}
 J3DModel* partsModel(SmsObject o)
 {
+	const char* c = (const char*)o;
+	if (c >= s_playerParts && c < s_playerParts + 3) {
+		J3DModel* md = playerPartModel((int)(c - s_playerParts));
+		return md && md->getModelData() ? md : 0;
+	}
 	TLiveActor* a = liveActor(o);
 	if (!a)
 		return 0;
@@ -685,6 +714,32 @@ extern "C" const char* modg_parts_material_name(SmsObject o, int index)
 	if (!names || index < 0 || index >= (int)md->getModelData()->getMaterialNum())
 		return 0;
 	return names->getName((u16)index);
+}
+
+extern "C" SmsObject modg_parts_player_part(int which)
+{
+	if (which < 0 || which > 2 || !playerPartModel(which))
+		return 0;
+	return (SmsObject)&s_playerParts[which];
+}
+
+// Yoshi's body colours, one a fruit (TYoshi's bodyColor, which he moves towards each frame): all four
+// the mod's colour, or the game's own back
+extern "C" GXColor bodyColor[4];
+extern "C" int modg_parts_yoshi_color(SmsColor color)
+{
+	static GXColor s_own[4];
+	static bool s_saved;
+	if (!s_saved) {
+		for (int i = 0; i < 4; i++)
+			s_own[i] = bodyColor[i];
+		s_saved = true;
+	}
+	for (int i = 0; i < 4; i++) {
+		GXColor c = {(u8)(color >> 24), (u8)(color >> 16), (u8)(color >> 8), 0xFF};
+		bodyColor[i] = (color & 0xFF) ? c : s_own[i];
+	}
+	return 1;
 }
 
 // ------------------------------------------------------------------ actors' models scaled (actor->set_model_scale)

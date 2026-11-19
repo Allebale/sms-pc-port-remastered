@@ -127,6 +127,8 @@ const char* modg_parts_joint_name(SmsObject o, int index);
 int modg_parts_tint(SmsObject o, const char* material, SmsColor color);
 int modg_parts_material_count(SmsObject o);
 const char* modg_parts_material_name(SmsObject o, int index);
+SmsObject modg_parts_player_part(int which);
+int modg_parts_yoshi_color(SmsColor color);
 void modg_actor_unscale_all(void);
 int modg_actor_kind(SmsObject o);
 SmsObject modg_actor_owner(SmsObject o);
