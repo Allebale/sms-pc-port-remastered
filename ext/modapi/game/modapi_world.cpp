@@ -22,6 +22,12 @@
 #include <Map/MapData.hpp>
 #include <Map/MapCollisionData.hpp>
 #include <NPC/NpcBase.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Strategic/SharedParts.hpp>
+#include <NPC/NpcInitData.hpp>
+#include <NPC/NpcParts.hpp>
 #include <Strategic/LiveManager.hpp>
 #include <Player/Mario.hpp>
 #include <Player/ModelWaterManager.hpp>
@@ -862,6 +868,220 @@ extern "C" int modg_parts_yoshi_color(SmsColor color)
 		bodyColor[i] = (color & 0xFF) ? c : s_own[i];
 	}
 	return 1;
+}
+
+// ------------------------------------------------------------------ joints hidden, worn parts left off (api->parts)
+
+// A joint hidden (api->parts' hide_joint): as the model is posed, that joint (and with it every joint under
+// it) shrunk to a hundredth about its own place, so what hangs on it is too small to see. Done in the
+// joint's calc callback (J3DMtxCalcBasic::recursiveCalc calls it right after the joint's matrix is made,
+// before its children's): the game's own callback on that joint, if any, still runs first. The callbacks
+// sit on the model data, shared by every actor drawn with it; which models are hidden is kept here.
+namespace {
+struct HiddenJoint {
+	J3DModel* model;
+	u16 jnt;
+};
+const int kMostHiddenJoints = 128;
+HiddenJoint s_hiddenJoints[kMostHiddenJoints];
+int s_hiddenJointCount;
+
+struct HookedJoint {
+	J3DNode* node;
+	J3DNodeCallBack own; // the game's callback there before ours (0 none)
+};
+const int kMostHooked = 512;
+HookedJoint s_hooked[kMostHooked];
+int s_hookedCount, s_hookedNext;
+
+J3DNodeCallBack ownCallBack(J3DNode* node)
+{
+	for (int i = 0; i < s_hookedCount; i++)
+		if (s_hooked[i].node == node)
+			return s_hooked[i].own;
+	return 0;
+}
+
+void shrinkMtx(MtxPtr m, f32 k)
+{
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 3; c++)
+			m[r][c] *= k;
+}
+
+BOOL hiddenJointCallBack(J3DNode* node, BOOL timing)
+{
+	J3DNodeCallBack own = ownCallBack(node);
+	BOOL result         = own ? own(node, timing) : TRUE;
+	if (timing != 0)
+		return result;
+	J3DModel* md = j3dSys.getModel();
+	const u16 jnt = static_cast<J3DJoint*>(node)->getJntNo();
+	for (int i = 0; i < s_hiddenJointCount; i++) {
+		if (s_hiddenJoints[i].model != md || s_hiddenJoints[i].jnt != jnt)
+			continue;
+		const f32 k = 0.01f; // not 0: the normals' matrices are inverted, and a hundredth is gone from view
+		shrinkMtx(J3DSys::mCurrentMtx, k);
+		shrinkMtx(md->getAnmMtx(jnt), k);
+		J3DSys::mCurrentS.x *= k;
+		J3DSys::mCurrentS.y *= k;
+		J3DSys::mCurrentS.z *= k;
+		break;
+	}
+	return result;
+}
+
+// Our callback on the joint (once: a node already ours keeps the callback it had kept)
+bool hookJoint(J3DNode* node)
+{
+	if (node->getCallBack() == hiddenJointCallBack)
+		return true;
+	int slot = -1;
+	for (int i = 0; i < s_hookedCount && slot < 0; i++)
+		if (s_hooked[i].node == node) // a node gone with an earlier stage, its memory used again
+			slot = i;
+	if (slot < 0) {
+		if (s_hookedCount < kMostHooked)
+			slot = s_hookedCount++;
+		else // full after many stages: the oldest, long gone with its stage
+			slot = s_hookedNext++ % kMostHooked;
+	}
+	s_hooked[slot].node = node;
+	s_hooked[slot].own  = node->getCallBack();
+	node->setCallBack(hiddenJointCallBack);
+	return true;
+}
+
+int hideJointOf(J3DModel* md, const char* name, int hidden)
+{
+	if (!md || !md->getModelData())
+		return 0;
+	J3DModelData* data = md->getModelData();
+	JUTNameTab* names  = data->getJointName();
+	const int index    = names ? names->getIndex(name) : -1;
+	if (index < 0 || index >= (int)data->getJointNum())
+		return 0;
+	int at = -1;
+	for (int i = 0; i < s_hiddenJointCount && at < 0; i++)
+		if (s_hiddenJoints[i].model == md && s_hiddenJoints[i].jnt == (u16)index)
+			at = i;
+	if (!hidden) {
+		if (at >= 0)
+			s_hiddenJoints[at] = s_hiddenJoints[--s_hiddenJointCount];
+		return 1;
+	}
+	if (at >= 0)
+		return 1;
+	if (s_hiddenJointCount >= kMostHiddenJoints)
+		return 0;
+	J3DNode* node = data->getJointNodePointer((u16)index);
+	if (!node || !hookJoint(node))
+		return 0;
+	s_hiddenJoints[s_hiddenJointCount].model = md;
+	s_hiddenJoints[s_hiddenJointCount].jnt   = (u16)index;
+	s_hiddenJointCount++;
+	return 1;
+}
+
+// A character's worn parts left off (api->parts' hide_worn): its TNpcParts place emptied, as a
+// character made without that part has it (every reader of the places skips an empty one), the part
+// kept here to put back
+struct LeftOff {
+	TBaseNPC* npc;
+	int index, lod;
+	TSharedParts* part;
+};
+const int kMostLeftOff = 256;
+LeftOff s_leftOff[kMostLeftOff];
+int s_leftOffCount;
+
+TBaseNPC* npcOf(SmsObject o)
+{
+	TLiveActor* a = liveActor(o);
+	return a ? dynamic_cast<TBaseNPC*>(a) : 0;
+}
+} // namespace
+
+extern "C" int modg_parts_hide_joint(SmsObject o, const char* name, int hidden)
+{
+	if (!name || !name[0])
+		return 0;
+	const char* c = (const char*)o;
+	if (c >= s_playerParts && c < s_playerParts + 3)
+		return hideJointOf(partsModel(o), name, hidden);
+	TLiveActor* a = liveActor(o);
+	if (!a)
+		return 0;
+	// every model of its own (a character's far and close ones alike), or its one model
+	int done = 0;
+	TMActorKeeper* keeper = a->getActorKeeper();
+	if (keeper && keeper->mActors)
+		for (int i = 0; i < keeper->getActorNum(); i++)
+			if (MActor* m = keeper->getMActor(i))
+				done |= hideJointOf(m->getModel(), name, hidden);
+	if (!done)
+		done = hideJointOf(partsModel(o), name, hidden);
+	return done;
+}
+
+extern "C" const char* modg_parts_worn_name(SmsObject o, int index)
+{
+	TBaseNPC* n = npcOf(o);
+	if (!n || index < 0 || index >= 12)
+		return 0;
+	const TNpcInitInfo* info = SMSGetNpcInitData(n->getActorType() - 0x4000001);
+	if (!info || !info->unk4[index] || !info->unk4[index]->unk8[0])
+		return 0;
+	// only a part this one wears (or one left off by a mod)
+	bool worn = n->unk168 && (n->unk168->unk0[0][index] || n->unk168->unk0[1][index]);
+	for (int i = 0; i < s_leftOffCount && !worn; i++)
+		worn = s_leftOff[i].npc == n && s_leftOff[i].index == index;
+	return worn ? info->unk4[index]->unk8[0] : 0;
+}
+
+extern "C" int modg_parts_hide_worn(SmsObject o, int index, int hidden)
+{
+	TBaseNPC* n = npcOf(o);
+	if (!n || !n->unk168 || index < 0 || index >= 12)
+		return 0;
+	TNpcParts* parts = n->unk168;
+	int done         = 0;
+	for (int lod = 0; lod < 2; lod++) {
+		if (hidden) {
+			TSharedParts* part = parts->unk0[lod][index];
+			if (!part)
+				continue;
+			if (s_leftOffCount >= kMostLeftOff)
+				return done;
+			LeftOff& l = s_leftOff[s_leftOffCount++];
+			l.npc      = n;
+			l.index    = index;
+			l.lod      = lod;
+			l.part     = part;
+			parts->unk0[lod][index] = 0;
+			done = 1;
+		} else {
+			for (int i = 0; i < s_leftOffCount; i++) {
+				LeftOff& l = s_leftOff[i];
+				if (l.npc != n || l.index != index || l.lod != lod)
+					continue;
+				if (!parts->unk0[lod][index])
+					parts->unk0[lod][index] = l.part;
+				s_leftOff[i] = s_leftOff[--s_leftOffCount];
+				done = 1;
+				break;
+			}
+		}
+	}
+	return done;
+}
+
+// The stage's models and characters went with it: what was hidden of them is forgotten (the callbacks
+// stay on model data still in use, doing nothing more than calling the game's own)
+extern "C" void modg_parts_forget(void)
+{
+	s_hiddenJointCount = 0;
+	s_leftOffCount     = 0;
 }
 
 // ------------------------------------------------------------------ actors' models scaled (actor->set_model_scale)

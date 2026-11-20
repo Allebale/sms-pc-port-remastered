@@ -324,6 +324,7 @@ void moveStage() { s_stageReady = false; }
 void chooseStageLoad()
 {
 	port_ext_clear_model_tints(); // game->object_set_tint's: the models go with the stage
+	modg_parts_forget();          // api->parts' hidden joints and worn parts, likewise
 	if (!modh_wants(SMS_EV_STAGE_LOADING))
 		return;
 	TGameSequence& cur  = gpApplication.mCurrArea;
@@ -658,6 +659,7 @@ void watchModeAndPause()
 	const int mode = gameMode();
 	if (mode != s_lastMode) {
 		port_ext_clear_model_tints(); // the models went with the stage
+		modg_parts_forget();
 		if (s_lastMode >= 0 && modh_wants(SMS_EV_MODE_CHANGED)) {
 			SmsEvMode ev;
 			ev.from = s_lastMode;
