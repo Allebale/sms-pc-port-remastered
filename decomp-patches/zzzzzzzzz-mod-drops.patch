@@ -25,9 +25,9 @@ Reason: the mod API's water drops (ext/modapi/game/modapi_world.cpp, modapi_mode
 +					continue;
 +				}
 +#endif
- #ifdef TARGET_PC
- 				// port: a puddle that had landed before this tick (not one
- 				// landing now) sprays the object under it on its ticks only
+ 
+ 				if (getFlagBottom4Bits(i) == 3) {
+ 					mParticleLifetimeSOA[i] = 0.0f;
 @@ -708,6 +720,12 @@
  					       * (r27->mPlaneDistance
  					          + mParticlePositionSOA[i].dot(r27->getNormal()));

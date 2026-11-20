@@ -969,36 +969,10 @@ static void load_settings()
 // sms-server (CMakeLists.txt, SMS_SERVER_DIR): its settings, as the
 // environment everything below reads, and its room for the public list
 extern "C" void sms_server_init(int argc, char** argv);
-
 #endif
-
-// The startup clock (SMS_STARTUP_CLOCK=1 only, off otherwise: it fills the log): every 2 seconds for
-// the first 5 minutes, how long the game has been running and the time of day (UTC, as the launcher
-// names its memory card backups), so that the log shows where a slow start spends its time.
-#include <chrono>
-#include <ctime>
-#include <thread>
-static void port_startup_clock(void)
-{
-	const char* on = getenv("SMS_STARTUP_CLOCK");
-	if (!on || !*on || !strcmp(on, "0"))
-		return;
-	const auto start = std::chrono::steady_clock::now();
-	std::thread([start] {
-		for (int s = 0; s <= 300; s += 2) {
-			std::this_thread::sleep_until(start + std::chrono::seconds(s));
-			const std::time_t now = std::time(nullptr);
-			char at[16]       = "?";
-			if (const std::tm* t = std::gmtime(&now))
-				std::strftime(at, sizeof at, "%H:%M:%S", t);
-			port_log("[startup] %d s since the game started (%s UTC)\n", s, at);
-		}
-	}).detach();
-}
 
 extern "C" void port_init(int argc, char** argv)
 {
-	port_startup_clock();
 #ifdef SMS_SERVER_BUILD
 	sms_server_init(argc, argv);
 #endif

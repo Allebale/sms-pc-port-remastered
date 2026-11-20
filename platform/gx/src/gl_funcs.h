@@ -17,10 +17,6 @@
     X(PFNGLCOLORMASKPROC, glColorMask) X(PFNGLCULLFACEPROC, glCullFace)             \
     X(PFNGLFRONTFACEPROC, glFrontFace) X(PFNGLCLEARCOLORPROC, glClearColor)         \
     X(PFNGLCLEARDEPTHPROC, glClearDepth) X(PFNGLCLEARPROC, glClear)                 \
-    X(PFNGLDRAWARRAYSINSTANCEDPROC, glDrawArraysInstanced)                          \
-    X(PFNGLVERTEXATTRIBDIVISORPROC, glVertexAttribDivisor)                          \
-    X(PFNGLPOLYGONOFFSETPROC, glPolygonOffset) X(PFNGLDRAWBUFFERPROC, glDrawBuffer) \
-    X(PFNGLREADBUFFERPROC, glReadBuffer)                                            \
     X(PFNGLDEPTHRANGEPROC, glDepthRange) X(PFNGLLINEWIDTHPROC, glLineWidth)         \
     X(PFNGLPOINTSIZEPROC, glPointSize) X(PFNGLFINISHPROC, glFinish)                 \
     X(PFNGLGENBUFFERSPROC, glGenBuffers) X(PFNGLBINDBUFFERPROC, glBindBuffer)       \
@@ -74,7 +70,6 @@
     X(PFNGLDELETESAMPLERSPROC, glDeleteSamplers)                                    \
     X(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers)                          \
     X(PFNGLDRAWELEMENTSBASEVERTEXPROC, glDrawElementsBaseVertex)                    \
-    X(PFNGLDRAWELEMENTSINSTANCEDBASEVERTEXPROC, glDrawElementsInstancedBaseVertex)  \
     X(PFNGLMULTIDRAWELEMENTSBASEVERTEXPROC, glMultiDrawElementsBaseVertex)          \
     X(PFNGLBINDBUFFERRANGEPROC, glBindBufferRange)                                  \
     X(PFNGLVERTEXATTRIB4FPROC, glVertexAttrib4f)                                    \
@@ -131,11 +126,6 @@ SMS_GX_GL_OPTIONAL_FUNCS(SMS_GX_ALIAS)
 #define glClearColor gx_glClearColor
 #define glClearDepth gx_glClearDepth
 #define glClear gx_glClear
-#define glDrawArraysInstanced gx_glDrawArraysInstanced
-#define glVertexAttribDivisor gx_glVertexAttribDivisor
-#define glPolygonOffset gx_glPolygonOffset
-#define glDrawBuffer gx_glDrawBuffer
-#define glReadBuffer gx_glReadBuffer
 #define glDepthRange gx_glDepthRange
 #define glLineWidth gx_glLineWidth
 #define glPointSize gx_glPointSize
@@ -216,7 +206,6 @@ SMS_GX_GL_OPTIONAL_FUNCS(SMS_GX_ALIAS)
 #define glDeleteSamplers gx_glDeleteSamplers
 #define glDeleteRenderbuffers gx_glDeleteRenderbuffers
 #define glDrawElementsBaseVertex gx_glDrawElementsBaseVertex
-#define glDrawElementsInstancedBaseVertex gx_glDrawElementsInstancedBaseVertex
 #define glMultiDrawElementsBaseVertex gx_glMultiDrawElementsBaseVertex
 #define glBindBufferRange gx_glBindBufferRange
 #define glVertexAttrib4f gx_glVertexAttrib4f

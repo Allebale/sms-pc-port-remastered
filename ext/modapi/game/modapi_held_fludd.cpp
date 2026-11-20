@@ -359,8 +359,7 @@ bool backAxes(TWaterGun* g, bool other, Vec* rightOut, Vec* fwdOut, Vec* upOut, 
 		if (dx * dx + dy * dy + dz * dz > 400.0f * 400.0f)
 			return false;
 	}
-	// the way his body is drawn (a mod's player->set_aim turns it from the way he moves)
-	const f32 ang = g->mMario->mModelFaceAngle * (3.14159265f / 32768.0f);
+	const f32 ang = g->mMario->mFaceAngle.y * (3.14159265f / 32768.0f);
 	Vec face = {sinf(ang), 0.0f, cosf(ang)};
 	const Vec worldUp = {0.0f, 1.0f, 0.0f};
 	if (other) { // the way his body faces as drawn (strafing in first person it is not his facing):

@@ -35,7 +35,6 @@ enum {
 	PORT_SETTINGS_PAGE_GAMEPLAY,
 	PORT_SETTINGS_PAGE_CONTROLS,
 	PORT_SETTINGS_PAGE_HUD,
-	PORT_SETTINGS_PAGE_REFLECTIONS,  // the port's own: what puddles and water reflect, and how
 	PORT_SETTINGS_PAGE_COUNT
 };
 
@@ -64,7 +63,6 @@ const PortSetting* port_pad_settings(int* count);
 const PortSetting* port_audio_settings(int* count);
 const PortSetting* port_runtime_settings(int* count);
 const PortSetting* port_hud_settings(int* count);      // the HUD page (port_hud_settings.cpp)
-const PortSetting* port_puddle_settings(int* count);   // Puddle Lifetime, the Reflections page (port_puddle_settings.cpp)
 const PortSetting* mp_port_settings(int* count);       // the multiplayer host's (ext/multiplayer/sync/mp_settings.cpp)
 const PortSetting* port_character_settings(int* count); // the character (platform/misc/port_character.cpp)
 

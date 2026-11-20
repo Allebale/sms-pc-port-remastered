@@ -12,7 +12,6 @@
 #include <stdlib.h>
 #include <math.h>
 #include <algorithm>
-#include <unordered_map>
 #include <atomic>
 #include <deque>
 #include <map>
@@ -198,7 +197,6 @@ void resetState() {
     bool be[16];
     memcpy(be, g.arrayBigEndian, sizeof(be));
     memset(&g, 0, sizeof(g));
-    g.wetLook[0] = g.wetLook[1] = 1.0f;  // Wet Mario's look: as it was
     for (int i = 0; i < 16; i++) g.arrayBigEndian[i] = s_defaultArrayBE;
     g_arrayGen++;
     g.bpMask = 0xFFFFFF;
@@ -847,134 +845,8 @@ static void buildSetup(DecSetup& S, const VtxLayout& L) {
     if (at != L.size) fatal("vertex loader: attributes take %u of the vertex's %u bytes", at, L.size);
 }
 
-// Smooth Characters: low-poly people and enemies (and Mario) are made of flat faces, each corner
-// carrying its face's normal, so the light shows every face. Each corner's normal becomes the
-// average of the normals the model uses at that point (the same place under the same matrix, in the
-// same display list): the faces' edges are shaded round. Only normals within kSmoothAngle of the
-// corner's own are taken in, so hard edges (a cap's brim, a shoe's sole) stay hard. The normals a
-// point has are learnt as it is drawn and kept a few frames (a model whose normals the game moves
-// keeps up); a list is drawn from its commands, not the display-list cache, while this is on.
-namespace {
-struct SmoothPoint {
-    float n[6][3];
-    uint32_t seen[6];
-    uint8_t count;
-};
-std::unordered_map<uint64_t, SmoothPoint> s_smooth;
-uint32_t s_smoothLit, s_smoothUnlit, s_smoothNoNormals, s_smoothDone, s_smoothChanged;
-uint32_t s_smoothFrame;
-const float kSmoothCos = 0.45f;  // about 63 degrees
-uint64_t smoothKey(const void* list, const float* pos, uint8_t mtx) {
-    // the place to a hundredth of a unit (corners written twice for their faces land together)
-    uint64_t h = 1469598103934665603ull ^ uint64_t(uintptr_t(list));
-    for (int k = 0; k < 3; k++) {
-        const int64_t q = int64_t(llroundf(pos[k] * 100.0f));
-        h = (h ^ uint64_t(q)) * 1099511628211ull;
-    }
-    return (h ^ mtx) * 1099511628211ull;
-}
-}  // namespace
-static void smoothNormals(uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride) {
-    const VtxFmtLayout& lay = vtxFmtLayout(fmt);
-    if (s_smooth.size() > 400000) s_smooth.clear();  // a long play: start over
-    const uint32_t now = s_smoothFrame;
-    for (uint32_t v = 0; v < count; v++) {
-        uint8_t* vert = out + size_t(v) * stride;
-        const float* pos = reinterpret_cast<const float*>(vert);
-        float* n = reinterpret_cast<float*>(vert + lay.nrm);
-        const float len = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-        if (len < 1e-6f) continue;
-        const float own[3] = {n[0] / len, n[1] / len, n[2] / len};
-        SmoothPoint& sp = s_smooth[smoothKey(g.smoothList, pos, (fmt & VF_MTX) ? vert[lay.mtx] : 0)];
-        // learn this face's normal at the point (or see it again)
-        int at = -1, oldest = 0;
-        for (int i = 0; i < sp.count; i++) {
-            if (own[0] * sp.n[i][0] + own[1] * sp.n[i][1] + own[2] * sp.n[i][2] > 0.999f) at = i;
-            if (sp.seen[i] < sp.seen[oldest]) oldest = i;
-        }
-        if (at < 0) at = sp.count < 6 ? sp.count++ : oldest;
-        memcpy(sp.n[at], own, sizeof own);
-        sp.seen[at] = now;
-        // the average of the point's normals near this one
-        float sum[3] = {0, 0, 0};
-        for (int i = 0; i < sp.count; i++) {
-            if (now - sp.seen[i] > 3) continue;  // not drawn lately: the model has changed
-            const float d = own[0] * sp.n[i][0] + own[1] * sp.n[i][1] + own[2] * sp.n[i][2];
-            if (d < kSmoothCos) continue;
-            for (int k = 0; k < 3; k++) sum[k] += sp.n[i][k];
-        }
-        const float sl = sqrtf(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
-        if (sl < 1e-6f) continue;
-        s_smoothDone++;
-        if (std::fabs(sum[0] / sl - own[0]) + std::fabs(sum[1] / sl - own[1]) + std::fabs(sum[2] / sl - own[2]) > 0.02f)
-            s_smoothChanged++;
-        for (int k = 0; k < 3; k++) n[k] = sum[k] / sl * len;  // the length it had (scaled normals stay so)
-    }
-}
-// The same for a model whose shading is painted on its corners (no light of the game's: SMS's
-// people mostly), the colours: each corner's becomes the average of the colours the model has at that
-// point that are near its own (a hat's edge against a face stays a hard edge).
-struct SmoothColour {
-    uint8_t c[6][4];
-    uint32_t seen[6];
-    uint8_t count;
-};
-std::unordered_map<uint64_t, SmoothColour> s_smoothClr;
-static void smoothColours(uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride) {
-    const VtxFmtLayout& lay = vtxFmtLayout(fmt);
-    if (s_smoothClr.size() > 400000) s_smoothClr.clear();
-    const uint32_t now = s_smoothFrame;
-    for (uint32_t v = 0; v < count; v++) {
-        uint8_t* vert = out + size_t(v) * stride;
-        const float* pos = reinterpret_cast<const float*>(vert);
-        uint8_t* c = vert + lay.clr[0];
-        SmoothColour& sc = s_smoothClr[smoothKey(g.smoothList, pos, (fmt & VF_MTX) ? vert[lay.mtx] : 0) ^ 0x9E3779B97F4A7C15ull];
-        int at = -1, oldest = 0;
-        for (int i = 0; i < sc.count; i++) {
-            if (memcmp(sc.c[i], c, 4) == 0) at = i;
-            if (sc.seen[i] < sc.seen[oldest]) oldest = i;
-        }
-        if (at < 0) at = sc.count < 6 ? sc.count++ : oldest;
-        memcpy(sc.c[at], c, 4);
-        sc.seen[at] = now;
-        int sum[4] = {0, 0, 0, 0}, n = 0;
-        for (int i = 0; i < sc.count; i++) {
-            if (now - sc.seen[i] > 3) continue;
-            const int d = std::abs(int(sc.c[i][0]) - c[0]) + std::abs(int(sc.c[i][1]) - c[1]) + std::abs(int(sc.c[i][2]) - c[2]);
-            if (d > 110) continue;  // another colour: an edge the model means
-            for (int k = 0; k < 4; k++) sum[k] += sc.c[i][k];
-            n++;
-        }
-        if (n < 2) continue;
-        s_smoothDone++;
-        uint8_t avg[4];
-        for (int k = 0; k < 4; k++) avg[k] = uint8_t((sum[k] + n / 2) / n);
-        if (std::abs(int(avg[0]) - c[0]) + std::abs(int(avg[1]) - c[1]) + std::abs(int(avg[2]) - c[2]) > 6) s_smoothChanged++;
-        memcpy(c, avg, 3);  // its own alpha kept
-    }
-}
-extern "C" void GXPC_SmoothCharacters(int mode) {
-    s_smoothFrame++;
-    // the log, every 10 seconds or so while on
-    if (g.smoothChars && s_smoothFrame % 600 == 0 && getenv("SMS_SMOOTH_LOG")) {  // (it works: quiet unless asked)
-        logmsg("smooth characters: %u corners drawn (%u lit by the game's lights, %u not: their colours are "
-               "painted on), %u smoothed (%u changed), %u with neither normals nor colours; %zu points known",
-               s_smoothLit + s_smoothUnlit, s_smoothLit, s_smoothUnlit, s_smoothDone, s_smoothChanged,
-               s_smoothNoNormals, s_smooth.size());
-        s_smoothLit = s_smoothUnlit = s_smoothNoNormals = s_smoothDone = s_smoothChanged = 0;
-    }
-    mode = mode < 0 ? 0 : mode > 2 ? 2 : mode;
-    if (g.smoothChars == mode) return;
-    flushBatch();
-    g.smoothChars = mode;
-    s_smooth.clear();
-    s_smoothClr.clear();
-}
-
 static void dlRecordPrimitive(uint8_t opcode, const uint8_t* p, uint32_t count, int vat, const DecSetup& S,
                               const uint8_t* out);
-static const void* s_curList;  // the display list being drawn (the Texture Log's names)
-static const void* s_roomMeasuring;  // Interior Lights: the light's list being measured
 static struct DlEntry* s_dlRec = nullptr;  // the display list being recorded into the cache
 
 static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t count, const VtxLayout& L, int vat) {
@@ -995,16 +867,6 @@ static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t 
     uint8_t* out = primitiveBegin(opcode, count, S.fmt, stride);
     if (!L.pos.mode) memset(out, 0, size_t(count) * stride);  // no position: keep the slot defined
     for (int k = 0; k < nops; k++) ops[k].fn(ops[k], p, L.size, out, stride, count);
-    if (g.smoothDraw) {
-        // (the log: how much of what is drawn is smoothed, and lit by the game's lights at all)
-        const bool lit = (g.xfReg[XFR_COLOR0CTRL] & 2) != 0;
-        (lit ? s_smoothLit : s_smoothUnlit) += count;
-        if (lit && (S.fmt & VF_NRM) && !(S.fmt & VF_NBT)) smoothNormals(out, count, S.fmt, stride);
-        else if (!lit && (S.fmt & VF_CLR0)) smoothColours(out, count, S.fmt, stride);
-        else s_smoothNoNormals += count;
-    }
-    if (g_pickArmed) pickTriangles(opcode, out, count, S.fmt, stride, s_curList);  // the Texture Log
-    if (s_roomMeasuring && s_curList == s_roomMeasuring) roomMeasure(out, count, S.fmt, stride);  // Interior Lights
     primitiveEnd(opcode, count);
     if (s_dlRec) dlRecordPrimitive(opcode, p, count, vat, S, out);
     return p + size_t(count) * L.size;
@@ -1175,9 +1037,6 @@ struct DlEntry {
     uint32_t vat[8][3];
     uint8_t vatMask = 0, lastVat = 0;
     bool usesMtx = false;
-    // Skip Off-Screen Objects: its corners' box (model space), when it is all triangles of one matrix
-    bool boxed = false;
-    float lo[3], hi[3];
     uint32_t verts = 0;
     size_t bytes = 0;
     std::vector<DlArray> arrays;
@@ -1380,97 +1239,8 @@ static void dlReplayState(const DlEntry& e) {
     }
 }
 
-static void callDisplayListInner(const uint8_t* data, uint32_t size);
-// Moving Vegetation: a plant's display list (gx_render.cpp's register) is drawn on its own, with
-// the sway on (its batch flushed before and after, so that nothing else sways with it).
-static void callDisplayListBody(const uint8_t* data, uint32_t size);
 void callDisplayList(const uint8_t* data, uint32_t size) {
-    const void* was = s_curList;
-    s_curList = data;
-    callDisplayListBody(data, size);
-    s_curList = was;
-}
-static void callDisplayListBody(const uint8_t* data, uint32_t size) {
-    float minY, maxY;
-    // Round Shadows Under Characters: a character's list on its own, casting no sun shadow
-    // (Wet Characters: drawn with the wet ones' spheres)
-    // (Smooth Characters: its normals smoothed)
-    const bool charFx = g.shadowRound || g.shadowFarLevel || g.charMask || g.wetChars[0] > 0.0f;
-    if ((charFx || g.smoothChars) && data && !s_dlRec && characterLookup(data, size)) {
-        if (charFx) {
-            flushBatch();
-            g.shadowNoCast = true;
-            g.charDraw     = true;
-        }
-        if (g.smoothChars && !charFx) flushBatch();  // (its own batch: its shading is the smooth one)
-        g.smoothDraw = g.smoothChars != 0;
-        g.smoothList = data;
-        callDisplayListInner(data, size);
-        flushBatch();  // (drawn with its flags still on)
-        g.smoothDraw = false;
-        if (charFx) {
-            g.shadowNoCast = false;
-            g.charDraw     = false;
-        }
-        return;
-    }
-    // Smooth Characters' Mario too: his own draw (GXPC_ShadowTag)
-    if (g.smoothChars == 2 && g.shadowTag && data && !s_dlRec) {
-        flushBatch();
-        g.smoothDraw = true;
-        g.smoothList = data;
-        callDisplayListInner(data, size);
-        flushBatch();
-        g.smoothDraw = false;
-        return;
-    }
-    // 3D Ladders: a ladder's or fence's card drawn again behind itself, layer by layer (u_shell), a
-    // little darker each, the deepest first and the card itself last (on top, even if it blends):
-    // its rails and rungs get sides
-    float back[3];
-    if (g.ladders3D && data && !s_dlRec && ladderLookup(data, size, back)) {
-        flushBatch();
-        static const int kLayers = 10;
-        static const float kDepth = 9.0f;  // units
-        g.shellOn = true;
-        for (int i = kLayers; i >= 1; i--) {
-            const float t = float(i) / float(kLayers);
-            g.shell[0] = back[0];
-            g.shell[1] = back[1];
-            g.shell[2] = back[2];
-            g.shell[3] = kDepth * t;
-            g.shell[4] = 1.0f - 0.35f * t;
-            callDisplayListInner(data, size);
-            flushBatch();
-        }
-        g.shellOn = false;
-        callDisplayListInner(data, size);
-        flushBatch();
-        return;
-    }
-    if (g.swayOn && data && !s_dlRec && swayLookup(data, size, &minY, &maxY)) {
-        flushBatch();
-        g.swayDraw     = true;
-        g.swayShape[0] = minY;
-        g.swayShape[1] = maxY;
-        callDisplayListInner(data, size);
-        flushBatch();
-        g.swayDraw = false;
-        return;
-    }
-    callDisplayListInner(data, size);
-}
-
-static void callDisplayListInner(const uint8_t* data, uint32_t size) {
-    // Interior Lights: a lamp's or a window's list, its first draw by the main camera: measured
-    if (data && !s_dlRec && !s_roomMeasuring && roomMeasureBegin(data)) {
-        s_roomMeasuring = data;
-        runCommands(data, size);
-        s_roomMeasuring = nullptr;
-        roomMeasureEnd();
-        return;
-    }
-    if (!data || g.smoothDraw || g_pickArmed || !dlCacheEnabled() || !rendererReady() || s_dlRec) {
+    if (!data || !dlCacheEnabled() || !rendererReady() || s_dlRec) {
         runCommands(data, size);
         return;
     }
@@ -1486,22 +1256,6 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size) {
             e.misses = 0;
             return;
         }
-        // Skip Off-Screen Objects: out of the view. Left out; or, where its shadow may be seen,
-        // drawn only into the sun's maps (a batch of its own; small ones are drawn as ever)
-        int hidden = 0;
-        if (g.skipOffScreen && e.boxed && !g.swayDraw) {
-            hidden = boxOffScreen(e.lo, e.hi);
-            if (hidden == 2) {
-                g_traceLastVat = e.lastVat;
-                e.misses = 0;
-                return;
-            }
-            if (hidden == 1 && e.verts < 96) hidden = 0;
-        }
-        if (hidden) {
-            flushBatch();
-            g.viewHidden = true;
-        }
         const bool arena = arenaEnabled() && !traceFile();  // traces list the batch's own vertices
         for (DlRun& r : e.runs) {
             const uint32_t nidx = uint32_t(r.idx.size());
@@ -1512,10 +1266,6 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size) {
                 appendArena(r.cls, r.fmt, r.stride, r.arena, r.nverts, nidx, r.verts.data());
             else
                 appendDecoded(r.cls, r.fmt, r.stride, r.verts.data(), r.nverts, r.idx.data(), nidx);
-        }
-        if (hidden) {
-            flushBatch();
-            g.viewHidden = false;
         }
         s_vertsLoaded += e.verts;
         g_traceLastVat = e.lastVat;
@@ -1583,20 +1333,6 @@ static void callDisplayListInner(const uint8_t* data, uint32_t size) {
         e.arrays.push_back(a);
     }
     for (const DlRun& r : e.runs) e.bytes += r.verts.size() + r.idx.size() * 4;
-    e.boxed = !e.stateOnly && !e.usesMtx && e.verts > 0;
-    for (int i = 0; i < 3; i++) e.lo[i] = 1e30f, e.hi[i] = -1e30f;
-    for (const DlRun& r : e.runs) {
-        if (r.cls != PRIM_TRIS || r.stride < 12) e.boxed = false;
-        for (uint32_t v = 0; e.boxed && v < r.nverts; v++) {
-            float p[3];
-            memcpy(p, r.verts.data() + size_t(v) * r.stride, sizeof p);
-            for (int i = 0; i < 3; i++) {
-                if (!(p[i] > -1e9f && p[i] < 1e9f)) e.boxed = false;
-                if (p[i] < e.lo[i]) e.lo[i] = p[i];
-                if (p[i] > e.hi[i]) e.hi[i] = p[i];
-            }
-        }
-    }
     e.bytes += e.ops.size() * sizeof(StateOp) + e.words.size() * 4;
     s_dlCacheBytes += e.bytes;
     e.valid = true;

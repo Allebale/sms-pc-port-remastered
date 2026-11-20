@@ -42,7 +42,6 @@ struct SmsMod {
 	std::map<std::string, std::string> settings;
 	std::vector<ModOption> options;
 	uint32_t hudHidden = 0; // game->set_hud_hidden: the HUD's parts this mod hides (SMS_HUD_*)
-	bool reflects = false;  // reflections->set: it set the port's puddle and water effects
 	bool aims = false;      // player->set_aim: it turns Mario's body (a player's)
 	bool holdsFludd = false; // held_fludd->set: FLUDD held in view (first person)
 	bool armsFludd  = false; // held_fludd->set_zoom, ->pose: FLUDD's zoom and pose

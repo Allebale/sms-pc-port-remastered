@@ -8,8 +8,6 @@
 #include "mod_host.h"
 #include "../../multiplayer/mp_game_api.h"
 
-#include "port_grass.h"
-#include "port_puddles.h"
 #include "port_warp.h"
 #include "sms_gx/gx_pc.h"
 #ifdef SMS_HAVE_GAME_BUILD_H
@@ -771,10 +769,6 @@ void dropRegistrations(SmsMod* m)
 		m->hudHidden = 0; // what it hid is shown again (unless another mod hides it)
 		applyHudHidden();
 	}
-	if (m->reflects) { // the puddle and water effects as the original game has them again
-		m->reflects = false;
-		port_reflect_option_reset();
-	}
 	if (m->aims) { // Mario's body faces the way he moves again (each player's)
 		m->aims = false;
 		for (int p = 0; p < 2; p++) {
@@ -1076,7 +1070,7 @@ const SmsGameApi s_game = {
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
 	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop, modg_wall_at, apiSetViewDistance,
-	modg_out_of_walls,
+	modg_out_of_walls,  modg_object_particle,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -1175,38 +1169,7 @@ const char* apiNativeBuild(void)
 
 const SmsNativeApi s_native = {sizeof(SmsNativeApi), apiNativeBuild, modg_native};
 
-// ------------------------------------------------------------------ reflections (Allebale's fork)
-// The port's puddle and water effects (platform/misc/port_puddle_options.cpp), SMS_REFLECT_* being
-// its options in their order.
-
-static_assert((int)SMS_REFLECT_OPTION_COUNT == (int)PORT_REFLECT_OPTIONS, "the SDK's reflection options are the port's");
-static_assert((int)SMS_REFLECT_SHOW_MARIO == (int)PORT_OPT_SHOW && (int)SMS_REFLECT_BY_SURFACE == (int)PORT_OPT_BY_SURFACE &&
-                  (int)SMS_REFLECT_STRENGTH_STONE == (int)PORT_OPT_STRENGTH && (int)SMS_REFLECT_FOOTPRINTS == (int)PORT_OPT_FOOTPRINTS,
-              "in the same order");
-
-int apiReflectSet(SmsMod* mod, int option, int value)
-{
-	if (!port_reflect_option_set(option, value))
-		return 0;
-	if (mod)
-		mod->reflects = true;
-	return 1;
-}
-
-const SmsReflectionsApi s_reflections = {sizeof(SmsReflectionsApi), apiReflectSet, port_reflect_option_get,
-                                         port_reflect_option_range};
-
-// ------------------------------------------------------------------ grass (Allebale's fork)
-// 3D Grass pressed flat or burnt by a mod (ext/core/game/port_grass.cpp). Nothing in the game calls
-// these: without a mod that does, that code never runs.
-
-void apiGrassPress(float x, float y, float z, float r) { port_grass_goop(x, y, z, r, 0, 0); }
-void apiGrassBurn(float x, float y, float z, float r, int ms) { port_grass_goop(x, y, z, r, 1, ms < 0 ? 0 : ms > 200 ? 200 : ms); }
-
-const SmsGrassApi s_grass = {sizeof(SmsGrassApi), SMS_GRASS_MAGIC, apiGrassPress,        apiGrassBurn,
-                             port_grass_burning,  port_grass_fires, port_grass_extinguish};
-
-// ------------------------------------------------------------------ a model's parts (Allebale's fork)
+// ------------------------------------------------------------------ a model's parts
 // An actor's joints and one part's colour (ext/modapi/game/modapi_world.cpp), for a mod's own things
 // worn or held. Nothing in the game calls these.
 
@@ -1689,22 +1652,26 @@ int keyHook(int sc, int down, int repeat, int mods)
 		if (down && !repeat)
 			s_keyPressed[sc] = 1;
 	}
+	// A key let go always reaches the game as well: one held down as a menu took the keyboard
+	// (the key that opened a mod's menu, say) is not left held there, playing (Mario walking,
+	// co-op's keyboard in use) after the menu has closed. The game had no press of the others.
+	const int keep = down ? 1 : 0;
 	// the Mods menu's key opens and closes it, and is kept from the game
 	if (sc == s_menuKey && s_menuKey >= 0) {
 		if (down && !repeat)
 			menuToggle();
-		return 1;
+		return keep;
 	}
 	if (menuOpen()) {
 		menuKey(sc, down, repeat); // the menu has the keyboard while open
-		return 1;
+		return keep;
 	}
 	SmsEvKey ev = {sc, down, repeat, mods};
 	if (s_captor) {
 		dispatchTo(SMS_EV_KEY, &ev, sizeof ev, s_captor);
-		return 1;
+		return keep;
 	}
-	return dispatchTo(SMS_EV_KEY, &ev, sizeof ev, nullptr);
+	return dispatchTo(SMS_EV_KEY, &ev, sizeof ev, nullptr) && down;
 }
 
 // ------------------------------------------------------------------ start and stop
@@ -1866,8 +1833,6 @@ const SmsApi g_api = {
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
 	&s_heldFludd,       &s_water,          &s_actor,          &s_models,
-	&s_reflections,
-	&s_grass,
 	&s_parts,
 };
 

@@ -566,61 +566,6 @@ void GXGetCullMode(GXCullMode* mode) { *mode = GXCullMode(g.cullMode); }
 void GXSetCoPlanar(GXBool enable) { bpField(BP_GENMODE, 1, 19, enable); }
 
 // ================================================================== GXTransform
-// The port's own clip plane, in view space (State::userClip): on until the next GXSetProjection.
-// Puddle and water reflections cut the mirrored stage at the mirror's surface with it.
-extern "C" void GXPC_SetUserClipPlane(int on, const float* plane) {
-    g.userClipOn = on != 0;
-    if (on && plane) memcpy(g.userClip, plane, sizeof g.userClip);
-}
-
-// Wet Mario: how wet the models drawn from now are, 0 (dry) to 1, and up to which plane (view space,
-// wet below it; State::wet, wetLine). Mario's draw sets it and puts it back to 0 after.
-// Sandy Mario (ext/core/game/port_sandy.cpp), around Mario's own draw: 12 floats (u_sand), null none.
-extern "C" void GXPC_SetSand(const float* sand) {
-    float s[12] = {0};
-    if (sand) memcpy(s, sand, sizeof s);
-    if (!memcmp(s, g.sand, sizeof s)) return;
-    flushBatch();  // what is batched so far is drawn as sandy as it was
-    memcpy(g.sand, s, sizeof s);
-}
-extern "C" void GXPC_SetWetness(float wet, const float* line) {
-    wet = wet < 0.0f ? 0.0f : wet > 1.0f ? 1.0f : wet;
-    static const float kNone[4] = {0.0f, 0.0f, 0.0f, -1.0f};  // no plane: wet all over
-    if (!line || wet == 0.0f) line = kNone;
-    if (wet == g.wet && !memcmp(line, g.wetLine, sizeof g.wetLine)) return;
-    flushBatch();  // what is batched so far is drawn as wet as it was (batches see no uniform change)
-    g.wet = wet;
-    memcpy(g.wetLine, line, sizeof g.wetLine);
-}
-
-// Wet Characters (ext/core/game/port_wet_characters.cpp): up to 8 wet people and enemies, each a
-// sphere in the main camera's view (centre, radius) and (wetness, waterline d, 0, 0); the view's up
-// (the waterlines' normal); Wet Mario's look. Count 0: none, and no character's draw changes.
-extern "C" void GXPC_SetWetCharacters(int count, const float* data, float darkness, float shine, const float* up) {
-    float w[72] = {0};
-    if (count > 8) count = 8;
-    if (count > 0 && data && up) {
-        w[0] = float(count);
-        w[1] = darkness >= 0.0f && darkness < 4.0f ? darkness : 1.0f;
-        w[2] = shine >= 0.0f && shine < 4.0f ? shine : 1.0f;
-        memcpy(w + 4, up, 3 * sizeof(float));
-        memcpy(w + 8, data, size_t(count) * 8 * sizeof(float));
-    }
-    if (!memcmp(w, g.wetChars, sizeof w)) return;
-    flushBatch();
-    memcpy(g.wetChars, w, sizeof w);
-}
-
-// Wet Mario's look (the menu's): how much darker (1 as it was) and how shiny (0 none, 1 as it was).
-extern "C" void GXPC_SetWetLook(float darkness, float shine) {
-    if (!(darkness >= 0.0f && darkness < 4.0f)) darkness = 1.0f;
-    if (!(shine >= 0.0f && shine < 4.0f)) shine = 1.0f;
-    if (darkness == g.wetLook[0] && shine == g.wetLook[1]) return;
-    flushBatch();
-    g.wetLook[0] = darkness;
-    g.wetLook[1] = shine;
-}
-
 void GXSetProjection(f32 mtx[4][4], GXProjectionType type) {
     float p[7];
     p[0] = float(type);
@@ -638,53 +583,12 @@ void GXSetProjection(f32 mtx[4][4], GXProjectionType type) {
     GXSetProjectionv(p);
 }
 void GXSetProjectionv(f32* ptr) {
-    // Ambient Occlusion: the main camera's 3D scene ends as a 2D (orthographic) projection follows
-    // it (the HUD, the screen's overlays): onto it, before they are drawn
-    if (g.aoArmed && ptr[0] != 0.0f && memcmp(g.projection, g.aoProj, sizeof g.aoProj) == 0) {
-        flushBatch();
-        g.aoArmed = false;
-        aoApply();
-    }
-    g.userClipOn = false;  // the port's clip plane is for the camera it was set for
     traceNoteProjection(ptr);
     memcpy(g.projection, ptr, sizeof(g.projection));
     uint32_t w[7];
     for (int i = 0; i < 6; i++) w[i] = fbits(ptr[1 + i]);
     w[6] = ptr[0] != 0.0f ? 1 : 0;
-    // Shadows: the main camera's view again (its projection, as GXPC_ShadowFrame saw it set), or
-    // another's (an orthographic 2D one, a mirror's, a menu's), which neither casts nor receives
-    const bool main = g.shadowArmed && memcmp(ptr, g.shadowProj, sizeof g.shadowProj) == 0;
-    if (main != g.shadowMain) {
-        flushBatch();
-        g.shadowMain = main;
-    }
-    // Moving Vegetation: plants sway while the view their wind was taken into is drawn
-    const bool swaying = g.swayArmed && memcmp(ptr, g.swayProj, sizeof g.swayProj) == 0;
-    if (swaying != g.swayActive) {
-        flushBatch();
-        g.swayActive = swaying;
-    }
-    // Fire Lights: lit while the view they were set for is drawn
-    const bool lit = g.plightArmed && memcmp(ptr, g.plightProj, sizeof g.plightProj) == 0;
-    if (lit != g.plightActive) {
-        flushBatch();
-        g.plightActive = lit;
-    }
     apiXF(XF_REG_BASE + XFR_PROJ, 7, w);
-}
-
-// Shadows: what is drawn from now until the next projection is not the main camera's view, though
-// its projection is the same (a mirror's: TMirrorCamera::perform, port_mirror_clip).
-// What the port draws on water's surface (port_water_reflections.cpp) takes no sun shadow.
-extern "C" void GXPC_ShadowReceive(int on) {
-    if (g.shadowNoReceive == !on) return;
-    flushBatch();
-    g.shadowNoReceive = !on;
-}
-extern "C" void GXPC_ShadowNotMain(void) {
-    if (!g.shadowMain) return;
-    flushBatch();
-    g.shadowMain = false;
 }
 void GXGetProjectionv(f32* ptr) { memcpy(ptr, g.projection, sizeof(g.projection)); }
 

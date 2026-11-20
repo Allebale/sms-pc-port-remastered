@@ -2,7 +2,7 @@ Reason: api->held_fludd (First Person SDK): a first-person camera's FLUDD held i
 
 --- a/src/Player/MarioMain.cpp
 +++ b/src/Player/MarioMain.cpp
-@@ -6,6 +6,9 @@
+@@ -5,6 +5,9 @@
  #include <Player/MarioCap.hpp>
  #include <Player/WaterGun.hpp>
  #ifdef TARGET_PC
@@ -12,7 +12,7 @@ Reason: api->held_fludd (First Person SDK): a first-person camera's FLUDD held i
  void PortCharacterFluddPlace(TMario* mario, TWaterGun* fludd, MtxPtr chest);
  #endif
  #include <Player/Yoshi.hpp>
-@@ -233,8 +236,10 @@
+@@ -232,8 +235,10 @@
  			// result (it reads this from r31) replaces the FLUDD flag test.
  			// an extension may draw the player its own way (port_ext.h): FLUDD
  			// goes with him, whatever a mod's isYoshiMaintainFluddModel says

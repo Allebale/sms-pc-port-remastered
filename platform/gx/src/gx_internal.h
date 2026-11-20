@@ -92,87 +92,6 @@ struct State {
     uint8_t lineWidth, pointSize;
     // draw sync
     uint16_t drawSyncToken;
-    // the port's own clip plane (GXPC_SetUserClipPlane), in view space: a vertex is kept where
-    // dot(plane, (view position, 1)) >= 0. Off: (0, 0, 0, 1), keeping all. GXSetProjection turns
-    // it off, so it lasts only for the camera it was set for.
-    float userClip[4];
-    bool userClipOn;
-    // Wet Mario (GXPC_SetWetness): how wet what is drawn now is, 0 (dry, as ever) to 1, and its
-    // waterline: a plane in view space, wet where dot(plane, (view position, 1)) < 0 (below it), its
-    // normal the world's up. The fragment shader darkens and deepens the colour there and adds a
-    // small, tight highlight, as a thin film of water on cloth and skin gives.
-    float wet;
-    float wetLine[4];
-    float wetLook[2];  // GXPC_SetWetLook: how dark, how shiny (1: as it was)
-    // Shadows (GXPC_ShadowFrame, gx_render.cpp): the sun's shadow maps, a near one and a far one
-    // (cascades) side by side in one texture. u_shadow: rows 0-2, view space to the near map read
-    // this frame (last frame's), rows 3-5 to the far one; rows 6-8, view space to the cascade a
-    // caster is drawn into now; row 9, (strength, near normal bias, far normal bias, a texel);
-    // row 10, (the sun's direction in view space, 1 while the main camera's view is drawn); row
-    // 11, (the caster's cascade, 0 near or 1 far, ...). shadowMain: what is drawn now is the main
-    // camera's view (its projection, as GXPC_ShadowFrame saw it set): it casts and receives.
-    // shadowTag: Mario's own draw (GXPC_ShadowTag), for the log.
-    float shadow[48];
-    float shadowProj[7];
-    bool shadowArmed, shadowMain, shadowTag;
-    bool shadowCastOnly;  // GXPC_ShadowCastOnly: batches only into the sun's shadow map
-    bool shadowNoReceive;  // GXPC_ShadowReceive(0): what is drawn now takes no sun shadow
-    // Round Shadows Under Characters (GXPC_ShadowRound): Mario and the characters cast none;
-    // shadowNoCast: a character's display list is drawn now
-    bool shadowRound, shadowNoCast;
-    // Far Shadows From, The Level Only (GXPC_ShadowFar): Mario's and the characters' draws are
-    // told apart (shadowTag, shadowNoCast) and left out of the far cascade
-    bool shadowFarLevel;
-    // Skip Off-Screen Objects (GXPC_SkipOffScreen). viewHidden: the batch is of a display list that
-    // is out of the view but may cast into the sun's maps: nothing of it is drawn in the view
-    bool skipOffScreen, viewHidden;
-    // Ambient Occlusion Near Grass's All But Characters: Mario's and the characters' draws are drawn
-    // again into a depth map of their own (charCast), so the shade knows them
-    bool charMask;
-    // Ambient Occlusion (gx_render.cpp aoApply): armed for the main camera's projection each frame
-    float aoProj[7];
-    bool aoArmed;
-    // Sandy Mario (GXPC_SetSand): the sand on what is drawn now (u_sand; [5..7] 0: none)
-    float sand[12];
-    // Wet Characters (GXPC_SetWetCharacters): the wet people and enemies near Mario this frame, in
-    // the main camera's view (u_wetc: [0] count, darkness, shine; [1] the view's up; then two each,
-    // sphere (centre, radius) and (wetness, waterline's d)); characters' draws are wet inside them
-    float wetChars[72];
-    bool charDraw;  // a registered character's display list is being drawn (gx_fifo.cpp)
-    // Smooth Characters (GXPC_SmoothCharacters; gx_fifo.cpp): 0 off, 1 the registered characters, 2 and
-    // Mario. smoothDraw: one of their display lists (smoothList) is being drawn, its normals smoothed
-    int smoothChars;
-    bool smoothDraw;
-    const void* smoothList;
-    // 3D Ladders (GXPC_Ladders3D, GXPC_LadderRegister): on; and while a ladder's card is drawn again
-    // behind itself, u_shell: [0] the way back (model space) and how far, [1] how dark (1 none)
-    bool ladders3D;
-    bool shellOn;
-    float shell[8];
-    // Moving Vegetation (GXPC_SwayFrame, GXPC_SwayRegister; gx_render.cpp): the wind and what
-    // pushes plants aside, in the world (set each tick) and in the view they were last taken
-    // into (u_sway: up, wind and time, the plant's shape, six pushers, their count); a plant's
-    // display list drawn sways while its view's projection is the one in use
-    bool swayOn, swayArmed, swayActive, swayDraw;
-    float swayWorld[32];   // wind x y z, time; amount, flutter, push strength, pusher count; 6 x (x y z r)
-    float sway[44];
-    float swayProj[7];
-    float swayShape[2];    // the plant's model-space lowest and highest y
-    // Fire Lights (GXPC_SetLights, GXPC_LightsView, gx_render.cpp): up to 8 point lights, in the
-    // world (position, radius; colour, strength) and in the view they were last set for (u_plight:
-    // 16 vec4s, then (count, ...)); lit while what is drawn is that view's (its projection).
-    float plightWorld[64];
-    int plightCount;
-    int plightShown;  // in the shader: the game's and Interior Lights' (gx_render.cpp GXPC_LightsView)
-    float plight[68];
-    float plightProj[7];
-    bool plightArmed, plightActive;
-    // Interior Lights' shadows (gx_render.cpp roomShadowFrame): the nearest two room lights' depth,
-    // six faces each, in one texture (u_pshadow: rows 0-2 view to world turn; 3 the lights' slots
-    // in u_plight read this frame, 4-5 those lights (view, far), 6-7 the lights drawn into now,
-    // 8 their near planes, 9 (a texel, lights drawn into now)). pshadowCast: casts are drawn
-    float pshadow[40];
-    bool pshadowCast;
 };
 
 extern State g;
@@ -231,14 +150,6 @@ enum PrimClass { PRIM_TRIS, PRIM_LINES, PRIM_POINTS };
 void rendererInit(float efbScale);
 float efbScale();  // the internal resolution over the GameCube's
 void flushBatch();
-// The Texture Log (gx_render.cpp): one frame's draws looked at, each primitive's triangles under the
-// middle of the screen found as it is decoded (gx_fifo.cpp), with its display list (named by the game)
-extern bool g_pickArmed;
-// Interior Lights (gx_render.cpp): a lamp's or a window's display list measured as it is first drawn
-bool roomMeasureBegin(const void* list);
-void roomMeasure(const uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride);
-void roomMeasureEnd();
-void pickTriangles(uint8_t op, const uint8_t* out, uint32_t count, uint32_t fmt, uint32_t stride, const void* list);
 
 // Changes made while the game runs, by the settings menu (gx_settings.cpp), on the GL thread.
 // The picture's post-processing: the scaler is 0 bilinear/area, 1 nearest, 2 sharp, 3 FSR 1, 4 NIS.
@@ -452,67 +363,28 @@ struct UniformCache {
     int tevreg[16], konst[16], alpharef[2];
     float texscale[16], texsize[16], fog[4], fogcolor[4], indmtx[24], efb[2], proj[8], vp[8], ambmat[16];
     float linewidth[1];
-    float uclip[4];
-    float wet[8];
-    float shadow[48];
-    float plight[68];
-    float sway[44];
-    float sand[12];
-    float wetc[72];
-    float shell[8];
-    float pshadow[40];
 };
 struct ShaderProgram {
     unsigned prog;
     int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
-        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth, uUserClip, uWet, uShadow, uPlight, uSway, uSand, uWetc, uShell, uPshadow;
+        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth;
     int uGoopRef;  // a goop layer's colours (GXPC_SetGoopTint): -1 for every other program
     int uObjTint;  // one object's colour (GXPC_SetObjectTint): -1 for every other program
     mutable UniformCache uc;
 };
 bool shaderHasEarlyFragmentTests();
 bool earlyZWritesRejected();
-// 3D Grass (gx_shader.cpp, gx_render.cpp): its program, and its own uniforms' locations.
-struct GrassUniforms {
-    int view, params, press, strength, tile, flatArea, top;
-};
-const ShaderProgram* grassProgram(GrassUniforms* u);
-// Its copies of the ground drawn so far (colour, depth), on these texture units.
-const int kGrassColorUnit = 11, kGrassDepthUnit = 12, kGrassFlatUnit = 13;
-// AO Near Grass: the ground under and round the blades, as a map of the picture (gx_render.cpp)
-const int kGrassMaskUnit = 8;
 // `lines`: the program for a line batch, which draws each line as a quad
 // GXSetLineWidth wide (a geometry shader)
-// depthOnly: 0 the draw, 1 its depth only (the ordered depth pass), 2 into the sun's shadow map,
-// 6 into Interior Lights' shadow texture (each face an instance)
-const ShaderProgram* shaderForCurrentState(int depthOnly = 0, bool lines = false);
-// Moving Vegetation: whether a display list is a plant's (registered as its model loaded), and its
-// model-space height (gx_render.cpp, from callDisplayList).
-// Ambient Occlusion: onto the main camera's scene, as it ends (gx_render.cpp, from GXSetProjectionv).
-void aoApply();
-bool swayLookup(const void* list, uint32_t size, float* minY, float* maxY);
-bool characterLookup(const void* list, uint32_t size);  // Round Shadows Under Characters
-// Skip Off-Screen Objects: a model-space box drawn with the current position matrix and projection.
-// 0 some of it may show; 1 none of it shows, but it may cast into the sun's maps; 2 nothing of it
-int boxOffScreen(const float lo[3], const float hi[3]);
-bool ladderLookup(const void* list, uint32_t size, float back[3]);  // 3D Ladders
-// The texture unit the sun's shadow map is bound on (gx_render.cpp), past the game's eight.
-const int kShadowUnit = 10;
-// Interior Lights' shadow texture (gx_render.cpp): past the sixteen others
-const int kRoomShadowUnit = 16;
+const ShaderProgram* shaderForCurrentState(bool depthOnly = false, bool lines = false);
 // The texture map whose goop layer the current state's program tints
 // (GXPC_SetGoopTint), as the last shaderForCurrentState saw it; -1 none.
 int goopMapNow();
 // The colour GXPC_SetObjectTint set for the draws now (0xRRGGBBAA), 0 none.
 uint32_t objectTintNow();
-// The texture unit a goop layer's tint map is bound on (beside u_tex's eight). Shared with
-// kGrassMaskUnit: each binds its own texture there right before it is used (bindGoopTint
-// directly, the AO trace directly), so the two never meet.
+// The texture unit a goop layer's tint map is bound on (beside u_tex's eight).
 const int kGoopUnit = 8;
-void shaderWarmFrame();  // Background Shader Compiling: once a frame
-void firstPlayNotice();  // a new build's first play: the shaders-building notice, for a minute
-extern uint32_t g_statWarmBackground;
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)
 
 // ---------------------------------------------------------------- overlay panels
@@ -539,8 +411,10 @@ enum OverlaySlot {
 // Where GXPC_PresentXFB last put the game's picture in the window (from its top left).
 struct PresentRect { int x, y, w, h; };
 PresentRect lastPresentRect();
-// A GL program from GLSL 330 sources (vertex, fragment), its output o_color.
-unsigned compileInternalProgram(const char* vs, const char* fs);
+// A GL program from GLSL 330 sources (vertex, fragment), its output o_color. attribs: the vertex
+// inputs' names in their locations' order (0, 1, ...), null-terminated; the Vulkan renderer needs them
+// for any shader with vertex inputs (it does not read layout(location = N)).
+unsigned compileInternalProgram(const char* vs, const char* fs, const char* const* attribs = nullptr);
 // Native mods' drawing (gx_mod_layer.cpp), on the GL thread over the presented
 // picture, under the port's own menus.
 void modLayerRender(int winW, int winH);

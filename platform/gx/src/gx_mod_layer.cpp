@@ -109,7 +109,9 @@ unsigned textureFor(uint32_t id) {
 }
 
 void initGl() {
-    s_prog = gx::compileInternalProgram(kVs, kFs);
+    // named as kVs places them: with the Vulkan renderer nothing a mod draws showed without them
+    static const char* const kAttribs[] = {"a_pos", "a_uv", "a_color", nullptr};
+    s_prog = gx::compileInternalProgram(kVs, kFs, kAttribs);
     s_uWindow = glGetUniformLocation(s_prog, "u_window");
     s_uTex = glGetUniformLocation(s_prog, "u_tex");
     glGenVertexArrays(1, &s_vao);
@@ -135,7 +137,7 @@ void initGl() {
 struct SavedState {
     GLint activeUnit = 0, boundTex = 0, rowLength = 0, unpackAlign = 4, program = 0, vao = 0, arrayBuf = 0, drawFbo = 0;
     GLint viewport[4] = {}, scissorBox[4] = {}, colorMask[4] = {};
-    GLint blend = 0, depth = 0, stencil = 0, cull = 0, scissor = 0, logic = 0, clip0 = 0, clip1 = 0, clip2 = 0;
+    GLint blend = 0, depth = 0, stencil = 0, cull = 0, scissor = 0, logic = 0, clip0 = 0, clip1 = 0;
     GLint srcRGB = 0, dstRGB = 0, srcAlpha = 0, dstAlpha = 0, eqRGB = 0, eqAlpha = 0;
     void save() {
         glGetIntegerv(GL_ACTIVE_TEXTURE, &activeUnit);
@@ -158,7 +160,6 @@ struct SavedState {
         glGetIntegerv(GL_COLOR_LOGIC_OP, &logic);
         glGetIntegerv(GL_CLIP_DISTANCE0, &clip0);
         glGetIntegerv(GL_CLIP_DISTANCE1, &clip1);
-        glGetIntegerv(GL_CLIP_DISTANCE2, &clip2);
         glGetIntegerv(GL_BLEND_SRC_RGB, &srcRGB);
         glGetIntegerv(GL_BLEND_DST_RGB, &dstRGB);
         glGetIntegerv(GL_BLEND_SRC_ALPHA, &srcAlpha);
@@ -188,7 +189,6 @@ struct SavedState {
         if (logic) glEnable(GL_COLOR_LOGIC_OP);
         if (clip0) glEnable(GL_CLIP_DISTANCE0);
         if (clip1) glEnable(GL_CLIP_DISTANCE1);
-        if (clip2) glEnable(GL_CLIP_DISTANCE2);
     }
 };
 
@@ -299,7 +299,6 @@ void gx::modLayerRender(int winW, int winH) {
     glDisable(GL_COLOR_LOGIC_OP);
     glDisable(GL_CLIP_DISTANCE0);
     glDisable(GL_CLIP_DISTANCE1);
-    glDisable(GL_CLIP_DISTANCE2);
     glEnable(GL_BLEND);
     glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
