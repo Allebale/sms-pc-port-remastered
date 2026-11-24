@@ -46,6 +46,7 @@
 #include <sms_gx/gx_pc.h>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
 #include <Strategic/HitActor.hpp>
 #include <Strategic/LiveActor.hpp>
 #include <System/EmitterViewObj.hpp>
@@ -1132,10 +1133,85 @@ extern "C" int modg_parts_hide_worn(SmsObject o, int index, int hidden)
 
 // The stage's models and characters went with it: what was hidden of them is forgotten (the callbacks
 // stay on model data still in use, doing nothing more than calling the game's own)
+// ------------------------------------------------------------------ actors' animations held still (api->parts' freeze_anim)
+
+// An actor's models' animations stopped where they are: each tick, after the stage moved and before it is posed,
+// every animation of its models (skeletal, morph, colour, texture: each J3DFrameCtrl) is set back to the frame it
+// had when it was held, so it stands as still as a picture whatever its own code plays.
+namespace {
+struct Held {
+	TLiveActor* actor;
+	MActor* models[8];
+	f32 frames[8][7];
+	int modelCount;
+};
+const int kMostHeld = 64;
+Held s_held[kMostHeld];
+int s_heldCount;
+
+void heldModels(TLiveActor* a, Held& h)
+{
+	h.modelCount = 0;
+	TMActorKeeper* keeper = a->getActorKeeper();
+	if (keeper && keeper->mActors)
+		for (int i = 0; i < keeper->getActorNum() && h.modelCount < 8; i++)
+			if (MActor* m = keeper->getMActor(i))
+				h.models[h.modelCount++] = m;
+	if (a->getMActor() && h.modelCount < 8) {
+		bool seen = false;
+		for (int i = 0; i < h.modelCount; i++)
+			seen = seen || h.models[i] == a->getMActor();
+		if (!seen)
+			h.models[h.modelCount++] = a->getMActor();
+	}
+	for (int i = 0; i < h.modelCount; i++)
+		for (int t = 0; t < 7; t++) {
+			J3DFrameCtrl* c = h.models[i]->getFrameCtrl(t);
+			h.frames[i][t] = c ? c->getFrame() : 0.0f;
+		}
+}
+} // namespace
+
+extern "C" int modg_parts_freeze_anim(SmsObject o, int frozen)
+{
+	TLiveActor* a = liveActor(o);
+	if (!a)
+		return 0;
+	for (int i = 0; i < s_heldCount; i++)
+		if (s_held[i].actor == a) {
+			if (!frozen)
+				s_held[i] = s_held[--s_heldCount];
+			return 1;
+		}
+	if (!frozen)
+		return 1;
+	if (s_heldCount >= kMostHeld)
+		return 0;
+	Held& h = s_held[s_heldCount];
+	h.actor = a;
+	heldModels(a, h);
+	if (!h.modelCount)
+		return 0;
+	s_heldCount++;
+	return 1;
+}
+
+void PortHeldAnimTick()
+{
+	for (int i = 0; i < s_heldCount; i++) {
+		Held& h = s_held[i];
+		for (int m = 0; m < h.modelCount; m++)
+			for (int t = 0; t < 7; t++)
+				if (J3DFrameCtrl* c = h.models[m]->getFrameCtrl(t))
+					c->setFrame(h.frames[m][t]);
+	}
+}
+
 extern "C" void modg_parts_forget(void)
 {
 	s_hiddenJointCount = 0;
 	s_leftOffCount     = 0;
+	s_heldCount        = 0;
 }
 
 // ------------------------------------------------------------------ actors' models scaled (actor->set_model_scale)
@@ -1288,6 +1364,7 @@ void PortModelsTick(); // modapi_models.cpp
 void PortWorldTick()
 {
 	PortModelsTick(); // what mods draw is asked for again each tick
+	PortHeldAnimTick(); // actors' animations held still (api->parts' freeze_anim): back to their held frames
 	// a drop a mod draws itself never lies on the ground or runs down a wall as water (the game would
 	// draw its wet patch): told to mods as landed there (if no landing told them yet), and gone
 	TModelWaterManager* w = gpModelWaterManager;
