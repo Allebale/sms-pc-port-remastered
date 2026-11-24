@@ -5,6 +5,7 @@
 // made it, kept as the manager makes drops and moves them down as others end
 // (port_water_drop_made/moved, patch zzzzzzzzzz-coop-water-owner).
 
+#include <stdint.h>
 #include "../modapi_bridge.h"
 #include "port_ext.h"
 
@@ -1150,10 +1151,16 @@ Held s_held[kMostHeld];
 int s_heldCount;
 
 // one of its animations, only while it plays one of that kind: with none, MActor hands back a shared
-// stand-in that must not be written (setting its frame crashed the game, Allebale's log)
+// stand-in that must not be written (setting its frame crashed the game, Allebale's logs)
 J3DFrameCtrl* heldCtrl(MActor* m, int type)
 {
-	return m && m->getCurAnmIdx(type) >= 0 ? m->getFrameCtrl(type) : 0;
+	if (!m || m->getCurAnmIdx(type) < 0)
+		return 0;
+	J3DFrameCtrl* c = m->getFrameCtrl(type);
+	// a real one lives in the game's memory (MEM1); the stand-in is a static in the program itself,
+	// handed back even with an animation index set (Allebale's second log), and is never written
+	uintptr_t at = (uintptr_t)c;
+	return at >= 0x80000000u && at < 0x84000000u ? c : 0;
 }
 
 void heldModels(TLiveActor* a, Held& h)
