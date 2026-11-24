@@ -1149,6 +1149,13 @@ const int kMostHeld = 64;
 Held s_held[kMostHeld];
 int s_heldCount;
 
+// one of its animations, only while it plays one of that kind: with none, MActor hands back a shared
+// stand-in that must not be written (setting its frame crashed the game, Allebale's log)
+J3DFrameCtrl* heldCtrl(MActor* m, int type)
+{
+	return m && m->getCurAnmIdx(type) >= 0 ? m->getFrameCtrl(type) : 0;
+}
+
 void heldModels(TLiveActor* a, Held& h)
 {
 	h.modelCount = 0;
@@ -1166,7 +1173,7 @@ void heldModels(TLiveActor* a, Held& h)
 	}
 	for (int i = 0; i < h.modelCount; i++)
 		for (int t = 0; t < 7; t++) {
-			J3DFrameCtrl* c = h.models[i]->getFrameCtrl(t);
+			J3DFrameCtrl* c = heldCtrl(h.models[i], t);
 			h.frames[i][t] = c ? c->getFrame() : 0.0f;
 		}
 }
@@ -1202,7 +1209,7 @@ void PortHeldAnimTick()
 		Held& h = s_held[i];
 		for (int m = 0; m < h.modelCount; m++)
 			for (int t = 0; t < 7; t++)
-				if (J3DFrameCtrl* c = h.models[m]->getFrameCtrl(t))
+				if (J3DFrameCtrl* c = heldCtrl(h.models[m], t))
 					c->setFrame(h.frames[m][t]);
 	}
 }
