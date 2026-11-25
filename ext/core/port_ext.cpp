@@ -436,7 +436,8 @@ extern "C" const char* port_ext_talk_text(void) { return s_talkTextOn ? s_talkTe
 
 extern "C" void port_ext_talk(int what, void* npc, unsigned* message, unsigned flags)
 {
-	s_talkTextOn = 0; // a new message (or the talk's start or end): its own text unless told again
+	if (what != PORT_TALK_START) // a new message, or the talk's end: its own text unless told again (the
+		s_talkTextOn = 0;            // start may come after the first message is set up)
 	EACH(talk) s_ext[i]->talk(what, npc, message, flags);
 }
 
