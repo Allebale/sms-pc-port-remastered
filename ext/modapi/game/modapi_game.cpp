@@ -1040,9 +1040,12 @@ void talk(int what, void* npc, unsigned* message, unsigned flags)
 	ev.npc     = npc ? obj((TBaseNPC*)npc) : 0;
 	ev.message = message ? *message : 0;
 	ev.last    = what == PORT_TALK_MESSAGE && (flags & 1) ? 1 : 0;
+	ev.text    = 0;
 	modh_dispatch(SMS_EV_TALK, &ev, sizeof ev);
 	if (message)
 		*message = ev.message;
+	if (what == PORT_TALK_MESSAGE && ev.text)
+		port_ext_set_talk_text(ev.text);
 }
 
 void demoCameraEnd(const char* name, void* actor, int forced)

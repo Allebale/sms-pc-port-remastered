@@ -392,8 +392,51 @@ extern "C" int port_ext_music(unsigned* id, int start)
 	return 0;
 }
 
+// A message's text given by an extension (port_ext_set_talk_text): the talk balloon shows it in place of
+// the message's own, its words wrapped to the balloon's 30-character lines; for this message only.
+static char s_talkText[1024];
+static int s_talkTextOn;
+
+extern "C" void port_ext_set_talk_text(const char* text)
+{
+	s_talkTextOn = 0;
+	if (!text || !*text)
+		return;
+	const int kWidth = 30, kEnd = (int)sizeof s_talkText - 2;
+	int at = 0, col = 0;
+	for (const char* p = text; *p && at < kEnd;) {
+		if (*p == '\n') { // a line of the text's own
+			s_talkText[at++] = '\n', col = 0, p++;
+			continue;
+		}
+		if (*p == ' ') {
+			p++;
+			continue;
+		}
+		int word = 0;
+		while (p[word] && p[word] != ' ' && p[word] != '\n')
+			word++;
+		if (word > kWidth)
+			word = kWidth;
+		if (col > 0 && col + 1 + word > kWidth)
+			s_talkText[at++] = '\n', col = 0;
+		else if (col > 0)
+			s_talkText[at++] = ' ', col++;
+		for (int k = 0; k < word && at < kEnd; k++, col++) {
+			const unsigned char c = (unsigned char)p[k];
+			s_talkText[at++] = c >= 0x20 && c < 0x7f ? (char)c : '?'; // one byte a character
+		}
+		p += word;
+	}
+	s_talkText[at] = 0;
+	s_talkTextOn   = at > 0;
+}
+
+extern "C" const char* port_ext_talk_text(void) { return s_talkTextOn ? s_talkText : 0; }
+
 extern "C" void port_ext_talk(int what, void* npc, unsigned* message, unsigned flags)
 {
+	s_talkTextOn = 0; // a new message (or the talk's start or end): its own text unless told again
 	EACH(talk) s_ext[i]->talk(what, npc, message, flags);
 }
 

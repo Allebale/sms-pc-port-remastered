@@ -1,0 +1,19 @@
+--- a/src/GC2D/Talk2D2.cpp
++++ b/src/GC2D/Talk2D2.cpp
+@@ -1417,8 +1417,16 @@
+ 		return;
+ 	}
+ 
++#ifdef TARGET_PC
++	// an extension's own text for this message (port_ext.h), else the message's
++	const char* sms_ext_text = port_ext_talk_text();
++	JSUMemoryInputStream in(sms_ext_text ? (const u8*)sms_ext_text + mTextOffset
++	                                     : (const u8*)data + entry->mTextOffset + mTextOffset,
++	    0x400);
++#else
+ 	JSUMemoryInputStream in(
+ 	    (const u8*)data + entry->mTextOffset + mTextOffset, 0x400);
++#endif
+ 
+ 	mMesgEntry   = entry;
+ 	int col      = 0;

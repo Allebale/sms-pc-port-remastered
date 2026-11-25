@@ -462,6 +462,10 @@ int port_ext_flag_change(unsigned flag, int old, int* value);
 int port_ext_sound(unsigned* id, const float* pos, int system);
 int port_ext_music(unsigned* id, int start);
 void port_ext_talk(int what, void* npc, unsigned* message, unsigned flags);
+// The text the talk balloon shows for this message in place of its own (an extension's, given while it
+// hears PORT_TALK_MESSAGE; wrapped to the balloon's lines), or null (port_ext.cpp).
+void port_ext_set_talk_text(const char* text);
+const char* port_ext_talk_text(void);
 void port_ext_demo_camera_end(const char* name, void* actor, int forced);
 void port_ext_game_saved(int slot);
 void port_ext_timer(int what, int time);
