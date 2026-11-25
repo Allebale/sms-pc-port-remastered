@@ -116,6 +116,12 @@ extern "C" int port_music_play(const short* lr, int frames, int rate, int loopFr
 	return 1;
 }
 
+extern "C" int port_music_active(void)
+{
+	std::lock_guard<std::mutex> lk(g_mu);
+	return g_music.pcm != nullptr;
+}
+
 extern "C" void port_music_pause(int paused)
 {
 	std::lock_guard<std::mutex> lk(g_mu);

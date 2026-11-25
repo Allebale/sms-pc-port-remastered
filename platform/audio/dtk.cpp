@@ -150,7 +150,7 @@ extern "C" void port_dtk_mix(s16* lr, size_t frames, u32 outRate)
 		if (!g.playing)
 			return;
 		const double step = (AIGetStreamSampleRate() == AI_SAMPLERATE_48KHZ ? 48000.0 : 32000.0) / outRate;
-		const s32 gainTo   = port_dspmix_class_gain(PORT_DSPMIX_CLASS_MUSIC);
+		const s32 gainTo   = port_music_active() ? 0 : port_dspmix_class_gain(PORT_DSPMIX_CLASS_MUSIC); // a mod's music: silent
 		const s32 gainFrom = g.gainSeen ? g.gain : gainTo;
 		g.gain             = gainTo;
 		g.gainSeen         = true;

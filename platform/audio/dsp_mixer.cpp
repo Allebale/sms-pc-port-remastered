@@ -239,7 +239,8 @@ int voice_class(const Voice& v)
 void begin_class_gains()
 {
 	for (int c = 0; c < PORT_DSPMIX_CLASSES; c++) {
-		const int to = port_dspmix_class_gain(c);
+		// a mod's music playing (port_clips.cpp): the game's own music silent meanwhile, faded
+		const int to = c == PORT_DSPMIX_CLASS_MUSIC && port_music_active() ? 0 : port_dspmix_class_gain(c);
 		g.gainFrom[c] = g.gainSeen ? g.gainTo[c] : to;
 		g.gainTo[c]   = to;
 	}

@@ -55,6 +55,8 @@ int port_dspmix_class_percent(int cls);
 /* The same as a Q15 factor (32768 = unity), for the mixers that run outside
  * this module and carry music (the DVD stream, THP movie audio). */
 int port_dspmix_class_gain(int cls);
+// A mod's music is playing (port_clips.cpp): the game's own music is kept silent meanwhile.
+int port_music_active(void);
 
 /* Diagnostics: voices rendered in the last subframe. */
 int port_dspmix_active_voices(void);
