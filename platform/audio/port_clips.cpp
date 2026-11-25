@@ -101,6 +101,12 @@ Music g_music;
 extern "C" int port_music_play(const short* lr, int frames, int rate, int loopFrom, float gain)
 {
 	std::lock_guard<std::mutex> lk(g_mu);
+	// the same music again (a volume changed): it keeps its place, only its volume new
+	if (lr && g_music.pcm && frames == g_music.frames && loopFrom == g_music.loopFrom &&
+	    g_music.step == (double)rate / (double)g_rate && !memcmp(g_music.pcm, lr, (size_t)frames * 4)) {
+		g_music.gain = (int)((gain > 0 ? gain : 0) * 256.0f);
+		return 1;
+	}
 	free(g_music.pcm);
 	g_music = Music();
 	if (!lr || frames < 2 || rate <= 0)
