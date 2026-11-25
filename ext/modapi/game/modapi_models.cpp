@@ -49,7 +49,8 @@ bool entered(J3DDrawBuffer* b, J3DPacket* p)
 }
 bool PortPacketEntered(J3DPacket* p) { return j3dSys.getDrawBuffer(0) && entered(j3dSys.getDrawBuffer(0), p); }
 
-const int kMeshes = 64, kDraws = 96, kTris = 24000;
+// (draws and loose corners a moment raised from 96 and 24000 for many small models, a present on every coin)
+const int kMeshes = 64, kDraws = 1024, kTris = 96000;
 
 struct Mesh {
 	SmsMod* mod;
