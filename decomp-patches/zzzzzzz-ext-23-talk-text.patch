@@ -1,6 +1,23 @@
 --- a/src/GC2D/Talk2D2.cpp
 +++ b/src/GC2D/Talk2D2.cpp
-@@ -1417,8 +1417,16 @@
+@@ -461,6 +461,16 @@
+ };
+ #endif
+ 
++#ifdef TARGET_PC
++// An extension gave its own text as a talk starts (port_ext.h): the balloon set up with it, as for a
++// message of the game's (an NPC with no message of its own would otherwise show the error one).
++extern "C" void port_talk_show_given_text(void)
++{
++	if (gpTalk2D && port_ext_talk_text() && SMSGetMarDirector()->getTalkingNPC())
++		gpTalk2D->setMessageID(4, 1);
++}
++#endif
++
+ void TTalk2D2::forceCloseTalk()
+ {
+ #ifdef TARGET_PC
+@@ -1417,8 +1427,16 @@
  		return;
  	}
  

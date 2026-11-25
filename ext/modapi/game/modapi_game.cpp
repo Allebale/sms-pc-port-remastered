@@ -1044,7 +1044,7 @@ void talk(int what, void* npc, unsigned* message, unsigned flags)
 	modh_dispatch(SMS_EV_TALK, &ev, sizeof ev);
 	if (message)
 		*message = ev.message;
-	if (what == PORT_TALK_MESSAGE && ev.text)
+	if (what != PORT_TALK_END && ev.text)
 		port_ext_set_talk_text(ev.text);
 }
 

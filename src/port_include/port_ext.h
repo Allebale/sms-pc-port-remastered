@@ -466,6 +466,8 @@ void port_ext_talk(int what, void* npc, unsigned* message, unsigned flags);
 // hears PORT_TALK_MESSAGE; wrapped to the balloon's lines), or null (port_ext.cpp).
 void port_ext_set_talk_text(const char* text);
 const char* port_ext_talk_text(void);
+// The talk balloon set up with that text as a talk starts (decomp-patches' Talk2D2.cpp).
+void port_talk_show_given_text(void);
 void port_ext_demo_camera_end(const char* name, void* actor, int forced);
 void port_ext_game_saved(int slot);
 void port_ext_timer(int what, int time);

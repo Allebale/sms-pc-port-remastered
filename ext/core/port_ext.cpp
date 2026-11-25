@@ -439,6 +439,8 @@ extern "C" void port_ext_talk(int what, void* npc, unsigned* message, unsigned f
 	if (what != PORT_TALK_START) // a new message, or the talk's end: its own text unless told again (the
 		s_talkTextOn = 0;            // start may come after the first message is set up)
 	EACH(talk) s_ext[i]->talk(what, npc, message, flags);
+	if (what == PORT_TALK_START && s_talkTextOn)
+		port_talk_show_given_text(); // its balloon set up with the text now (Talk2D2.cpp)
 }
 
 extern "C" void port_ext_demo_camera_end(const char* name, void* actor, int forced)
