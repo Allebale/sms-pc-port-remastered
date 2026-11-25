@@ -1221,6 +1221,12 @@ void PortHeldAnimTick()
 	}
 }
 
+// a picture of the HUD's shown as a mod's (api->parts' hud_picture): ext/core/game/port_hud.cpp
+extern "C" int modg_parts_hud_picture(const char* pane, const uint8_t* rgba, int w, int h)
+{
+	return port_hud_picture(pane, rgba, w, h);
+}
+
 extern "C" void modg_parts_forget(void)
 {
 	s_hiddenJointCount = 0;

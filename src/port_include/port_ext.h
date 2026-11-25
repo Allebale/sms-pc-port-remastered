@@ -544,6 +544,10 @@ int port_hud_drawing_rest(void);
 // TGCConsole2::perform's draw pass is about to draw the HUD (`after` 0), or
 // has (`after` 1): the game's patch calls it, `console` the TGCConsole2.
 void port_hud_draw(void* console, int after);
+// A picture of the HUD's (the layout's pane named `name`, such as "c_ic", the coin counter's coin) shown
+// as `rgba` (RGBA8, w x h, powers of two from 4 to 256, rows from the top; copied) from its next draw;
+// rgba NULL: the game's own again from the next stage's HUD. 1 done (ext/core/game/port_hud.cpp).
+int port_hud_picture(const char* name, const unsigned char* rgba, int w, int h);
 
 #ifdef __cplusplus
 }

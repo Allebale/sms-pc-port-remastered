@@ -138,6 +138,7 @@ int modg_parts_hide_joint(SmsObject o, const char* name, int hidden);
 const char* modg_parts_worn_name(SmsObject o, int index);
 int modg_parts_hide_worn(SmsObject o, int index, int hidden);
 int modg_parts_freeze_anim(SmsObject o, int frozen);
+int modg_parts_hud_picture(const char* pane, const uint8_t* rgba, int w, int h);
 void modg_parts_forget(void);
 void modg_actor_unscale_all(void);
 int modg_actor_kind(SmsObject o);
