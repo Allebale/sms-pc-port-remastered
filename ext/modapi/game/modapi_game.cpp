@@ -644,6 +644,9 @@ void vecOf(SmsVec3* v, const JGeometry::TVec3<f32>& p) { setVec(v, p.x, p.y, p.z
 // The game mode and the pause, as they change (SMS_EV_MODE_CHANGED,
 // SMS_EV_PAUSE), from the top of each frame.
 int s_lastMode = -1, s_pauseKind = -1;
+} // namespace
+extern "C" void port_music_pause(int paused); // platform/audio/port_clips.cpp
+namespace {
 
 int pauseKind()
 {
@@ -689,6 +692,7 @@ void watchModeAndPause()
 			modh_dispatch(SMS_EV_PAUSE, &ev, sizeof ev);
 		}
 		s_pauseKind = kind;
+		port_music_pause(kind >= 0); // a mod's music held still while paused (platform/audio/port_clips.cpp)
 	}
 }
 

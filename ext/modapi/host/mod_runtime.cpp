@@ -1159,7 +1159,8 @@ int apiWorldToCanvas(const SmsVec3* p, float* x, float* y, float* depth)
 
 const SmsCameraApi s_camera = {sizeof(SmsCameraApi), apiCameraGet, apiWorldToCanvas};
 
-const SmsAudioApi s_audio = {sizeof(SmsAudioApi), modg_play_system_sound, modg_play_sound_at, modg_play_clip};
+const SmsAudioApi s_audio = {sizeof(SmsAudioApi), modg_play_system_sound, modg_play_sound_at, modg_play_clip,
+                             modg_play_music};
 
 const char* apiNativeBuild(void)
 {

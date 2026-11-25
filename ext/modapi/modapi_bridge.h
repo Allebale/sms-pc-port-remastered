@@ -170,6 +170,7 @@ int modg_player_hurt(int points);
 int modg_wall_at(const SmsVec3* at, float radius, SmsVec3* normal);
 int modg_set_view_distance(float scale);
 int modg_play_clip(const int16_t* pcm, int frames, int rate, float volume);
+int modg_play_music(const int16_t* lr, int frames, int rate, int loop_from, float volume);
 int modg_player_set_fall_start(float y);
 void modg_held_fludd_kick(float amount);
 int modg_held_fludd_aim(SmsVec3* eye, SmsVec3* forward);

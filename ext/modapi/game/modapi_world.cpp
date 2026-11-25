@@ -1425,6 +1425,16 @@ extern "C" int modg_play_clip(const int16_t* pcm, int frames, int rate, float vo
 	return 1;
 }
 
+// ------------------------------------------------------------------ audio->play_music
+
+extern "C" int port_music_play(const short* lr, int frames, int rate, int loopFrom, float gain);
+extern "C" int modg_play_music(const int16_t* lr, int frames, int rate, int loop_from, float volume)
+{
+	if (lr && (frames <= 1 || rate < 8000 || rate > 96000 || frames > rate * 600))
+		return 0;
+	return port_music_play(lr, lr ? frames : 0, rate, loop_from, volume);
+}
+
 // ------------------------------------------------------------------ API 1.8: goop-like tools
 
 extern "C" int modg_actor_set_position(SmsObject o, const SmsVec3* at)
