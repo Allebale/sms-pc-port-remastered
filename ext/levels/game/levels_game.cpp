@@ -29,6 +29,12 @@
 #include <string>
 #include <vector>
 
+#include "port_host_alloc.h"
+
+// Kept in malloc's memory, not the stage's JKR heap: these outlive stages (port_host_alloc.h).
+typedef PortHostString Str;
+typedef std::set<int, std::less<int>, PortHostAlloc<int> > IntSet;
+
 extern "C" int port_dvd_lay_file(const char* path, const char* host);
 extern "C" int port_dvd_exists(const char* path);
 extern "C" const char* port_card_dir(void);
@@ -40,14 +46,14 @@ extern "C" int port_levels_area(void);
 namespace {
 
 struct Level {
-	std::string dir, id, name, author, description;
+	Str dir, id, name, author, description;
 	int shines, blues; // how many it has (level.ini's, as the World editor counts them), 0 not known
 	Level() : shines(0), blues(0) {}
 };
 Level s_level;
 bool s_open, s_tried;
 int s_area = -2;                  // the slot's area (-1: none found), worked out once
-std::vector<std::string> s_scenes; // its episodes' scene files, "/data/scene/scale0.szs"
+std::vector<Str, PortHostAlloc<Str> > s_scenes; // its episodes' scene files, "/data/scene/scale0.szs"
 
 // A custom level's area counts as Delfino Plaza's world (SMS_getShineStage), so its Shines take the
 // game's Shine flags and its blue coins the plaza's: those flags are the level's own while Mario is
@@ -59,14 +65,14 @@ const unsigned kShineTotal = 0x40000, kBlueTotal = 0x40001;
 bool s_in;     // Mario is in the level: its flags in the file's place
 bool s_guard;  // this extension is changing flags itself
 int s_file[kLast - kFirst], s_fileShines, s_fileBlues, s_fileRecord;
-std::set<int> s_shines, s_blues; // the level's own, for this save file
+IntSet s_shines, s_blues; // the level's own, for this save file
 int s_record;
 int s_saveFile = -9;
 int s_gotCount;      // special Shines got this run (the HUD shows them when one more is)
 
 unsigned recordFlag() { return 0x20005 + (unsigned)s_area; } // TFlagManager::incGoldCoinFlag's
 
-std::string trim(std::string s)
+Str trim(Str s)
 {
 	while (!s.empty() && isspace((unsigned char)s[s.size() - 1]))
 		s.erase(s.size() - 1);
@@ -76,7 +82,7 @@ std::string trim(std::string s)
 	return s.substr(i);
 }
 
-bool isFile(const std::string& p)
+bool isFile(const Str& p)
 {
 	struct stat st;
 	return stat(p.c_str(), &st) == 0 && !(st.st_mode & S_IFDIR);
@@ -95,19 +101,19 @@ void findArea()
 		TNameRefAryT<TScenarioArchiveName>* episodes = stages.getChildren()[a];
 		if (a == 15 || !episodes || episodes->getChildren().size() < 2)
 			continue;
-		std::vector<std::string> scenes;
+		std::vector<Str, PortHostAlloc<Str> > scenes;
 		bool missing = true;
 		for (size_t e = 0; e < episodes->getChildren().size(); e++) {
 			const char* arc = episodes->getChildren()[e].mArcName;
-			std::string base = arc ? arc : "";
+			Str base = arc ? arc : "";
 			size_t dot = base.rfind('.');
-			if (dot != std::string::npos)
+			if (dot != Str::npos)
 				base = base.substr(0, dot);
 			if (base.empty() || base == "none" || base == "option") {
 				missing = false;
 				break;
 			}
-			const std::string p = "/data/scene/" + base;
+			const Str p = "/data/scene/" + base;
 			if (port_dvd_exists((p + ".szs").c_str()) || port_dvd_exists((p + ".arc").c_str())) {
 				missing = false;
 				break;
@@ -116,10 +122,10 @@ void findArea()
 		}
 		if (!missing)
 			continue;
-		if (scenes[0].find("/scale") != std::string::npos || fallback < 0) {
+		if (scenes[0].find("/scale") != Str::npos || fallback < 0) {
 			fallback = a;
 			s_scenes = scenes;
-			if (scenes[0].find("/scale") != std::string::npos)
+			if (scenes[0].find("/scale") != Str::npos)
 				break;
 		}
 	}
@@ -132,10 +138,10 @@ void findArea()
 
 // ---------------------------------------------------------------- the level's own save
 
-std::string savePath()
+Str savePath()
 {
 	const char* card = port_card_dir();
-	std::string dir = std::string(card ? card : ".") + "/levels";
+	Str dir = Str(card ? card : ".") + "/levels";
 #ifdef _WIN32
 	_mkdir(dir.c_str());
 #else
@@ -175,9 +181,9 @@ void writeSave()
 	FILE* f = fopen(savePath().c_str(), "w");
 	if (!f)
 		return;
-	for (std::set<int>::const_iterator i = s_shines.begin(); i != s_shines.end(); ++i)
+	for (IntSet::const_iterator i = s_shines.begin(); i != s_shines.end(); ++i)
 		fprintf(f, "shine %d\n", *i);
-	for (std::set<int>::const_iterator i = s_blues.begin(); i != s_blues.end(); ++i)
+	for (IntSet::const_iterator i = s_blues.begin(); i != s_blues.end(); ++i)
 		fprintf(f, "blue %d\n", *i);
 	if (s_record > 0)
 		fprintf(f, "coins %d\n", s_record);
@@ -294,7 +300,7 @@ void stageLoading(int area, int episode)
 		leave();
 }
 
-std::string s_upper;
+Str s_upper;
 const char* stageName(int area)
 {
 	if (!s_open || area != s_area || s_level.name.empty())
@@ -343,15 +349,15 @@ extern "C" int port_levels_open(const char* dir)
 	while (!l.dir.empty() && (l.dir[l.dir.size() - 1] == '/' || l.dir[l.dir.size() - 1] == '\\'))
 		l.dir.erase(l.dir.size() - 1);
 	size_t cut = l.dir.find_last_of("/\\");
-	l.id = cut == std::string::npos ? l.dir : l.dir.substr(cut + 1);
+	l.id = cut == Str::npos ? l.dir : l.dir.substr(cut + 1);
 	if (FILE* f = fopen((l.dir + "/level.ini").c_str(), "r")) {
 		char line[512];
 		while (fgets(line, sizeof line, f)) {
-			std::string s = line;
+			Str s = line;
 			size_t eq = s.find('=');
-			if (eq == std::string::npos || s[0] == '#' || s[0] == ';')
+			if (eq == Str::npos || s[0] == '#' || s[0] == ';')
 				continue;
-			const std::string k = trim(s.substr(0, eq)), v = trim(s.substr(eq + 1));
+			const Str k = trim(s.substr(0, eq)), v = trim(s.substr(eq + 1));
 			if (k == "id" && !v.empty())
 				l.id = v;
 			else if (k == "name")
@@ -374,7 +380,7 @@ extern "C" int port_levels_open(const char* dir)
 	for (size_t e = 0; e < s_scenes.size(); e++) {
 		char name[32];
 		snprintf(name, sizeof name, "/stage%d.szs", (int)e);
-		const std::string host = l.dir + name;
+		const Str host = l.dir + name;
 		if (isFile(host) && port_dvd_lay_file(s_scenes[e].c_str(), host.c_str()))
 			stages++;
 	}
@@ -446,12 +452,12 @@ extern "C" int port_levels_special_total(void)
 		return s_special;
 	s_special = 0;
 	const char* card = port_card_dir();
-	const std::string dir = std::string(card ? card : ".") + "/levels";
+	const Str dir = Str(card ? card : ".") + "/levels";
 	char tail[8];
 	snprintf(tail, sizeof tail, "-%c.txt", gpApplication.mSaveFile >= 0 && gpApplication.mSaveFile <= 2 ? 'a' + gpApplication.mSaveFile : 'x');
 	if (DIR* d = opendir(dir.c_str())) {
 		while (dirent* e = readdir(d)) {
-			const std::string n = e->d_name;
+			const Str n = e->d_name;
 			if (n.size() <= strlen(tail) || n.compare(n.size() - strlen(tail), strlen(tail), tail) != 0)
 				continue;
 			if (FILE* f = fopen((dir + "/" + n).c_str(), "r")) {
@@ -477,31 +483,31 @@ extern "C" int port_levels_special_got(void) { return s_gotCount; }
 namespace {
 
 struct Installed {
-	std::string folder, id, name, author, description;
+	Str folder, id, name, author, description;
 	int shines, blues;
 };
-std::vector<Installed> s_installed;
+std::vector<Installed, PortHostAlloc<Installed> > s_installed;
 
 bool byName(const Installed& a, const Installed& b) { return a.name < b.name; }
 
 // A level folder's level.ini, or false.
-bool readIni(const std::string& folder, Installed& out)
+bool readIni(const Str& folder, Installed& out)
 {
 	if (!isFile(folder + "/stage0.szs"))
 		return false;
 	out.folder = folder;
 	size_t cut = folder.find_last_of("/\\");
-	out.id     = cut == std::string::npos ? folder : folder.substr(cut + 1);
+	out.id     = cut == Str::npos ? folder : folder.substr(cut + 1);
 	out.name   = out.id;
 	out.shines = out.blues = 0;
 	if (FILE* f = fopen((folder + "/level.ini").c_str(), "r")) {
 		char line[512];
 		while (fgets(line, sizeof line, f)) {
-			std::string t = line;
+			Str t = line;
 			size_t eq = t.find('=');
-			if (eq == std::string::npos || t[0] == '#' || t[0] == ';')
+			if (eq == Str::npos || t[0] == '#' || t[0] == ';')
 				continue;
-			const std::string k = trim(t.substr(0, eq)), v = trim(t.substr(eq + 1));
+			const Str k = trim(t.substr(0, eq)), v = trim(t.substr(eq + 1));
 			if (k == "id" && !v.empty())
 				out.id = v;
 			else if (k == "name" && !v.empty())
@@ -532,7 +538,7 @@ void scan()
 			if (e->d_name[0] == '.')
 				continue;
 			Installed l;
-			if (readIni(std::string(root) + "/" + e->d_name, l))
+			if (readIni(Str(root) + "/" + e->d_name, l))
 				s_installed.push_back(l);
 		}
 		closedir(d);
@@ -540,23 +546,23 @@ void scan()
 	std::sort(s_installed.begin(), s_installed.end(), byName);
 }
 
-void copyText(char* to, size_t n, const std::string& from)
+void copyText(char* to, size_t n, const Str& from)
 {
 	snprintf(to, n, "%s", from.c_str());
 }
 
 // A level's own save for this save file: how many Shines and blue coins.
-void savedCounts(const std::string& id, int* shines, int* blues)
+void savedCounts(const Str& id, int* shines, int* blues)
 {
 	*shines = *blues = 0;
 	const char* card = port_card_dir();
 	char file[8];
 	snprintf(file, sizeof file, "%c", gpApplication.mSaveFile >= 0 && gpApplication.mSaveFile <= 2 ? 'a' + gpApplication.mSaveFile : 'x');
-	std::string clean = id;
+	Str clean = id;
 	for (size_t i = 0; i < clean.size(); i++)
 		if (!isalnum((unsigned char)clean[i]) && clean[i] != '-' && clean[i] != '_')
 			clean[i] = '-';
-	FILE* f = fopen((std::string(card ? card : ".") + "/levels/" + clean + "-" + file + ".txt").c_str(), "r");
+	FILE* f = fopen((Str(card ? card : ".") + "/levels/" + clean + "-" + file + ".txt").c_str(), "r");
 	if (!f)
 		return;
 	char word[16];
