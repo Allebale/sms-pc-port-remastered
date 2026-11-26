@@ -59,7 +59,7 @@ int s_file[kLast - kFirst], s_fileShines, s_fileBlues, s_fileRecord;
 std::set<int> s_shines, s_blues; // the level's own, for this save file
 int s_record;
 int s_saveFile = -9;
-OSTime s_gotAt;     // when the last special Shine was got (0: none yet this run)
+int s_gotCount;      // special Shines got this run (the HUD shows them when one more is)
 
 unsigned recordFlag() { return 0x20005 + (unsigned)s_area; } // TFlagManager::incGoldCoinFlag's
 
@@ -269,7 +269,7 @@ int flagChange(unsigned flag, int old, int* value)
 	if (flag >= kShines && flag < kShines + kShineCount && *value) {
 		if (s_shines.insert((int)(flag - kShines)).second) {
 			writeSave();
-			s_gotAt = OSGetTime(); // the HUD shows the special Shines for a while
+			s_gotCount++; // the HUD shows the special Shines for a while
 		}
 	} else if (flag >= kBlues && flag < kBlues + kBlueCount && *value) {
 		if (s_blues.insert((int)(flag - kBlues)).second)
@@ -465,11 +465,6 @@ extern "C" int port_levels_special_total(void)
 	return s_special;
 }
 
-// How long ago (ms) a special Shine was got, or -1: the HUD's row of them shows for a while after.
-extern "C" int port_levels_special_age_ms(void)
-{
-	if (!s_gotAt)
-		return -1;
-	const OSTime ms = OSTicksToMilliseconds(OSGetTime() - s_gotAt);
-	return ms > 0x7FFFFFFF ? 0x7FFFFFFF : (int)ms;
-}
+// How many special Shines were got since the game started: the HUD shows its row of them once the
+// HUD is back after one more (the Shine's own scene and the stage it leads to come first).
+extern "C" int port_levels_special_got(void) { return s_gotCount; }

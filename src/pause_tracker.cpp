@@ -34,6 +34,7 @@
 #include <System/MarioGamePad.hpp>
 #include <System/StageUtil.hpp>
 #include <dolphin/gx.h>
+#include <dolphin/os.h>
 #include <dolphin/pad.h>
 #include <stdio.h>
 #include <string.h>
@@ -364,7 +365,7 @@ void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha)
 // down), with a silver Shine on a blue brushstroke and the special Shines' count, for a while after
 // one is got (port_levels_special_age_ms), fading in and out.
 
-extern "C" int port_levels_special_age_ms(void) __attribute__((weak));
+extern "C" int port_levels_special_got(void) __attribute__((weak));
 extern "C" int port_special_shines; // SMS_SPECIAL_SHINES (special_shines in settings.txt, platform)
 
 namespace {
@@ -384,14 +385,25 @@ bool isAncestor(const J2DPane* maybe, const J2DPane* pane)
 void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, const J2DPane* blueBar, const J2DPane* coinBar)
 {
 	// row: the Shine counter's bar, icon, cross and three digits
-	if (!port_special_shines || !port_levels_special_total || !port_levels_special_age_ms || count != 6 || !blueBar || !coinBar)
+	if (!port_special_shines || !port_levels_special_total || !port_levels_special_got || count != 6 || !blueBar || !coinBar)
 		return;
 	J2DPane* bar = row[0];
-	if (!bar || !bar->isVisible() || !bar->mColorAlpha)
+	if (!bar || !bar->isVisible())
 		return;
-	const int age = port_levels_special_age_ms();
-	if (age < 0 || age >= kShowMs)
+	// shown from when the HUD is there again after a special Shine was got, for a while
+	static int s_seen = 0;
+	static OSTime s_from = 0;
+	const int got = port_levels_special_got();
+	if (got != s_seen && bar->mColorAlpha >= 200) {
+		s_seen = got;
+		s_from = OSGetTime();
+	}
+	if (!s_from || !bar->mColorAlpha)
 		return;
+	const OSTime ms = OSTicksToMilliseconds(OSGetTime() - s_from);
+	if (ms >= kShowMs)
+		return;
+	const int age = (int)ms;
 	static int s_art = -1;
 	if (s_art < 0)
 		s_art = loadAllArt() ? 1 : 0;
