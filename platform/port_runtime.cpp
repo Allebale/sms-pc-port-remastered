@@ -78,6 +78,9 @@ int port_heat_haze = 1;
 // SMS_PAUSE_TRACKER=0 hides the pause menu's progress tracker (src/pause_tracker.cpp).
 extern "C" int port_pause_tracker;
 int port_pause_tracker = 1;
+// SMS_SPECIAL_SHINES=0 hides custom levels' special Shines on the HUD (src/pause_tracker.cpp).
+extern "C" int port_special_shines;
+int port_special_shines = 1;
 // SMS_RADAR=1 shows the radar at the HUD's top right (src/radar.cpp); off by default.
 extern "C" int port_radar;
 int port_radar = 0;
@@ -856,6 +859,7 @@ static const struct {
 	{ "skip_intro", "SMS_SKIP_INTRO" }, // straight to the title: no logos or opening movie
 	{ "heat_haze", "SMS_HEAT_HAZE" }, // the heat-wave shimmer, on by default
 	{ "pause_tracker", "SMS_PAUSE_TRACKER" }, // the pause menu's Shine and blue coin tracker, on by default
+	{ "special_shines", "SMS_SPECIAL_SHINES" }, // custom levels' special Shines on the HUD as one is got, on by default
 	{ "auto_save", "SMS_AUTO_SAVE" },   // save by itself after Shines and blue coins, no prompt (ext/autosave), off by default
 	{ "radar", "SMS_RADAR" },           // the radar: the stage around Mario with its Shines and blue coins, off by default
 	{ "radar_zoom", "SMS_RADAR_ZOOM" }, // world units from the radar's centre to its edge (2500, 25 m)
@@ -990,6 +994,8 @@ extern "C" void port_init(int argc, char** argv)
 		port_heat_haze = !*h || strcmp(h, "0") != 0;
 	if (!port_heat_haze)
 		port_log("[port] heat-wave shimmer off\n");
+	if (const char* t = getenv("SMS_SPECIAL_SHINES"))
+		port_special_shines = !*t || strcmp(t, "0") != 0;
 	if (const char* t = getenv("SMS_PAUSE_TRACKER"))
 		port_pause_tracker = !*t || strcmp(t, "0") != 0;
 #ifdef SMS_ECLIPSE
@@ -1095,6 +1101,8 @@ int precise_timer_available()
 #endif
 }
 int precise_timer_get() { return port_precise_timer() != 0; }
+int special_shines_get() { return port_special_shines != 0; }
+int special_shines_set(int v) { port_special_shines = v != 0; return 1; }
 int precise_timer_set(int v) { port_set_precise_timer(v != 0); return 1; }
 
 const PortSetting kRuntimeSettings[] = {
@@ -1107,6 +1115,9 @@ const PortSetting kRuntimeSettings[] = {
 	{ "preciseTimer", PORT_SETTINGS_PAGE_DISPLAY, 85, "Precise Frame Timing",
 	  "Steadier frame times and less judder, for a little more CPU use.", 0, precise_timer_available,
 	  off_on_count, off_on_name, precise_timer_get, precise_timer_set },
+	{ "specialShines", PORT_SETTINGS_PAGE_GAMEPLAY, 25, "Special Shines on the HUD",
+	  "Custom levels' Shines, on a row of their own for a moment as you get one.", 0, NULL, off_on_count,
+	  off_on_name, special_shines_get, special_shines_set },
 	{ "heatHaze", PORT_SETTINGS_PAGE_GRAPHICS, 90, "Heat-Wave Effect",
 	  "The shimmer over hot, sunny areas. Off clears the picture and saves a little.", 0, NULL, off_on_count,
 	  off_on_name, heat_haze_get, heat_haze_set },

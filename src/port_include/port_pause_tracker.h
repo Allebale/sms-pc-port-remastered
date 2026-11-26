@@ -24,10 +24,10 @@ void PauseTrackerMove(TMarioGamePad* pad);
 // With the menu, fading with it; viewport is the menu's 2D area.
 void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha);
 
-// The HUD's row of special Shines (custom levels', ext/levels), under its coin counter: the Shine
-// row's bar, icon and first digit, and the blue coin and coin rows' bars, as they were just
-// drawn (TGCConsole2::perform; patch zzzzzzzzzzz-ext-26).
-void HudSpecialShinesDraw(J2DOrthoGraph& graph, const J2DPane* shineBar, const J2DPane* shineIcon,
-                          const J2DPane* shineDigit, const J2DPane* blueBar, const J2DPane* coinBar);
+// The HUD's row of special Shines (custom levels', ext/levels), under its counters for a while
+// after one is got: `row` the Shine counter's bar, icon, cross and three digits (6), as they were
+// just drawn, drawn again lower; the blue coin and coin rows' bars say how much (TGCConsole2::perform;
+// patch zzzzzzzzzzz-ext-26).
+void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, const J2DPane* blueBar, const J2DPane* coinBar);
 
 #endif

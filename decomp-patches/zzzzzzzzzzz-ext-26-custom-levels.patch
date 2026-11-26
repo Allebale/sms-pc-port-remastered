@@ -107,14 +107,17 @@
  #include <GC2D/GCConsole2.hpp>
  #include <GC2D/BoundPane.hpp>
  #include <GC2D/BlendPane.hpp>
-@@ -4873,6 +4876,11 @@
+@@ -4873,6 +4876,14 @@
  	graph.setup2D();
  
  	console->unkB0->draw(0, 0, &graph);
 +#ifdef TARGET_PC
-+	// custom levels' special Shines (ext/levels): a row of their own under the counters
-+	HudSpecialShinesDraw(graph, console->unk128->getPane(), console->unk12C->getPane(), console->unk134[0]->getPane(),
-+	                     console->unk148->getPane(), console->unkC8->getPane());
++	// custom levels' special Shines (ext/levels): a row of their own under the counters, as one is got
++	{
++		J2DPane* sms_ext_row[6] = { console->unk128->getPane(), console->unk12C->getPane(), console->unk130->getPane(),
++		                            console->unk134[0]->getPane(), console->unk134[1]->getPane(), console->unk134[2]->getPane() };
++		HudSpecialShinesDraw(graph, sms_ext_row, 6, console->unk148->getPane(), console->unkC8->getPane());
++	}
 +#endif
  
  	if (console->unk44 && !console->unk43 && !console->unk42

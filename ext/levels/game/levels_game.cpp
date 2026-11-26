@@ -12,6 +12,7 @@
 #include <System/Application.hpp>
 #include <System/FlagManager.hpp>
 #include <System/ScenarioArchiveName.hpp>
+#include <dolphin/os.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,6 +59,7 @@ int s_file[kLast - kFirst], s_fileShines, s_fileBlues, s_fileRecord;
 std::set<int> s_shines, s_blues; // the level's own, for this save file
 int s_record;
 int s_saveFile = -9;
+OSTime s_gotAt;     // when the last special Shine was got (0: none yet this run)
 
 unsigned recordFlag() { return 0x20005 + (unsigned)s_area; } // TFlagManager::incGoldCoinFlag's
 
@@ -265,8 +267,10 @@ int flagChange(unsigned flag, int old, int* value)
 	if (flag == kShineTotal || flag == kBlueTotal)
 		return 1; // a Shine or blue coin of the level's: not one of the file's
 	if (flag >= kShines && flag < kShines + kShineCount && *value) {
-		if (s_shines.insert((int)(flag - kShines)).second)
+		if (s_shines.insert((int)(flag - kShines)).second) {
 			writeSave();
+			s_gotAt = OSGetTime(); // the HUD shows the special Shines for a while
+		}
 	} else if (flag >= kBlues && flag < kBlues + kBlueCount && *value) {
 		if (s_blues.insert((int)(flag - kBlues)).second)
 			writeSave();
@@ -459,4 +463,13 @@ extern "C" int port_levels_special_total(void)
 		closedir(d);
 	}
 	return s_special;
+}
+
+// How long ago (ms) a special Shine was got, or -1: the HUD's row of them shows for a while after.
+extern "C" int port_levels_special_age_ms(void)
+{
+	if (!s_gotAt)
+		return -1;
+	const OSTime ms = OSTicksToMilliseconds(OSGetTime() - s_gotAt);
+	return ms > 0x7FFFFFFF ? 0x7FFFFFFF : (int)ms;
 }
