@@ -398,9 +398,11 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 		s_seen = got;
 		s_from = OSGetTime();
 	}
-	if (!s_from || !bar->mColorAlpha)
+	// always in the pause menu; else for a while
+	const bool paused = gpMarDirector && gpMarDirector->mState == TMarDirector::STATE_PAUSE_MENU;
+	if (!bar->mColorAlpha || (!paused && !s_from))
 		return;
-	const OSTime ms = OSTicksToMilliseconds(OSGetTime() - s_from);
+	const OSTime ms = paused ? 0 : OSTicksToMilliseconds(OSGetTime() - s_from);
 	if (ms >= kShowMs)
 		return;
 	const int age = (int)ms;
@@ -412,9 +414,9 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 	const int total = port_levels_special_total();
 	// fading in and out
 	int fade = 255;
-	if (age < kFadeMs)
+	if (!paused && age < kFadeMs)
 		fade = age * 255 / kFadeMs;
-	else if (age > kShowMs - kFadeMs)
+	else if (!paused && age > kShowMs - kFadeMs)
 		fade = (kShowMs - age) * 255 / kFadeMs;
 
 	// a row lower than the lowest of the blue coin and coin rows, as far apart as they are
