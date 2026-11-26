@@ -6,7 +6,7 @@ A level made in SMS Launcher's World editor plays in a stage slot the disc leave
 
 | File | What it is |
 | --- | --- |
-| `level.ini` | `id`, `name`, `author`, `description`, `shines` and `blue_coins` (how many it has) as `key = value` lines |
+| `level.ini` | `id`, `name`, `author`, `description`, `shines` and `blue_coins` (how many it has) as `key = value` lines; for a level with episodes, `episodes` (2 to 8: its first stages), and `episode0`, `episode1`... (each one's name) with `episode0_shine`... (the Shine that is its own, -1 none) |
 | `stage0.szs` | the level: the slot's episode 0 |
 | `stage1.szs` ... | the levels its stage exits lead to: episodes 1, 2... |
 
@@ -25,3 +25,7 @@ What he gets there is kept at once in `<memory card folder>-mods/custom-levels/<
 ## Levels installed
 
 `SMS_LEVELS_DIR` names the launcher's levels folder, a level folder each (the World editor's Export, Custom level). Mods find them through `api->levels` (the mod SDK's `SmsLevelsApi`): how many there are, each one's name, author, description, folder and Shines (how many it has and how many the save file has), the special Shines of them all, and `enter`, which opens one and takes Mario there as a stage exit does. While a level is open, `game->area_name` gives its name for the slot's area.
+
+## Episodes
+
+A level with `episodes` has an episode select as the worlds do (port_ext.h's `areaEpisodes`, `areaEpisodeName`, `areaEpisodeGot`). Entered without an episode chosen (Map Teleport's Custom levels page, `port_levels_enter`), the game opens the select (TMarDirector::moveStage): it shows the level's name, its episodes' names, and offers each once the Shine of the one before is got (TSelectMenu::initData; no world's tables are read for it, and its coin record shows 0). The title card and the pause menu name the episode. Its stages after the episodes are its sublevels, shared by every episode: their way back to the first stage leads to the episode Mario came from.

@@ -312,6 +312,14 @@ typedef struct PortExtension {
 	// The name the title card and the pause menu give `area` (stagename.bmg's
 	// is its world's), or null for the game's. The first that names one wins.
 	const char* (*stageName)(int area);
+	// An area an extension has made its own (ext/levels: the custom levels' slot): how many episodes
+	// it has (1..8), which gives it an episode select as the worlds have one when it is entered
+	// without one chosen (TMarDirector::moveStage), or 0 if it isn't one (the first non-zero wins).
+	// Its episodes' names (the select, the title card and the pause menu; null none) and whether
+	// each one's Shine is collected (the select offers an episode once the one before is).
+	int (*areaEpisodes)(int area);
+	const char* (*areaEpisodeName)(int area, int episode);
+	int (*areaEpisodeGot)(int area, int episode);
 } PortExtension;
 
 // shineTouch's answers
@@ -448,6 +456,9 @@ void port_ext_yoshi_egg(int kind, void* egg, int* present);
 void port_ext_episode_shine(int shineStage, int episode, int* shine);
 void port_ext_flags_saving(int begin);
 const char* port_ext_stage_name(int area);
+int port_ext_area_episodes(int area);
+const char* port_ext_area_episode_name(int area, int episode);
+int port_ext_area_episode_got(int area, int episode);
 // 1 while an extension keeps the chosen file from starting (fileStarting).
 int port_ext_file_starting(void);
 // Each step of the file select: the file whose menu takes the player's choice

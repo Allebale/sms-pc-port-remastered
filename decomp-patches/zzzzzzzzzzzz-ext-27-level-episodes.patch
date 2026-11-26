@@ -1,0 +1,213 @@
+Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/levels' custom levels) has episodes as the worlds do: entered without one chosen it opens the episode select (TMarDirector::moveStage), which shows its name and its episodes' names and offers each once the one before is collected (TSelectMenu::initData, no world's tables read for it), and the title card and the pause menu name its episode
+--- a/src/GC2D/ConsoleStr.cpp
++++ b/src/GC2D/ConsoleStr.cpp
+@@ -215,6 +215,12 @@
+ 			puVar15 = ((const char* (*)(void*))sms_mod_t_)(pvVar10);
+ 		else
+ #endif
++#ifdef TARGET_PC
++		// an area of an extension's own names its episodes itself (port_ext.h)
++		if (const char* sms_ext_episode = sms_ext_name ? port_ext_area_episode_name(SMSGetMarDirector()->getCurrentMap(), uVar9) : nullptr)
++			puVar15 = sms_ext_episode;
++		else
++#endif
+ 		if (pvVar10 == nullptr || uVar2 == -1
+ #ifdef TARGET_PC
+ 		    || sms_ext_name
+--- a/src/GC2D/PauseMenu2.cpp
++++ b/src/GC2D/PauseMenu2.cpp
+@@ -569,6 +569,9 @@
+ 		if (sms_mod_n_ && sms_mod_word(0x80156D5C, &sms_mod_w_)) {
+ 			SMS_MOD_GPR(29, this);
+ 			scenarioName = ((const char* (*)(void*))sms_mod_n_)(scenarioBmg);
++		} else if (const char* sms_ext_episode = sms_ext_name ? port_ext_area_episode_name(SMSGetMarDirector()->mMap, (int)flag) : nullptr) {
++			// an area of an extension's own names its episodes itself (port_ext.h)
++			scenarioName = sms_ext_episode;
+ 		} else
+ #endif
+ 		if (scenarioBmg == nullptr || shineID == -1 || shineStage == 0
+--- a/src/GC2D/SelectMenu.cpp
++++ b/src/GC2D/SelectMenu.cpp
+@@ -84,6 +84,19 @@
+ 	return SelectMenuEpisodeShine(stage, scenario, SMS_getShineID(stage, scenario, is_etc_shine));
+ }
+ 
++// The selected episode's name: an area of an extension's own (port_ext.h's areaEpisodes, ext/levels'
++// custom levels) names its episodes itself; else the message for the Shine it stands for.
++static const char* SelectMenuName(const TSelectMenu* menu, void* bmg, u32 id)
++{
++#ifdef TARGET_PC
++	if (port_ext_area_episodes(menu->mStage) > 0) {
++		const char* name = port_ext_area_episode_name(menu->mStage, menu->mSelectedShine);
++		return name ? name : "";
++	}
++#endif
++	return SMSGetMessageData(bmg, id);
++}
++
+ static inline s16 SelectMenuShineID(u32 stage, u32 scenario, bool is_etc_shine)
+ {
+ 	if (void* sms_mod_t_ = SMS_MOD_SITE(0x80175AF8))
+@@ -384,6 +397,13 @@
+ 		mSelectedShine = 255;
+ 		return;
+ 	}
++#ifdef TARGET_PC
++	// an area of an extension's own (port_ext.h: ext/levels' custom levels): its episodes, its name
++	// in place of a world's banner, and no world's tables
++	const int sms_ext_episodes = port_ext_area_episodes(mStage);
++#else
++	const int sms_ext_episodes = 0;
++#endif
+ 
+ 	mMenuScreen      = new J2DSetScreen("scenario_select_1.blo", pArch);
+ #ifdef TARGET_PC
+@@ -472,7 +492,7 @@
+ 	if (numCoins > 999) {
+ 		numCoins = 999;
+ 	}
+-	if (numCoins < 0) {
++	if (numCoins < 0 || sms_ext_episodes > 0) {
+ 		numCoins = 0;
+ 	}
+ 	mMenuScreen->search('sc_s')->hide();
+@@ -524,7 +544,7 @@
+ 		// and 0x80174B90 (nops) drop the loads of its old argument.
+ 		void* sms_mod_f2_ = SMS_MOD_SITE(0x80174B94);
+ #endif
+-		for (s32 i = 1; i < 3; i++) {
++		for (s32 i = 1; i < 3 && sms_ext_episodes == 0; i++) {
+ #ifdef TARGET_PC
+ 			if (sms_mod_f2_ ? (SMS_MOD_GPR(31, this), SMS_MOD_GPR(26, i),
+ 			                   ((bool (*)())sms_mod_f2_)())
+@@ -584,7 +604,7 @@
+ 			mStageBannerPane = (TExPane*)sms_mod_p_;
+ 		} else
+ #endif
+-		mStageBannerPane = new TExPane(mMenuScreen, tags[mStage] * 0x100 + '0');
++		mStageBannerPane = new TExPane(mMenuScreen, tags[sms_ext_episodes > 0 ? 2 : mStage] * 0x100 + '0');
+ 		mStageBannerPane->getPane()->show();
+ #ifdef TARGET_PC
+ 		sms_mod_c_ = SMS_MOD_SITE(0x80174D88);
+@@ -598,7 +618,7 @@
+ 		} else
+ #endif
+ 		mStageBannerText
+-		    = new TBoundPane(mMenuScreen, tags[mStage] * 0x100 + 'a');
++		    = new TBoundPane(mMenuScreen, tags[sms_ext_episodes > 0 ? 2 : mStage] * 0x100 + 'a');
+ 		mStageBannerText->getPane()->show();
+ #ifdef TARGET_PC
+ 		sms_mod_c_ = SMS_MOD_SITE(0x80174DD0);
+@@ -612,8 +632,23 @@
+ 		} else
+ #endif
+ 		mStageBannerShadow
+-		    = new TBoundPane(mMenuScreen, tags[mStage] * 0x100 + 'b');
++		    = new TBoundPane(mMenuScreen, tags[sms_ext_episodes > 0 ? 2 : mStage] * 0x100 + 'b');
+ 		mStageBannerShadow->getPane()->show();
++#ifdef TARGET_PC
++		if (sms_ext_episodes > 0) {
++			// no world's lettering: the area's own name in the select's name box
++			mStageBannerText->getPane()->hide();
++			mStageBannerShadow->getPane()->hide();
++			if (mStageName) {
++				const char* sms_ext_name = port_ext_stage_name(mStage);
++				mStageName->setFont((JUTFont*)gpSystemFont);
++				mStageName->setString(sms_ext_name ? sms_ext_name : "");
++				const JUTRect& b = mStageName->getBounds();
++				OSReport("[levels] episode select: %d episode(s), name box at %d,%d %dx%d\n", sms_ext_episodes,
++				         (int)b.x1, (int)b.y1, (int)(b.x2 - b.x1), (int)(b.y2 - b.y1));
++			}
++		}
++#endif
+ 
+ 		// Retail's .rodata carries "/common/2d/stagename.bmg" (@3965) right
+ 		// before "/common/2d/scenarioname.bmg" (@3966). The bank is only
+@@ -650,6 +685,16 @@
+ 
+ 		// Check which shines are unlocked.
+ #ifdef TARGET_PC
++		if (sms_ext_episodes > 0) {
++			// an extension's area: its episodes, each offered once the one before is collected
++			for (s8 i = 0; i < sms_ext_episodes && i < 8; i++)
++				if (port_ext_area_episode_got(mStage, i)) {
++					mShineUnlockStates[i] = 3;
++					mNumUnlockedShines    = i + 2;
++				}
++			if (mNumUnlockedShines > sms_ext_episodes)
++				mNumUnlockedShines = sms_ext_episodes;
++		} else
+ 		if (!sms_mod_word(0x80174E1C, &sms_mod_w_))
+ 		for (s8 i = 0; i < (s16)SMS_MOD_WORD(0x80174E84, 0x2C000008); i++)
+ #else
+@@ -897,9 +942,9 @@
+ 		    = SelectMenuEpisodeShineID(SMS_getShineStage(mStage), mSelectedShine, false);
+ 
+ 		strncpy(mScenarioText1->getStringPtr(),
+-		        ({ typedef __typeof__(SMSGetMessageData(mScenarioBmg2,
++		        ({ typedef __typeof__(SelectMenuName(this, mScenarioBmg2,
+ 		                          (u16)SMS_getNormalStage(shineID))) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x8017539C); sms_mod_t_ ? (SMS_MOD_GPR(31, ((char*)(this) + 0x0)), ((__typeof__(static_cast<sms_mod_r_ (*)(void*, u32)>(&SMSGetMessageData)))sms_mod_t_)(mScenarioBmg2,
+-		                          (u16)SMS_getNormalStage(shineID))) : SMSGetMessageData(mScenarioBmg2,
++		                          (u16)SMS_getNormalStage(shineID))) : SelectMenuName(this, mScenarioBmg2,
+ 		                          (u16)SMS_getNormalStage(shineID)); }),
+ 		        127);
+ 	}
+@@ -1201,7 +1246,7 @@
+ #ifdef TARGET_PC
+ 				        sms_mod_n_ ? SelectMenuScenarioName(this, sms_mod_n_) :
+ #endif
+-				        SMSGetMessageData(
++				        SelectMenuName(this,
+ 				            mScenarioBmg2,
+ 				            (u16)SMS_getNormalStage(SelectMenuEpisodeShineID(
+ 				                SMS_getShineStage(mStage), mSelectedShine,
+@@ -1234,7 +1279,7 @@
+ #ifdef TARGET_PC
+ 				        sms_mod_n_ ? SelectMenuScenarioName(this, sms_mod_n_) :
+ #endif
+-				        SMSGetMessageData(
++				        SelectMenuName(this,
+ 				            mScenarioBmg2,
+ 				            (u16)SMS_getNormalStage(SelectMenuEpisodeShineID(
+ 				                SMS_getShineStage(mStage), mSelectedShine,
+@@ -1331,11 +1376,11 @@
+ 				s16 shineID = SelectMenuEpisodeShineID(SMS_getShineStage(mStage),
+ 				                             mSelectedShine, false);
+ #ifdef TARGET_PC
+-				scenarioName = SMSGetMessageData(
++				scenarioName = SelectMenuName(this,
+ 				    mScenarioBmg2, (u16)SMS_getNormalStage(shineID));
+ 				}
+ #else
+-				const char* scenarioName = SMSGetMessageData(
++				const char* scenarioName = SelectMenuName(this,
+ 				    mScenarioBmg2, (u16)SMS_getNormalStage(shineID));
+ #endif
+ 
+@@ -1365,7 +1410,7 @@
+ #ifdef TARGET_PC
+ 				        sms_mod_n_ ? SelectMenuScenarioName(this, sms_mod_n_) :
+ #endif
+-				        SMSGetMessageData(mScenarioBmg2,
++				        SelectMenuName(this, mScenarioBmg2,
+ 				                          (u16)SMS_getNormalStage(SelectMenuEpisodeShineID(
+ 				                              SMS_getShineStage(mStage),
+ 				                              mSelectedShine, false))),
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -1776,6 +1776,15 @@
+ 			break;
+ 
+ 		default:
++#ifdef TARGET_PC
++			// an area of an extension's own with episodes (port_ext.h: ext/levels' custom
++			// levels) opens the episode select, as a world does
++			if (port_ext_area_episodes(nextArea.getStage()) > 0) {
++				unkE4 = 8;
++				unkB4 = TApplication::APP_STATE_TITLE;
++				break;
++			}
++#endif
+ 			unkE4         = 2;
+ 			nextArea.unk1 = 0;
+ 			break;

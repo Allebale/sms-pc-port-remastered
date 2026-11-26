@@ -323,6 +323,26 @@ extern "C" const char* port_ext_stage_name(int area)
 	return nullptr;
 }
 
+extern "C" int port_ext_area_episodes(int area)
+{
+	EACH(areaEpisodes) if (int n = s_ext[i]->areaEpisodes(area)) return n;
+	return 0;
+}
+
+extern "C" const char* port_ext_area_episode_name(int area, int episode)
+{
+	EACH(areaEpisodes) if (s_ext[i]->areaEpisodes(area) && s_ext[i]->areaEpisodeName)
+		return s_ext[i]->areaEpisodeName(area, episode);
+	return nullptr;
+}
+
+extern "C" int port_ext_area_episode_got(int area, int episode)
+{
+	EACH(areaEpisodes) if (s_ext[i]->areaEpisodes(area) && s_ext[i]->areaEpisodeGot)
+		return s_ext[i]->areaEpisodeGot(area, episode);
+	return 0;
+}
+
 extern "C" void port_ext_episode_select(int area, int* offered, int* first, int maxOffered)
 {
 	EACH(episodeSelect) s_ext[i]->episodeSelect(area, offered, first, maxOffered);

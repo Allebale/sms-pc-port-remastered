@@ -50,7 +50,16 @@ namespace {
 struct Level {
 	Str dir, id, name, author, description;
 	int shines, blues; // how many it has (level.ini's, as the World editor counts them), 0 not known
-	Level() : shines(0), blues(0) {}
+	// its episodes (level.ini's episodes, episodeN and episodeN_shine): stages 0..episodes-1, each
+	// with a name and the Shine that is its own (-1 none); 0 or 1: no episode select
+	int episodes;
+	Str episodeName[8];
+	int episodeShine[8];
+	Level() : shines(0), blues(0), episodes(0)
+	{
+		for (int i = 0; i < 8; i++)
+			episodeShine[i] = -1;
+	}
 };
 Level s_level;
 bool s_open, s_tried;
@@ -324,14 +333,53 @@ int flagChange(unsigned flag, int old, int* value)
 	return 0;
 }
 
+int s_lastEpisode; // the episode of the level last played (its sublevels' ways back lead there)
 void stageLoading(int area, int episode)
 {
-	(void)episode;
+	(void)area;
 	TGameSequence& cur = gpApplication.mCurrArea;
-	if (s_open && s_area >= 0 && cur.unk0 == s_area)
+	if (s_open && s_area >= 0 && cur.unk0 == s_area) {
+		if (episode >= 0 && episode < s_level.episodes)
+			s_lastEpisode = episode;
 		enter();
-	else
+	} else
 		leave();
+}
+
+// A level with episodes: the way back from one of its sublevels (stage exits to its first stage)
+// leads to the episode Mario came from.
+void chooseNextStage()
+{
+	TGameSequence& next = gpApplication.mNextArea;
+	const TGameSequence& cur = gpApplication.mCurrArea;
+	if (!s_open || s_level.episodes < 2 || next.unk0 != s_area || cur.unk0 != s_area)
+		return;
+	if (next.unk1 == 0 && cur.unk1 >= s_level.episodes && cur.unk1 != 0xFF)
+		next.unk1 = (u8)s_lastEpisode;
+}
+
+// Its episodes, for the episode select (port_ext.h's areaEpisodes)
+int areaEpisodes(int area)
+{
+	return s_open && area == s_area && s_level.episodes > 1 ? s_level.episodes : 0;
+}
+const char* areaEpisodeName(int area, int episode)
+{
+	if (!areaEpisodes(area) || episode < 0 || episode >= s_level.episodes)
+		return nullptr;
+	// none in its sublevels (stages after its episodes)
+	const TGameSequence& cur = gpApplication.mCurrArea;
+	if (cur.unk0 == s_area && cur.unk1 != 0xFF && cur.unk1 >= s_level.episodes)
+		return nullptr;
+	return s_level.episodeName[episode].empty() ? nullptr : s_level.episodeName[episode].c_str();
+}
+int areaEpisodeGot(int area, int episode)
+{
+	if (!areaEpisodes(area) || episode < 0 || episode >= s_level.episodes || s_level.episodeShine[episode] < 0)
+		return 0;
+	if (!s_in)
+		loadSave(); // the level's own save for this save file
+	return s_shines.count(s_level.episodeShine[episode]) != 0;
 }
 
 Str s_upper;
@@ -364,6 +412,10 @@ struct Register {
 		s_extension.flagChange   = flagChange;
 		s_extension.flagsSaving  = flagsSaving;
 		s_extension.stageName    = stageName;
+		s_extension.chooseNextStage = chooseNextStage;
+		s_extension.areaEpisodes    = areaEpisodes;
+		s_extension.areaEpisodeName = areaEpisodeName;
+		s_extension.areaEpisodeGot  = areaEpisodeGot;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -404,9 +456,20 @@ extern "C" int port_levels_open(const char* dir)
 				l.shines = atoi(v.c_str());
 			else if (k == "blue_coins")
 				l.blues = atoi(v.c_str());
+			else if (k == "episodes")
+				l.episodes = atoi(v.c_str()) < 0 ? 0 : atoi(v.c_str()) > 8 ? 8 : atoi(v.c_str());
+			else if (k.size() >= 8 && k.compare(0, 7, "episode") == 0 && k[7] >= '0' && k[7] <= '7') {
+				const int e = k[7] - '0';
+				if (k.size() == 8)
+					l.episodeName[e] = v;
+				else if (k.compare(8, Str::npos, "_shine") == 0)
+					l.episodeShine[e] = atoi(v.c_str());
+			}
 		}
 		fclose(f);
 	}
+	if (l.episodes > (int)s_scenes.size())
+		l.episodes = (int)s_scenes.size();
 	for (size_t i = 0; i < l.id.size(); i++)
 		if (!isalnum((unsigned char)l.id[i]) && l.id[i] != '-' && l.id[i] != '_')
 			l.id[i] = '-';
@@ -644,7 +707,11 @@ extern "C" int port_levels_enter(int index)
 		return 0;
 	if (!port_levels_open(s_installed[index].folder.c_str()))
 		return 0;
-	gpMarDirector->setNextStage((u16)(((s_area + 1) << 8) | 0), 0);
+	// a level with episodes: its episode select first (no episode chosen), else its first stage
+	if (s_level.episodes > 1)
+		gpMarDirector->setNextStage((u16)s_area, 0);
+	else
+		gpMarDirector->setNextStage((u16)(((s_area + 1) << 8) | 0), 0);
 	return 1;
 }
 
