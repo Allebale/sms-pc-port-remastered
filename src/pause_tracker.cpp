@@ -271,7 +271,7 @@ f32 textWidth(const char* s, f32 size)
 // The area's name between the L and R buttons, which sit at the row's ends
 // (as wide as the counters' brushstrokes, clear of the menu's options): the
 // file select's lettering, else the pause menu's own name for it in the
-// system font, made smaller where it would not fit.
+// system font, outlined as the lettering is and narrowed where it would not fit.
 void nameRow(u8 alpha)
 {
 	JUTFont* font    = gpSystemFont;
@@ -294,15 +294,27 @@ void nameRow(u8 alpha)
 		quad(middle - artW * h / th / 2, kNameY, tw * h / th, h, kWhite, alpha);
 	} else if (const char* name
 	           = levelName ? levelName : SMSGetMessageData(JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), sWorld)) {
-		f32 size = kNameH * 0.8f;
-		if (textWidth(name, size) > room)
-			size *= room / textWidth(name, size);
-		const f32 x = middle - textWidth(name, size) / 2, y = kNameY + size * 0.4f;
+		// as tall as the lettering, narrowed to fit (to half width), then smaller; white with a
+		// dark outline and a bolder stroke, as the lettering is drawn
+		f32 h = kNameH, w = h;
+		if (textWidth(name, w) > room)
+			w *= room / textWidth(name, w);
+		if (w < h * 0.5f) {
+			h = w * 2.0f;
+		}
+		const f32 x = middle - textWidth(name, w) / 2, y = kNameY + h * 0.4f;
+		const int len = (int)strlen(name);
+		const f32 o = h > 14.0f ? 1.6f : 1.0f;
 		font->setGX();
 		font->setCharColor(JUtility::TColor(0, 0, 0, alpha / 2));
-		font->drawString_size_scale(x + 1.5f, y + 1.5f, size, size, name, strlen(name), false);
+		font->drawString_size_scale(x + o + 1.5f, y + o + 1.5f, w, h, name, len, false);
+		font->setCharColor(JUtility::TColor(24, 16, 40, alpha));
+		static const f32 kRing[8][2] = { { -1, -1 }, { 0, -1 }, { 1, -1 }, { -1, 0 }, { 1, 0 }, { -1, 1 }, { 0, 1 }, { 1, 1 } };
+		for (int i = 0; i < 8; i++)
+			font->drawString_size_scale(x + kRing[i][0] * o, y + kRing[i][1] * o, w, h, name, len, false);
 		font->setCharColor(JUtility::TColor(255, 255, 255, alpha));
-		font->drawString_size_scale(x, y, size, size, name, strlen(name), false);
+		font->drawString_size_scale(x, y, w, h, name, len, false);
+		font->drawString_size_scale(x + 0.6f, y, w, h, name, len, false);
 	}
 	if (more) {
 		font->setGX();
