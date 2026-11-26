@@ -425,50 +425,70 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 	const f32 low = coinY > blueY ? coinY : blueY, step = coinY > blueY ? coinY - blueY : blueY - coinY;
 	const int dy  = (int)(low + step - (f32)bar->getGlobalBounds().y1);
 
-	// drawn by hand where the game's Shine row's pieces are, a row lower (redrawing the panes
-	// themselves clips them to their own row)
-	const u8 alpha = (u8)(bar->mColorAlpha * fade / 255);
-	graph.setup2D();
-	const JUTRect& b = bar->getGlobalBounds();
-	GXPC_HudPieceBegin((f32)b.x1, (f32)b.x2);
-	// the brushstroke: the bar's own picture, blue
-	JUTTexture* barTex = ((J2DPicture*)bar)->getTexture(0);
-	(barTex ? *barTex : sBrushArt).load(GX_TEXMAP0);
-	quad((f32)b.x1, (b.y1 + b.y2) * 0.5f + dy, (f32)(b.x2 - b.x1), (f32)(b.y2 - b.y1), kSpecialBrush, alpha);
-	// the Shine: the icon's own picture, then the same again added in blue: a pale, silvery Shine
-	if (row[1]) {
-		const JUTRect& r = row[1]->getGlobalBounds();
-		JUTTexture* tex  = ((J2DPicture*)row[1])->getTexture(0);
-		(tex ? *tex : sShineArt).load(GX_TEXMAP0);
-		const f32 x = (f32)r.x1, y = (r.y1 + r.y2) * 0.5f + dy, w = (f32)(r.x2 - r.x1), h = (f32)(r.y2 - r.y1);
-		quad(x, y, w, h, kWhite, alpha);
-		quad(x, y, w, h, kWhite, alpha); // (sets the textured state up for the pass below)
-		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_SET);
-		static const f32 kU[4] = { 0, 1, 1, 0 }, kV[4] = { 0, 0, 1, 1 };
-		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-		for (int i = 0; i < 4; i++) {
-			GXPosition3f32(x + kU[i] * w, y - h / 2 + kV[i] * h, 0.0f);
-			GXColor4u8(kSpecialShine >> 24, kSpecialShine >> 16, kSpecialShine >> 8, alpha);
-			GXTexCoord2f32(kU[i], kV[i]);
-		}
-		GXEnd();
-		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_SET);
-	}
-	// the cross and the count, where the row's own are (two digits under 100, as the game's)
-	if (row[2]) {
-		const JUTRect& r = row[2]->getGlobalBounds();
-		sCrossArt.load(GX_TEXMAP0);
-		quad((f32)r.x1, (r.y1 + r.y2) * 0.5f + dy, (f32)(r.x2 - r.x1), (f32)(r.y2 - r.y1), kWhite, alpha);
-	}
+	// the game's own Shine row drawn again, lower: each piece as the game draws it (its picture, turn
+	// and colours), without the clipping to its own row a pane's draw has in the HUD
+	struct Was {
+		bool visible;
+		u8 alpha;
+		const ResTIMG* tex0;
+		JUtility::TColor white, black;
+	} was[6];
 	char digits[4];
 	snprintf(digits, sizeof digits, total >= 100 ? "%03d" : "%02d", total > 999 ? 999 : total);
-	for (int d = 0; digits[d] && d < 3; d++) {
-		const J2DPane* p = row[3 + d];
+	for (int i = 0; i < 6; i++) {
+		J2DPane* p = row[i];
 		if (!p)
 			continue;
-		const JUTRect& r = p->getGlobalBounds();
-		sDigitArt[digits[d] - '0'].load(GX_TEXMAP0);
-		quad((f32)r.x1, (r.y1 + r.y2) * 0.5f + dy, (f32)(r.x2 - r.x1), (f32)(r.y2 - r.y1), kWhite, alpha);
+		was[i].visible = p->mVisible;
+		was[i].alpha   = p->mAlpha;
+		p->mAlpha      = (u8)(p->mAlpha * fade / 255);
+		J2DPicture* pic = (J2DPicture*)p; // the Shine and the digits are pictures
+		if (i == 1) {
+			was[i].white = pic->mWhite;
+			was[i].black = pic->mBlack;
+			pic->mBlack = JUtility::TColor(40, 50, 80, 0); // a silver Shine (its grey, below)
+			pic->mWhite = JUtility::TColor(255, 255, 255, 255);
+		} else if (i >= 3) {
+			was[i].tex0 = pic->getTexture(0) ? pic->getTexture(0)->getTexInfo() : 0;
+			const int d = i - 3;
+			p->mVisible = digits[d] != 0 && d < 3;
+			if (p->mVisible)
+				pic->changeTexture(sDigitArt[digits[d] - '0'].getTexInfo(), 0);
+		}
 	}
-	GXPC_HudPieceEnd();
+	graph.setup2D();
+	// the brushstroke where the row is; the Shine, cross and count a little lower, clear of the row above
+	const int lower = (int)(step * 0.18f);
+	for (int i = 0; i < 6; i++) {
+		if (!row[i])
+			continue;
+		bool under = false; // drawn with a parent of it among the six already
+		for (int j = 0; j < 6 && !under; j++)
+			for (JSUTree<J2DPane>* t = row[i]->getPaneTree()->getParent(); j != i && row[j] && t; t = t->getParent())
+				if (t->getObject() == row[j])
+					under = true;
+		if (under)
+			continue;
+		if (i == 1) { // its grey: the picture's green in all three colours
+			GXSetTevSwapModeTable(GX_TEV_SWAP2, GX_CH_GREEN, GX_CH_GREEN, GX_CH_GREEN, GX_CH_ALPHA);
+			GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP2);
+		}
+		row[i]->draw(0, dy + (i == 0 ? 0 : lower), &graph, false);
+		if (i == 1)
+			GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP0);
+	}
+	for (int i = 0; i < 6; i++) {
+		J2DPane* p = row[i];
+		if (!p)
+			continue;
+		J2DPicture* pic = (J2DPicture*)p;
+		p->mVisible = was[i].visible;
+		p->mAlpha   = was[i].alpha;
+		if (i == 1) {
+			pic->mWhite = was[i].white;
+			pic->mBlack = was[i].black;
+		} else if (i >= 3 && was[i].tex0) {
+			pic->changeTexture(was[i].tex0, 0);
+		}
+	}
 }
