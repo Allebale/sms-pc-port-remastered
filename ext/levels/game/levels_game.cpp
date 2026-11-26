@@ -7,10 +7,12 @@
 // an episode of the slot's area (a level and the levels its stage exits lead to). SMS_LEVEL names
 // the folder to open as the game starts (the World editor's Play), port_levels_open one later.
 #include "port_ext.h"
+#include "sms_mod.h"
 
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <System/Application.hpp>
 #include <System/FlagManager.hpp>
+#include <System/MarDirector.hpp>
 #include <System/ScenarioArchiveName.hpp>
 #include <dolphin/os.h>
 #include <ctype.h>
@@ -22,6 +24,7 @@
 #ifdef _WIN32
 #include <direct.h>
 #endif
+#include <algorithm>
 #include <set>
 #include <string>
 #include <vector>
@@ -468,3 +471,154 @@ extern "C" int port_levels_special_total(void)
 // How many special Shines were got since the game started: the HUD shows its row of them once the
 // HUD is back after one more (the Shine's own scene and the stage it leads to come first).
 extern "C" int port_levels_special_got(void) { return s_gotCount; }
+
+// ---------------------------------------------------------------- the levels installed
+
+namespace {
+
+struct Installed {
+	std::string folder, id, name, author, description;
+	int shines, blues;
+};
+std::vector<Installed> s_installed;
+
+bool byName(const Installed& a, const Installed& b) { return a.name < b.name; }
+
+// A level folder's level.ini, or false.
+bool readIni(const std::string& folder, Installed& out)
+{
+	if (!isFile(folder + "/stage0.szs"))
+		return false;
+	out.folder = folder;
+	size_t cut = folder.find_last_of("/\\");
+	out.id     = cut == std::string::npos ? folder : folder.substr(cut + 1);
+	out.name   = out.id;
+	out.shines = out.blues = 0;
+	if (FILE* f = fopen((folder + "/level.ini").c_str(), "r")) {
+		char line[512];
+		while (fgets(line, sizeof line, f)) {
+			std::string t = line;
+			size_t eq = t.find('=');
+			if (eq == std::string::npos || t[0] == '#' || t[0] == ';')
+				continue;
+			const std::string k = trim(t.substr(0, eq)), v = trim(t.substr(eq + 1));
+			if (k == "id" && !v.empty())
+				out.id = v;
+			else if (k == "name" && !v.empty())
+				out.name = v;
+			else if (k == "author")
+				out.author = v;
+			else if (k == "description")
+				out.description = v;
+			else if (k == "shines")
+				out.shines = atoi(v.c_str());
+			else if (k == "blue_coins")
+				out.blues = atoi(v.c_str());
+		}
+		fclose(f);
+	}
+	return true;
+}
+
+// The levels folder (SMS_LEVELS_DIR, the launcher's), looked through again.
+void scan()
+{
+	s_installed.clear();
+	const char* root = getenv("SMS_LEVELS_DIR");
+	if (!root || !*root)
+		return;
+	if (DIR* d = opendir(root)) {
+		while (dirent* e = readdir(d)) {
+			if (e->d_name[0] == '.')
+				continue;
+			Installed l;
+			if (readIni(std::string(root) + "/" + e->d_name, l))
+				s_installed.push_back(l);
+		}
+		closedir(d);
+	}
+	std::sort(s_installed.begin(), s_installed.end(), byName);
+}
+
+void copyText(char* to, size_t n, const std::string& from)
+{
+	snprintf(to, n, "%s", from.c_str());
+}
+
+// A level's own save for this save file: how many Shines and blue coins.
+void savedCounts(const std::string& id, int* shines, int* blues)
+{
+	*shines = *blues = 0;
+	const char* card = port_card_dir();
+	char file[8];
+	snprintf(file, sizeof file, "%c", gpApplication.mSaveFile >= 0 && gpApplication.mSaveFile <= 2 ? 'a' + gpApplication.mSaveFile : 'x');
+	std::string clean = id;
+	for (size_t i = 0; i < clean.size(); i++)
+		if (!isalnum((unsigned char)clean[i]) && clean[i] != '-' && clean[i] != '_')
+			clean[i] = '-';
+	FILE* f = fopen((std::string(card ? card : ".") + "/levels/" + clean + "-" + file + ".txt").c_str(), "r");
+	if (!f)
+		return;
+	char word[16];
+	int n;
+	while (fscanf(f, "%15s %d", word, &n) == 2) {
+		if (!strcmp(word, "shine"))
+			(*shines)++;
+		else if (!strcmp(word, "blue"))
+			(*blues)++;
+	}
+	fclose(f);
+}
+
+} // namespace
+
+extern "C" int port_levels_count(void)
+{
+	scan();
+	return (int)s_installed.size();
+}
+
+extern "C" int port_levels_info(int index, SmsLevelInfo* out)
+{
+	if (!out || index < 0 || index >= (int)s_installed.size())
+		return 0;
+	const uint32_t size = out->size && out->size < sizeof(SmsLevelInfo) ? out->size : (uint32_t)sizeof(SmsLevelInfo);
+	SmsLevelInfo info;
+	memset(&info, 0, sizeof info);
+	const Installed& l = s_installed[index];
+	info.size = size;
+	copyText(info.id, sizeof info.id, l.id);
+	copyText(info.name, sizeof info.name, l.name);
+	copyText(info.author, sizeof info.author, l.author);
+	copyText(info.description, sizeof info.description, l.description);
+	copyText(info.folder, sizeof info.folder, l.folder);
+	info.shines     = l.shines;
+	info.blue_coins = l.blues;
+	savedCounts(l.id, &info.got_shines, &info.got_blue_coins);
+	memcpy(out, &info, size);
+	return 1;
+}
+
+// Mario to the index-th level, as a stage exit takes him: the level opened, the next stage its first.
+extern "C" int port_levels_enter(int index)
+{
+	if (index < 0 || index >= (int)s_installed.size() || !gpMarDirector)
+		return 0;
+	if (!port_levels_open(s_installed[index].folder.c_str()))
+		return 0;
+	gpMarDirector->setNextStage((u16)(((s_area + 1) << 8) | 0), 0);
+	return 1;
+}
+
+extern "C" int port_levels_current(void)
+{
+	if (!s_in)
+		return -1;
+	for (size_t i = 0; i < s_installed.size(); i++)
+		if (s_installed[i].folder == s_level.dir)
+			return (int)i;
+	return -1;
+}
+
+// The open level's name as written (its level.ini's), or "".
+extern "C" const char* port_levels_title(void) { return s_open ? s_level.name.c_str() : ""; }

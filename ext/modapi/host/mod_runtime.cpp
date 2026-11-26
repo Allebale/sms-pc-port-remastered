@@ -979,8 +979,16 @@ int apiHasShine(int shine) { return shine >= 0 && shine < 120 && modg_flag_get(0
 
 // The stage names the warp menu's list has (asked for once, filled by the game).
 std::map<int, std::string> s_areaNames;
+extern "C" int port_levels_area(void);
+extern "C" const char* port_levels_title(void);
 const char* apiAreaName(int area)
 {
+	// the custom levels' slot: the open level's name (ext/levels)
+	if (area >= 0 && area == port_levels_area()) {
+		const char* t = port_levels_title();
+		if (t && *t)
+			return t;
+	}
 	if (s_areaNames.empty()) {
 		const int n = port_warp_count();
 		for (int i = 0; i < n; i++) {
@@ -1182,6 +1190,18 @@ const SmsPartsApi s_parts = {sizeof(SmsPartsApi),       SMS_PARTS_MAGIC,        
                              modg_parts_set_vertex,     modg_parts_hide_joint,    modg_parts_worn_name,
                              modg_parts_hide_worn,      modg_parts_freeze_anim,
                              modg_parts_hud_picture};
+
+// ------------------------------------------------------------------ custom levels
+// ext/levels/game/levels_game.cpp: the levels installed, and going to one
+
+extern "C" int port_levels_count(void);
+extern "C" int port_levels_info(int index, SmsLevelInfo* out);
+extern "C" int port_levels_enter(int index);
+extern "C" int port_levels_current(void);
+extern "C" int port_levels_special_total(void);
+
+const SmsLevelsApi s_levels = {sizeof(SmsLevelsApi), SMS_LEVELS_MAGIC, port_levels_count, port_levels_info,
+                               port_levels_enter,    port_levels_current, port_levels_special_total};
 
 // ------------------------------------------------------------------ FLUDD held in view (first person)
 // ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one
@@ -1835,7 +1855,7 @@ const SmsApi g_api = {
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
 	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
 	&s_heldFludd,       &s_water,          &s_actor,          &s_models,
-	&s_parts,
+	&s_parts,       &s_levels,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)
