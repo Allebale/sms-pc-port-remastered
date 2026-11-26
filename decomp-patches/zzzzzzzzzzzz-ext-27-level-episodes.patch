@@ -1,4 +1,4 @@
-Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/levels' custom levels) has episodes as the worlds do: entered without one chosen it opens the episode select (TMarDirector::moveStage), which shows its name and its episodes' names and offers each once the one before is collected (TSelectMenu::initData, no world's tables read for it), and the title card and the pause menu name its episode
+Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/levels' custom levels) has episodes as the worlds do: entered without one chosen it opens the episode select (TMarDirector::moveStage), which shows its name and its episodes' names and offers each once the one before is collected (TSelectMenu::initData, no world's tables read for it); come into from elsewhere it shows the title card as a world does, and the title card and the pause menu name its episode
 --- a/src/GC2D/ConsoleStr.cpp
 +++ b/src/GC2D/ConsoleStr.cpp
 @@ -215,6 +215,12 @@
@@ -195,7 +195,23 @@ Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/level
  				                              mSelectedShine, false))),
 --- a/src/System/MarDirectorDirect.cpp
 +++ b/src/System/MarDirectorDirect.cpp
-@@ -1776,6 +1776,15 @@
+@@ -566,6 +566,15 @@
+ 		default:
+ 			if (({ typedef __typeof__(JKRGetResource("/scene/map/camera/startcamera.bck")) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x80298F64); sms_mod_t_ ? ((__typeof__(static_cast<sms_mod_r_ (*)(const char*)>(&JKRFileLoader::getGlbResource)))sms_mod_t_)("/scene/map/camera/startcamera.bck") : JKRGetResource("/scene/map/camera/startcamera.bck"); })) {
+ 				nextState = STATE_UNK1;
++#ifdef TARGET_PC
++				// an area of an extension's own with episodes (port_ext.h), come into from
++				// elsewhere: the title card with its episode's name, as a world's
++				if (port_ext_area_episodes(SMSGetApplication()->mCurrArea.getStage()) > 0
++				    && SMSGetApplication()->mPrevArea.getStage() != SMSGetApplication()->mCurrArea.getStage())
++					onTransitionFlag(TRANSITION_FLAG_GO_BANNER_PENDING
++					                 | TRANSITION_FLAG_SCENARIO_NAME_BANNER_PENDING);
++				else
++#endif
+ 				onTransitionFlag(TRANSITION_FLAG_GO_BANNER_PENDING
+ 				                 | TRANSITION_FLAG_OPENING_WIPE_PENDING);
+ 			} else {
+@@ -1776,6 +1785,15 @@
  			break;
  
  		default:
