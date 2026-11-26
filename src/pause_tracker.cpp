@@ -43,10 +43,25 @@
 // the tracker goes to the left edge with the counters above it
 extern "C" void GXPC_HudPieceBegin(float x1, float x2);
 extern "C" void GXPC_HudPieceEnd(void);
+// custom levels (ext/levels): the level Mario is in, its own Shines, and the save file's flags
+// kept aside while he is there (weak: absent without the extension)
+extern "C" int port_levels_in(void) __attribute__((weak));
+extern "C" const char* port_levels_name(void) __attribute__((weak));
+extern "C" void port_levels_counts(int* shines, int* allShines, int* blues, int* allBlues) __attribute__((weak));
+extern "C" int port_levels_file_flag(unsigned flag) __attribute__((weak));
 
 namespace {
 
 const int kWorlds = 10; // SMS_getShineStage's: 0 the Airstrip ... 9 Corona Mountain
+const int kLevel  = kWorlds; // the custom level Mario is in (ext/levels), after them
+const int kPages  = kWorlds + 1;
+
+bool inLevel() { return port_levels_in && port_levels_in(); }
+// a save file's flag, the file's own when a custom level has put its own in their place
+bool fileFlag(unsigned flag)
+{
+	return inLevel() && port_levels_file_flag ? port_levels_file_flag(flag) != 0 : TFlagManager::getInstance()->getFlag(flag) != 0;
+}
 
 // layout, in the pause menu's 2D units (the 4:3 frame, 640 wide): clear of
 // the HUD's counters above and the stage name's panel to the right
@@ -73,7 +88,7 @@ struct Tally {
 
 int sWorld = -1; // the area shown, -1 until the menu appears
 int sHome;       // the area Mario is in
-Tally sTally[kWorlds];
+Tally sTally[kPages];
 
 JUTTexture sBrushArt, sShineArt, sBlueCoinArt, sCrossArt, sSlashArt, sDigitArt[10];
 bool sHaveArt;
@@ -105,7 +120,6 @@ bool loadAllArt()
 
 void count()
 {
-	TFlagManager* flags = TFlagManager::getInstance();
 	memset(sTally, 0, sizeof sTally);
 
 	// whose each of the 120 Shines is: the areas' eight episodes and three
@@ -122,7 +136,7 @@ void count()
 	for (int id = 0; id < 120; id++) {
 		Tally& t = sTally[owner[id]];
 		t.allShines++;
-		if (flags->getShineFlag(id))
+		if (fileFlag(0x10000 + id))
 			t.shines++;
 	}
 
@@ -132,8 +146,13 @@ void count()
 		Tally& t       = sTally[w];
 		t.allBlueCoins = w == 1 ? 20 : w == 9 ? 10 : 30;
 		for (int i = 0; i < 50; i++)
-			if (flags->getBlueCoinFlag(scNormalStageTable[w], i))
+			if (fileFlag(0x10078 + (w - 1) * 50 + i)) // TFlagManager::getBlueCoinFlag's
 				t.blueCoins++;
+	}
+	// the custom level's own
+	if (inLevel() && port_levels_counts) {
+		Tally& t = sTally[kLevel];
+		port_levels_counts(&t.shines, &t.allShines, &t.blueCoins, &t.allBlueCoins);
 	}
 }
 
@@ -141,14 +160,16 @@ void count()
 // been to (the map screen's test, a flag each stage sets as it loads).
 bool reachable(int world)
 {
+	if (world == kLevel)
+		return inLevel();
 	return world == sHome || world == 1 || TFlagManager::getInstance()->getBool(0x103A5 + world);
 }
 
 void step(int by)
 {
 	int w = sWorld;
-	for (int i = 0; i < kWorlds; i++) {
-		w = (w + by + kWorlds) % kWorlds;
+	for (int i = 0; i < kPages; i++) {
+		w = (w + by + kPages) % kPages;
 		if (reachable(w))
 			break;
 	}
@@ -250,13 +271,14 @@ f32 textWidth(const char* s, f32 size)
 void nameRow(u8 alpha)
 {
 	JUTFont* font    = gpSystemFont;
-	const bool more  = sWorld != sHome || reachable((sWorld + 1) % kWorlds)
-	                  || reachable((sWorld + kWorlds - 1) % kWorlds);
+	const bool more  = sWorld != sHome || reachable((sWorld + 1) % kPages)
+	                  || reachable((sWorld + kPages - 1) % kPages);
 	const f32 gap    = 4.0f;
 	const f32 room   = more ? kRowW - 2.0f * (kButton + gap) : kRowW;
 	const f32 middle = kLeft + kRowW / 2;
 	int tw = 0, th = 0, artW = 0;
-	const void* data = port_savestate_world_art(sWorld, 0, &tw, &th, &artW);
+	const void* data = sWorld == kLevel ? 0 : port_savestate_world_art(sWorld, 0, &tw, &th, &artW);
+	const char* levelName = sWorld == kLevel && port_levels_name ? port_levels_name() : 0;
 	if (data) {
 		f32 h = kNameH;
 		if (artW * h / th > room)
@@ -267,7 +289,7 @@ void nameRow(u8 alpha)
 		GXLoadTexObj(&obj, GX_TEXMAP0);
 		quad(middle - artW * h / th / 2, kNameY, tw * h / th, h, kWhite, alpha);
 	} else if (const char* name
-	           = SMSGetMessageData(JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), sWorld)) {
+	           = levelName ? levelName : SMSGetMessageData(JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), sWorld)) {
 		f32 size = kNameH * 0.8f;
 		if (textWidth(name, size) > room)
 			size *= room / textWidth(name, size);
@@ -297,6 +319,8 @@ void PauseTrackerReset()
 	sHome    = SMS_getShineStage(gpMarDirector->mMap);
 	if (sHome >= kWorlds)
 		sHome = 1; // somewhere outside retail's areas: start at the Plaza
+	if (inLevel())
+		sHome = kLevel; // a custom level: its own page
 	count();
 	sWorld = sHome;
 }

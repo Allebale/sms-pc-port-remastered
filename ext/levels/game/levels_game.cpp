@@ -36,6 +36,8 @@ namespace {
 
 struct Level {
 	std::string dir, id, name, author, description;
+	int shines, blues; // how many it has (level.ini's, as the World editor counts them), 0 not known
+	Level() : shines(0), blues(0) {}
 };
 Level s_level;
 bool s_open, s_tried;
@@ -346,6 +348,10 @@ extern "C" int port_levels_open(const char* dir)
 				l.author = v;
 			else if (k == "description")
 				l.description = v;
+			else if (k == "shines")
+				l.shines = atoi(v.c_str());
+			else if (k == "blue_coins")
+				l.blues = atoi(v.c_str());
 		}
 		fclose(f);
 	}
@@ -388,4 +394,31 @@ extern "C" int port_levels_area(void)
 {
 	findArea();
 	return s_area;
+}
+
+// The level Mario is in (1) or not (0); its name; what of its own he has and how many it has.
+extern "C" int port_levels_in(void) { return s_in ? 1 : 0; }
+extern "C" const char* port_levels_name(void) { return s_open ? s_upper.c_str() : ""; }
+extern "C" void port_levels_counts(int* shines, int* allShines, int* blues, int* allBlues)
+{
+	if (shines)
+		*shines = (int)s_shines.size();
+	if (allShines)
+		*allShines = s_level.shines > (int)s_shines.size() ? s_level.shines : (int)s_shines.size();
+	if (blues)
+		*blues = (int)s_blues.size();
+	if (allBlues)
+		*allBlues = s_level.blues > (int)s_blues.size() ? s_level.blues : (int)s_blues.size();
+}
+// A save file flag as the file has it, its own where the level has put its own in their place.
+extern "C" int port_levels_file_flag(unsigned flag)
+{
+	TFlagManager* fm = TFlagManager::getInstance();
+	if (s_in && flag >= kFirst && flag < kLast)
+		return s_file[flag - kFirst];
+	if (s_in && flag == kShineTotal)
+		return s_fileShines;
+	if (s_in && flag == kBlueTotal)
+		return s_fileBlues;
+	return fm ? fm->getFlag(flag) : 0;
 }
