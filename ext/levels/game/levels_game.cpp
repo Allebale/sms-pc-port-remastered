@@ -23,6 +23,8 @@
 #include <dirent.h>
 #ifdef _WIN32
 #include <direct.h>
+#else
+#include <unistd.h>
 #endif
 #include <algorithm>
 #include <set>
@@ -138,15 +140,47 @@ void findArea()
 
 // ---------------------------------------------------------------- the level's own save
 
-Str savePath()
+void makeDir(const Str& dir)
 {
-	const char* card = port_card_dir();
-	Str dir = Str(card ? card : ".") + "/levels";
 #ifdef _WIN32
 	_mkdir(dir.c_str());
 #else
 	mkdir(dir.c_str(), 0755);
 #endif
+}
+
+// The levels' saves: <memory card folder>-mods/custom-levels, with the mods' saves, so the launcher
+// backs them up and syncs them with the card (it allows nothing but card files in the card's own
+// folder). Saves an earlier build put in <memory card folder>/levels are moved there once.
+Str levelsDir()
+{
+	const char* card = port_card_dir();
+	const Str base = Str(card ? card : ".");
+	const Str dir  = base + "-mods/custom-levels";
+	static bool s_made;
+	if (!s_made) {
+		s_made = true;
+		makeDir(base + "-mods");
+		makeDir(dir);
+		const Str old = base + "/levels";
+		if (DIR* d = opendir(old.c_str())) {
+			while (dirent* e = readdir(d))
+				if (e->d_name[0] != '.')
+					rename((old + "/" + e->d_name).c_str(), (dir + "/" + e->d_name).c_str());
+			closedir(d);
+#ifdef _WIN32
+			_rmdir(old.c_str());
+#else
+			rmdir(old.c_str());
+#endif
+		}
+	}
+	return dir;
+}
+
+Str savePath()
+{
+	const Str dir = levelsDir();
 	char file[8];
 	snprintf(file, sizeof file, "%c", gpApplication.mSaveFile >= 0 && gpApplication.mSaveFile <= 2 ? 'a' + gpApplication.mSaveFile : 'x');
 	return dir + "/" + s_level.id + "-" + file + ".txt";
@@ -451,8 +485,7 @@ extern "C" int port_levels_special_total(void)
 	if (s_special >= 0)
 		return s_special;
 	s_special = 0;
-	const char* card = port_card_dir();
-	const Str dir = Str(card ? card : ".") + "/levels";
+	const Str dir = levelsDir();
 	char tail[8];
 	snprintf(tail, sizeof tail, "-%c.txt", gpApplication.mSaveFile >= 0 && gpApplication.mSaveFile <= 2 ? 'a' + gpApplication.mSaveFile : 'x');
 	if (DIR* d = opendir(dir.c_str())) {
@@ -555,14 +588,13 @@ void copyText(char* to, size_t n, const Str& from)
 void savedCounts(const Str& id, int* shines, int* blues)
 {
 	*shines = *blues = 0;
-	const char* card = port_card_dir();
 	char file[8];
 	snprintf(file, sizeof file, "%c", gpApplication.mSaveFile >= 0 && gpApplication.mSaveFile <= 2 ? 'a' + gpApplication.mSaveFile : 'x');
 	Str clean = id;
 	for (size_t i = 0; i < clean.size(); i++)
 		if (!isalnum((unsigned char)clean[i]) && clean[i] != '-' && clean[i] != '_')
 			clean[i] = '-';
-	FILE* f = fopen((Str(card ? card : ".") + "/levels/" + clean + "-" + file + ".txt").c_str(), "r");
+	FILE* f = fopen((levelsDir() + "/" + clean + "-" + file + ".txt").c_str(), "r");
 	if (!f)
 		return;
 	char word[16];
