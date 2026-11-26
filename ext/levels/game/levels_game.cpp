@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #ifdef _WIN32
 #include <direct.h>
 #endif
@@ -162,8 +163,10 @@ void loadSave()
 	fclose(f);
 }
 
+int s_special = -1; // the special Shines of every custom level, for this save file (-1: count again)
 void writeSave()
 {
+	s_special = -1;
 	FILE* f = fopen(savePath().c_str(), "w");
 	if (!f)
 		return;
@@ -200,11 +203,11 @@ void enter()
 		s_file[f - kFirst] = fm->getFlag(f);
 		fm->setFlag(f, levelHas(f) ? 1 : 0);
 	}
+	// (the Shine and blue coin counts stay the file's: the HUD counts the game's own Shines, and the
+	// level's on a row of their own, port_levels_special_total)
 	s_fileShines = fm->getFlag(kShineTotal);
 	s_fileBlues  = fm->getFlag(kBlueTotal);
 	s_fileRecord = fm->getFlag(recordFlag());
-	fm->setFlag(kShineTotal, (int)s_shines.size());
-	fm->setFlag(kBlueTotal, (int)s_blues.size());
 	fm->setFlag(recordFlag(), s_record);
 	s_guard = false;
 	s_in    = true;
@@ -259,6 +262,8 @@ int flagChange(unsigned flag, int old, int* value)
 	(void)old;
 	if (!s_in || s_guard)
 		return 0;
+	if (flag == kShineTotal || flag == kBlueTotal)
+		return 1; // a Shine or blue coin of the level's: not one of the file's
 	if (flag >= kShines && flag < kShines + kShineCount && *value) {
 		if (s_shines.insert((int)(flag - kShines)).second)
 			writeSave();
@@ -421,4 +426,37 @@ extern "C" int port_levels_file_flag(unsigned flag)
 	if (s_in && flag == kBlueTotal)
 		return s_fileBlues;
 	return fm ? fm->getFlag(flag) : 0;
+}
+
+// Every custom level's special Shines got with this save file (the levels' files next to the
+// memory card), for the HUD's row of them.
+extern "C" int port_levels_special_total(void)
+{
+	static int s_forFile = -9;
+	if (s_forFile != gpApplication.mSaveFile)
+		s_special = -1, s_forFile = gpApplication.mSaveFile;
+	if (s_special >= 0)
+		return s_special;
+	s_special = 0;
+	const char* card = port_card_dir();
+	const std::string dir = std::string(card ? card : ".") + "/levels";
+	char tail[8];
+	snprintf(tail, sizeof tail, "-%c.txt", gpApplication.mSaveFile >= 0 && gpApplication.mSaveFile <= 2 ? 'a' + gpApplication.mSaveFile : 'x');
+	if (DIR* d = opendir(dir.c_str())) {
+		while (dirent* e = readdir(d)) {
+			const std::string n = e->d_name;
+			if (n.size() <= strlen(tail) || n.compare(n.size() - strlen(tail), strlen(tail), tail) != 0)
+				continue;
+			if (FILE* f = fopen((dir + "/" + n).c_str(), "r")) {
+				char word[16];
+				int v;
+				while (fscanf(f, "%15s %d", word, &v) == 2)
+					if (!strcmp(word, "shine"))
+						s_special++;
+				fclose(f);
+			}
+		}
+		closedir(d);
+	}
+	return s_special;
 }

@@ -19,6 +19,7 @@
 #include <GC2D/MessageUtil.hpp>
 #include <GC2D/ShineTable.hpp>
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
+#include <JSystem/J2D/J2DPane.hpp>
 #include <JSystem/JDrama/JDRGraphics.hpp>
 #include <JSystem/JDrama/JDRRect.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
@@ -49,6 +50,7 @@ extern "C" int port_levels_in(void) __attribute__((weak));
 extern "C" const char* port_levels_name(void) __attribute__((weak));
 extern "C" void port_levels_counts(int* shines, int* allShines, int* blues, int* allBlues) __attribute__((weak));
 extern "C" int port_levels_file_flag(unsigned flag) __attribute__((weak));
+extern "C" int port_levels_special_total(void) __attribute__((weak));
 
 namespace {
 
@@ -352,5 +354,53 @@ void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha)
 	}
 	if (t.allBlueCoins)
 		counterRow(sBlueCoinArt, t.blueCoins, t.allBlueCoins, y, alpha);
+	GXPC_HudPieceEnd();
+}
+
+// --- the HUD's special Shines ---------------------------------------------------
+
+// A special Shine's look: the Shine icon in ice blue, on a blue brushstroke
+static const u32 kSpecialShine = 0x8CE6FFFF;
+static const u32 kSpecialBrush = 0x2D78D2FF;
+
+void HudSpecialShinesDraw(J2DOrthoGraph& graph, const J2DPane* shineBar, const J2DPane* shineIcon,
+                          const J2DPane* shineDigit, const J2DPane* blueBar, const J2DPane* coinBar)
+{
+	if (!port_levels_special_total || !shineBar || !shineIcon || !shineDigit || !blueBar || !coinBar)
+		return;
+	if (!shineBar->isVisible() || !shineBar->mColorAlpha)
+		return;
+	const int total = port_levels_special_total();
+	if (total <= 0 && !inLevel())
+		return; // none yet, and not in a custom level: only the game's own Shines
+	static int s_art = -1;
+	if (s_art < 0)
+		s_art = loadAllArt() ? 1 : 0;
+	if (!s_art)
+		return;
+	// the row under the coin row, as far below it as it is below the blue coins
+	const JUTRect& bar = shineBar->getGlobalBounds();
+	const f32 blueY = (f32)blueBar->getGlobalBounds().y1, coinY = (f32)coinBar->getGlobalBounds().y1;
+	const f32 low   = coinY > blueY ? coinY : blueY, step = coinY > blueY ? coinY - blueY : blueY - coinY;
+	const f32 dy    = low - (f32)bar.y1 + step; // the row under the lower of the two
+	const u8 alpha = shineBar->mColorAlpha;
+	graph.setup2D();
+	GXPC_HudPieceBegin((f32)bar.x1, (f32)bar.x2);
+	sBrushArt.load(GX_TEXMAP0);
+	quad((f32)bar.x1, (bar.y1 + bar.y2) * 0.5f + dy, (f32)(bar.x2 - bar.x1), (f32)(bar.y2 - bar.y1), kSpecialBrush, alpha);
+	const JUTRect& ic = shineIcon->getGlobalBounds();
+	sShineArt.load(GX_TEXMAP0);
+	quad((f32)ic.x1, (ic.y1 + ic.y2) * 0.5f + dy, (f32)(ic.x2 - ic.x1), (f32)(ic.y2 - ic.y1), kSpecialShine, alpha);
+	const JUTRect& dg = shineDigit->getGlobalBounds();
+	const f32 h = (f32)(dg.y2 - dg.y1), w = (f32)(dg.x2 - dg.x1), y = (dg.y1 + dg.y2) * 0.5f + dy;
+	sCrossArt.load(GX_TEXMAP0);
+	quad((f32)dg.x1 - w, y, w, h, kWhite, alpha);
+	char text[8];
+	snprintf(text, sizeof text, "%02d", total > 999 ? 999 : total);
+	f32 x = (f32)dg.x1;
+	for (const char* p = text; *p; p++, x += w) {
+		sDigitArt[*p - '0'].load(GX_TEXMAP0);
+		quad(x, y, w, h, kWhite, alpha);
+	}
 	GXPC_HudPieceEnd();
 }

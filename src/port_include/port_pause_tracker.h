@@ -7,6 +7,8 @@
 // (patch zzzz-tracker-01).
 
 class TMarioGamePad;
+class J2DPane;
+class J2DOrthoGraph;
 namespace JDrama {
 struct TRect;
 }
@@ -21,5 +23,11 @@ void PauseTrackerReset();
 void PauseTrackerMove(TMarioGamePad* pad);
 // With the menu, fading with it; viewport is the menu's 2D area.
 void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha);
+
+// The HUD's row of special Shines (custom levels', ext/levels), under its coin counter: the Shine
+// row's bar, icon and first digit, and the blue coin and coin rows' bars, as they were just
+// drawn (TGCConsole2::perform; patch zzzzzzzzzzz-ext-26).
+void HudSpecialShinesDraw(J2DOrthoGraph& graph, const J2DPane* shineBar, const J2DPane* shineIcon,
+                          const J2DPane* shineDigit, const J2DPane* blueBar, const J2DPane* coinBar);
 
 #endif

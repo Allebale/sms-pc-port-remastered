@@ -98,3 +98,24 @@
  			scenarioName = "";
  			mStageName->add(0, 0xF);
  			mMenuPane->add(0, 0x1E);
+--- a/src/GC2D/GCConsole2.cpp
++++ b/src/GC2D/GCConsole2.cpp
+@@ -1,3 +1,6 @@
++#ifdef TARGET_PC
++#include "port_pause_tracker.h"
++#endif
+ #include <GC2D/GCConsole2.hpp>
+ #include <GC2D/BoundPane.hpp>
+ #include <GC2D/BlendPane.hpp>
+@@ -4873,6 +4876,11 @@
+ 	graph.setup2D();
+ 
+ 	console->unkB0->draw(0, 0, &graph);
++#ifdef TARGET_PC
++	// custom levels' special Shines (ext/levels): a row of their own under the counters
++	HudSpecialShinesDraw(graph, console->unk128->getPane(), console->unk12C->getPane(), console->unk134[0]->getPane(),
++	                     console->unk148->getPane(), console->unkC8->getPane());
++#endif
+ 
+ 	if (console->unk44 && !console->unk43 && !console->unk42
+ 	    && console->unk520->getPane()->isVisible()) {
