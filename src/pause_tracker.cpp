@@ -366,19 +366,15 @@ void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha)
 // one is got (port_levels_special_age_ms), fading in and out.
 
 extern "C" int port_levels_special_got(void) __attribute__((weak));
+extern "C" void port_log(const char* fmt, ...);
 extern "C" int port_special_shines; // SMS_SPECIAL_SHINES (special_shines in settings.txt, platform)
 
 namespace {
 
 const int kShowMs = 6000, kFadeMs = 400;
+const u32 kSpecialShine = 0x3C78DCFF; // added over the Shine's own colours: a pale, silvery Shine
+const u32 kSpecialBrush = 0x3C8CEBFF; // the brushstroke's blue
 
-bool isAncestor(const J2DPane* maybe, const J2DPane* pane)
-{
-	for (JSUTree<J2DPane>* t = const_cast<J2DPane*>(pane)->getPaneTree()->getParent(); t; t = t->getParent())
-		if (t->getObject() == maybe)
-			return true;
-	return false;
-}
 
 } // namespace
 
@@ -412,6 +408,11 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 	if (!s_art)
 		return;
 	const int total = port_levels_special_total();
+	static bool s_logged;
+	if (!s_logged) {
+		s_logged = true;
+		port_log("[levels] special Shines on the HUD: %d\n", total);
+	}
 	// fading in and out
 	int fade = 255;
 	if (!paused && age < kFadeMs)
@@ -424,73 +425,50 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 	const f32 low = coinY > blueY ? coinY : blueY, step = coinY > blueY ? coinY - blueY : blueY - coinY;
 	const int dy  = (int)(low + step - (f32)bar->getGlobalBounds().y1);
 
-	// as each pane is, to put back after
-	struct Was {
-		bool visible;
-		u8 alpha;
-		const ResTIMG* tex0;
-		JUtility::TColor white, black, corner[4];
-	} was[6];
-	char digits[4];
-	snprintf(digits, sizeof digits, "%03d", total > 999 ? 999 : total);
-	const int firstDigit = total >= 100 ? 0 : 1; // the game's Shine counter shows two digits under 100
-	for (int i = 0; i < 6; i++) {
-		J2DPane* p = row[i];
-		if (!p)
-			continue;
-		was[i].visible = p->isVisible();
-		was[i].alpha   = p->mAlpha;
-		J2DPicture* pic = (J2DPicture*)p; // the bar, the Shine and the digits are pictures
-		if (i != 2) {
-			was[i].tex0  = pic->getTexture(0) ? pic->getTexture(0)->getTexInfo() : 0;
-			was[i].white = pic->mWhite;
-			was[i].black = pic->mBlack;
-			for (int c = 0; c < 4; c++)
-				was[i].corner[c] = pic->mCornerColor[c];
-		}
-		p->mAlpha = (u8)(p->mAlpha * fade / 255);
-		if (i == 0) { // the brushstroke, blue
-			pic->setCornerColor(JUtility::TColor(255, 255, 255, 255));
-			pic->mWhite = JUtility::TColor(60, 140, 235, 255);
-		} else if (i == 1) { // the Shine, silver: its darks blue-grey, its lights white
-			pic->mBlack = JUtility::TColor(120, 140, 200, 0);
-			pic->mWhite = JUtility::TColor(255, 255, 255, 255);
-		} else if (i >= 3) { // the count
-			const int d = i - 3 + firstDigit; // under 100: tens and units in the first two
-			if (d < 3) {
-				pic->changeTexture(sDigitArt[digits[d] - '0'].getTexInfo(), 0);
-				p->mVisible = true;
-			} else {
-				p->mVisible = false;
-			}
-		}
-	}
+	// drawn by hand where the game's Shine row's pieces are, a row lower (redrawing the panes
+	// themselves clips them to their own row)
+	const u8 alpha = (u8)(bar->mColorAlpha * fade / 255);
 	graph.setup2D();
-	// each pane once: not one whose parent (or its parent's) is drawn, which draws it too
-	for (int i = 0; i < 6; i++) {
-		if (!row[i])
-			continue;
-		bool under = false;
-		for (int j = 0; j < 6; j++)
-			if (j != i && row[j] && isAncestor(row[j], row[i]))
-				under = true;
-		if (!under)
-			row[i]->draw(0, dy, &graph, true);
+	const JUTRect& b = bar->getGlobalBounds();
+	GXPC_HudPieceBegin((f32)b.x1, (f32)b.x2);
+	// the brushstroke: the bar's own picture, blue
+	JUTTexture* barTex = ((J2DPicture*)bar)->getTexture(0);
+	(barTex ? *barTex : sBrushArt).load(GX_TEXMAP0);
+	quad((f32)b.x1, (b.y1 + b.y2) * 0.5f + dy, (f32)(b.x2 - b.x1), (f32)(b.y2 - b.y1), kSpecialBrush, alpha);
+	// the Shine: the icon's own picture, then the same again added in blue: a pale, silvery Shine
+	if (row[1]) {
+		const JUTRect& r = row[1]->getGlobalBounds();
+		JUTTexture* tex  = ((J2DPicture*)row[1])->getTexture(0);
+		(tex ? *tex : sShineArt).load(GX_TEXMAP0);
+		const f32 x = (f32)r.x1, y = (r.y1 + r.y2) * 0.5f + dy, w = (f32)(r.x2 - r.x1), h = (f32)(r.y2 - r.y1);
+		quad(x, y, w, h, kWhite, alpha);
+		quad(x, y, w, h, kWhite, alpha); // (sets the textured state up for the pass below)
+		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_SET);
+		static const f32 kU[4] = { 0, 1, 1, 0 }, kV[4] = { 0, 0, 1, 1 };
+		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+		for (int i = 0; i < 4; i++) {
+			GXPosition3f32(x + kU[i] * w, y - h / 2 + kV[i] * h, 0.0f);
+			GXColor4u8(kSpecialShine >> 24, kSpecialShine >> 16, kSpecialShine >> 8, alpha);
+			GXTexCoord2f32(kU[i], kV[i]);
+		}
+		GXEnd();
+		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_SET);
 	}
-	for (int i = 0; i < 6; i++) {
-		J2DPane* p = row[i];
+	// the cross and the count, where the row's own are (two digits under 100, as the game's)
+	if (row[2]) {
+		const JUTRect& r = row[2]->getGlobalBounds();
+		sCrossArt.load(GX_TEXMAP0);
+		quad((f32)r.x1, (r.y1 + r.y2) * 0.5f + dy, (f32)(r.x2 - r.x1), (f32)(r.y2 - r.y1), kWhite, alpha);
+	}
+	char digits[4];
+	snprintf(digits, sizeof digits, total >= 100 ? "%03d" : "%02d", total > 999 ? 999 : total);
+	for (int d = 0; digits[d] && d < 3; d++) {
+		const J2DPane* p = row[3 + d];
 		if (!p)
 			continue;
-		J2DPicture* pic = (J2DPicture*)p;
-		p->mVisible = was[i].visible;
-		p->mAlpha   = was[i].alpha;
-		if (i == 2)
-			continue;
-		if (i >= 3 && was[i].tex0)
-			pic->changeTexture(was[i].tex0, 0);
-		pic->mWhite = was[i].white;
-		pic->mBlack = was[i].black;
-		for (int c = 0; c < 4; c++)
-			pic->mCornerColor[c] = was[i].corner[c];
+		const JUTRect& r = p->getGlobalBounds();
+		sDigitArt[digits[d] - '0'].load(GX_TEXMAP0);
+		quad((f32)r.x1, (r.y1 + r.y2) * 0.5f + dy, (f32)(r.x2 - r.x1), (f32)(r.y2 - r.y1), kWhite, alpha);
 	}
+	GXPC_HudPieceEnd();
 }
