@@ -469,7 +469,8 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 		}
 	}
 	graph.setup2D();
-	// the brushstroke where the row is; the Shine, cross and count a little lower, clear of the row above
+	// the whole row (brushstroke, Shine, cross and count) a little lower than a row's step, clear of the
+	// row above, the brushstroke behind the cross and count as the other rows have it
 	const int lower = (int)(step * 0.18f);
 	for (int i = 0; i < 6; i++) {
 		if (!row[i])
@@ -485,7 +486,7 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 			GXSetTevSwapModeTable(GX_TEV_SWAP2, GX_CH_GREEN, GX_CH_GREEN, GX_CH_GREEN, GX_CH_ALPHA);
 			GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP2);
 		}
-		row[i]->draw(0, dy + (i == 0 ? 0 : lower), &graph, false);
+		row[i]->draw(0, dy + lower, &graph, false);
 		if (i == 1)
 			GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP0);
 	}
