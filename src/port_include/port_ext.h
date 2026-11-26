@@ -304,6 +304,14 @@ typedef struct PortExtension {
 	// (a TMActorKeeper's model data keeper) or a file in that folder, or
 	// null for the object's own. The first that names one wins.
 	const char* (*objectModel)(void* object, void* keeper, const char* name);
+	// The save file's flags are about to be written to the memory card or
+	// kept as its last save (TFlagManager::save, saveSuccess: `begin` 1),
+	// or that is done (0): an extension that put flags of its own in their
+	// place (ext/levels: a custom level's Shines) puts the file's back for it.
+	void (*flagsSaving)(int begin);
+	// The name the title card and the pause menu give `area` (stagename.bmg's
+	// is its world's), or null for the game's. The first that names one wins.
+	const char* (*stageName)(int area);
 } PortExtension;
 
 // shineTouch's answers
@@ -438,6 +446,8 @@ int port_ext_nozzle_fire(void* mario, int nozzle, int how);
 const char* port_ext_shine_model(void* shine, void* keeper, int collected);
 void port_ext_yoshi_egg(int kind, void* egg, int* present);
 void port_ext_episode_shine(int shineStage, int episode, int* shine);
+void port_ext_flags_saving(int begin);
+const char* port_ext_stage_name(int area);
 // 1 while an extension keeps the chosen file from starting (fileStarting).
 int port_ext_file_starting(void);
 // Each step of the file select: the file whose menu takes the player's choice

@@ -312,6 +312,17 @@ extern "C" void port_ext_episode_shine(int shineStage, int episode, int* shine)
 	EACH(episodeShine) s_ext[i]->episodeShine(shineStage, episode, shine);
 }
 
+extern "C" void port_ext_flags_saving(int begin)
+{
+	EACH(flagsSaving) s_ext[i]->flagsSaving(begin);
+}
+
+extern "C" const char* port_ext_stage_name(int area)
+{
+	EACH(stageName) if (const char* n = s_ext[i]->stageName(area)) return n;
+	return nullptr;
+}
+
 extern "C" void port_ext_episode_select(int area, int* offered, int* first, int maxOffered)
 {
 	EACH(episodeSelect) s_ext[i]->episodeSelect(area, offered, first, maxOffered);

@@ -816,6 +816,9 @@ static void apply_mods()
 	}
 	// Explicit mods may provide their own story movies or other assets.
 	apply_user_mods();
+	// room for files laid over the disc while the game runs (port_dvd_lay_file), so that
+	// adding one never moves the table under a read on another thread
+	g_fst.reserve(g_fst.size() + 256);
 	for (auto& p : g_patches) {
 		p.second.orig_mem = g_fst[p.first].mem;
 		p.second.orig_len = g_fst[p.first].length;
@@ -892,6 +895,77 @@ extern "C" int port_dvd_override(const char* path, const void* data, u32 size)
 	g_fst[e].mem    = (const u8*)data;
 	g_fst[e].length = size;
 	return 1;
+}
+
+// Serve disc path `path` from the host file `host` from now on, as a mod's files/ folder would (a
+// file the disc has, or one it hasn't: added); `host` null or empty takes a file added this way
+// out again (it is then not found, or the disc's own). For files that change while the game
+// runs, between stages (ext/levels: a custom level's stages). Returns 0 if `host` isn't a file.
+extern "C" int port_dvd_lay_file(const char* path, const char* host)
+{
+	// a disc file's own entry as it was before the first file laid over it
+	struct Was {
+		std::string host;
+		u32 length;
+		bool from_host;
+	};
+	static std::unordered_map<u32, Was> s_was;
+	std::string abs = path && *path == '/' ? path + 1 : (path ? path : "");
+	if (abs.empty())
+		return 0;
+	struct stat st;
+	const bool give = host && *host;
+	if (give && (stat(host, &st) != 0 || S_ISDIR(st.st_mode)))
+		return 0;
+	std::string low = abs;
+	for (char& c : low)
+		c = (char)tolower((unsigned char)c);
+	s32 e = lookup_disc(("/" + abs).c_str());
+	if (e < 0) {
+		auto it = g_added.find(low);
+		e = it == g_added.end() ? -1 : (s32)it->second;
+	}
+	if (e >= 0 && g_fst[e].dir)
+		return 0;
+	if (e >= 0) {
+		Entry& d = g_fst[e];
+		const bool disc = lookup_disc(("/" + abs).c_str()) == e;
+		if (disc && !s_was.count((u32)e))
+			s_was[(u32)e] = Was{ d.host, d.length, d.from_host };
+		if (d.fd >= 0)
+			close(d.fd);
+		d.fd  = -1;
+		d.mem = NULL;
+		if (give) {
+			d.host      = host;
+			d.length    = (u32)st.st_size;
+			d.from_host = true;
+		} else if (disc) { // the disc's own (or its mod's) again
+			const Was& w = s_was[(u32)e];
+			d.host       = w.host;
+			d.length     = w.length;
+			d.from_host  = w.from_host;
+		} else { // one added: not found any more
+			d.host.clear();
+			d.length = 0;
+			g_added.erase(low);
+		}
+		return 1;
+	}
+	if (!give)
+		return 1;
+	if (g_fst.size() + 8 > g_fst.capacity())
+		return 0; // full: adding would move the table
+	add_entry(abs, false, host, (u32)st.st_size);
+	return 1;
+}
+
+// Whether `path` is a file the game can open (the disc's, a mod's), without the log line a miss
+// gives DVDConvertPathToEntrynum.
+extern "C" int port_dvd_exists(const char* path)
+{
+	s32 e = lookup(path);
+	return e >= 0 && !g_fst[e].dir;
 }
 
 extern "C" void DVDInit(void) {}

@@ -16,6 +16,9 @@ int port_vi_idle_advance(void);   /* deterministic VI: retrace on idle */
 int port_vi_deterministic(void);
 s64 port_vi_virtual_ticks(void);
 int port_dvd_override(const char* path, const void* data, u32 size);
+// Serve a disc path from a host file from now on (null: as before); platform/dvd/dvd.cpp.
+int port_dvd_lay_file(const char* path, const char* host);
+int port_dvd_exists(const char* path);
 extern int port_no_audio;
 /* Interrupt emulation: the running game thread owns the "CPU"; interrupt
  * work runs at check points (OS calls, blocking, idle). */

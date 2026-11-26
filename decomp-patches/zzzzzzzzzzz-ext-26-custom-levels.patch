@@ -1,0 +1,100 @@
+--- a/src/System/FlagManager.cpp
++++ b/src/System/FlagManager.cpp
+@@ -725,6 +725,10 @@
+ 	// this function and that its body never references: an OSTime the original
+ 	// declared ahead of the save header and then left unused.
+ 	OSTime unusedTime;
++#ifdef TARGET_PC
++	// a custom level's own Shines and blue coins out, the file's in (ext/levels)
++	port_ext_flags_saving(1);
++#endif
+ 
+ 	mLastSaveTimeBackup = mLastSaveTime;
+ 	mLastSaveTime       = OSGetTime();
+@@ -786,13 +790,22 @@
+ 	else
+ #endif
+ 	out.skip(0x200 - sizeof(mCardInts), 0);
++#ifdef TARGET_PC
++	port_ext_flags_saving(0);
++#endif
+ }
+ 
+ void TFlagManager::saveSuccess()
+ {
++#ifdef TARGET_PC
++	port_ext_flags_saving(1);
++#endif
+ 	memcpy(mSavedCardBools, mCardBools, sizeof(mCardBools));
+ 	memcpy(mSavedCardInts, mCardInts, sizeof(mCardInts));
+ 	mSavedLastSaveTime = mLastSaveTime;
++#ifdef TARGET_PC
++	port_ext_flags_saving(0);
++#endif
+ }
+ 
+ void TFlagManager::saveFail()
+--- a/src/GC2D/ConsoleStr.cpp
++++ b/src/GC2D/ConsoleStr.cpp
+@@ -52,6 +52,7 @@
+ // The console runs in real time at either frame rate, so with frame_rate = 60
+ // the lead stays what it is at 30.
+ #include "port_framerate.h"
++#include "port_ext.h"
+ f32 TConsoleStr::getWipeCloseTime()
+ {
+ 	f32 rate = SMSGetVSyncTimesPerSec();
+@@ -190,6 +191,12 @@
+ 	u32 uVar9        = fm->getFlag(0x40003);
+ 	void* pvVar10    = JKRGetResource("/common/2d/stagename.bmg");
+ 	unk29C[0]->setString(({ typedef __typeof__(SMSGetMessageData(pvVar10, uVar1)) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x80172704); sms_mod_t_ ? ((__typeof__(static_cast<sms_mod_r_ (*)(void*, u32)>(&SMSGetMessageData)))sms_mod_t_)(pvVar10, uVar1) : SMSGetMessageData(pvVar10, uVar1); }));
++#ifdef TARGET_PC
++	// a stage of its own name (ext/levels' custom levels): that, and no episode's
++	const char* sms_ext_name = port_ext_stage_name(SMSGetMarDirector()->getCurrentMap());
++	if (sms_ext_name)
++		unk29C[0]->setString(sms_ext_name);
++#endif
+ 
+ 	if (SMSGetMarDirector()->getCurrentMap() != 15) {
+ 		void* pvVar10 = JKRGetResource("/common/2d/scenarioname.bmg");
+@@ -208,7 +215,11 @@
+ 			puVar15 = ((const char* (*)(void*))sms_mod_t_)(pvVar10);
+ 		else
+ #endif
+-		if (pvVar10 == nullptr || uVar2 == -1)
++		if (pvVar10 == nullptr || uVar2 == -1
++#ifdef TARGET_PC
++		    || sms_ext_name
++#endif
++		)
+ 			puVar15 = "";
+ 		else
+ 			puVar15 =
+--- a/src/GC2D/PauseMenu2.cpp
++++ b/src/GC2D/PauseMenu2.cpp
+@@ -538,6 +538,12 @@
+ 	    JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), shineStage)) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x80156D2C); sms_mod_t_ ? ((__typeof__(static_cast<sms_mod_r_ (*)(void*, u32)>(&SMSGetMessageData)))sms_mod_t_)(JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), shineStage) : SMSGetMessageData(
+ 	    JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), shineStage); }));
+ #endif
++#ifdef TARGET_PC
++	// a stage of its own name (ext/levels' custom levels): that, and no episode's
++	const char* sms_ext_name = port_ext_stage_name(SMSGetMarDirector()->mMap);
++	if (sms_ext_name)
++		mStageName->setString(sms_ext_name);
++#endif
+ 
+ 	if (PauseCurrentMap(SMSGetMarDirector()) != 0xF) {
+ 		void* scenarioBmg = JKRFileLoader::getGlbResource(
+@@ -565,7 +571,11 @@
+ 			scenarioName = ((const char* (*)(void*))sms_mod_n_)(scenarioBmg);
+ 		} else
+ #endif
+-		if (scenarioBmg == nullptr || shineID == -1 || shineStage == 0) {
++		if (scenarioBmg == nullptr || shineID == -1 || shineStage == 0
++#ifdef TARGET_PC
++		    || sms_ext_name
++#endif
++		) {
+ 			scenarioName = "";
+ 			mStageName->add(0, 0xF);
+ 			mMenuPane->add(0, 0x1E);
