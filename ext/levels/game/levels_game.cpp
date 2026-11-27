@@ -96,6 +96,9 @@ int s_file[kLast - kFirst], s_fileShines, s_fileBlues, s_fileRecord;
 IntSet s_shines, s_blues; // the level's own, for this save file
 int s_record;
 int s_saveFile = -9;
+// after a Shine: the level's next episode (port_levels_set_after_shine, a mod's choice), and whether
+// one was got on this stage
+bool s_afterShineNext, s_shineHere;
 int s_gotCount;      // special Shines got this run (the HUD shows them when one more is)
 
 unsigned recordFlag() { return 0x20005 + (unsigned)s_area; } // TFlagManager::incGoldCoinFlag's
@@ -336,6 +339,7 @@ int flagChange(unsigned flag, int old, int* value)
 	if (flag == kShineTotal || flag == kBlueTotal)
 		return 1; // a Shine or blue coin of the level's: not one of the file's
 	if (flag >= kShines && flag < kShines + kShineCount && *value) {
+		s_shineHere = true;
 		if (s_shines.insert((int)(flag - kShines)).second) {
 			writeSave();
 			s_gotCount++; // the HUD shows the special Shines for a while
@@ -354,6 +358,7 @@ int s_lastEpisode; // the episode of the level last played (its sublevels' ways 
 void stageLoading(int area, int episode)
 {
 	(void)area;
+	s_shineHere = false;
 	TGameSequence& cur = gpApplication.mCurrArea;
 	if (s_open && s_area >= 0 && cur.unk0 == s_area) {
 		if (episode >= 0 && episode < s_level.episodes)
@@ -369,7 +374,16 @@ void chooseNextStage()
 {
 	TGameSequence& next = gpApplication.mNextArea;
 	const TGameSequence& cur = gpApplication.mCurrArea;
-	if (!s_open || s_level.episodes < 2 || next.unk0 != s_area || cur.unk0 != s_area)
+	if (!s_open || s_level.episodes < 2 || cur.unk0 != s_area)
+		return;
+	// leaving after a Shine, with the next episode chosen: that episode (the last one's as before)
+	if (s_afterShineNext && s_shineHere && next.unk0 != s_area && cur.unk1 + 1 < s_level.episodes) {
+		next.unk0 = (u8)s_area;
+		next.unk1 = (u8)(cur.unk1 + 1);
+		port_log("[levels] after the Shine: episode %d of %s\n", cur.unk1 + 2, s_level.name.c_str());
+		return;
+	}
+	if (next.unk0 != s_area)
 		return;
 	if (next.unk1 == 0 && cur.unk1 >= s_level.episodes && cur.unk1 != 0xFF)
 		next.unk1 = (u8)s_lastEpisode;
@@ -750,6 +764,10 @@ extern "C" int port_levels_current(void)
 			return (int)i;
 	return -1;
 }
+
+// After a Shine in a level with episodes: 1 its next episode, 0 back where Mario came from (api->levels).
+extern "C" void port_levels_set_after_shine(int next_episode) { s_afterShineNext = next_episode != 0; }
+extern "C" int port_levels_after_shine(void) { return s_afterShineNext ? 1 : 0; }
 
 // The open level's name as written (its level.ini's), or "".
 extern "C" const char* port_levels_title(void) { return s_open ? s_level.name.c_str() : ""; }

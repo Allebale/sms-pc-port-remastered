@@ -1199,9 +1199,12 @@ extern "C" int port_levels_info(int index, SmsLevelInfo* out);
 extern "C" int port_levels_enter(int index);
 extern "C" int port_levels_current(void);
 extern "C" int port_levels_special_total(void);
+extern "C" void port_levels_set_after_shine(int next_episode);
+extern "C" int port_levels_after_shine(void);
 
 const SmsLevelsApi s_levels = {sizeof(SmsLevelsApi), SMS_LEVELS_MAGIC, port_levels_count, port_levels_info,
-                               port_levels_enter,    port_levels_current, port_levels_special_total};
+                               port_levels_enter,    port_levels_current, port_levels_special_total,
+                               port_levels_set_after_shine, port_levels_after_shine};
 
 // ------------------------------------------------------------------ FLUDD held in view (first person)
 // ext/modapi/game/modapi_held_fludd.cpp: the mod that holds it, so it goes back when that one
