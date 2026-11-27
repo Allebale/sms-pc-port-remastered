@@ -226,9 +226,9 @@ Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/level
  				nextState = STATE_UNK1;
 +#ifdef TARGET_PC
 +				// an area of an extension's own with episodes (port_ext.h), come into from
-+				// elsewhere: the title card with its episode's name, as a world's
++				// elsewhere or from another of its episodes: the title card with its episode's name, as a world's
 +				if (port_ext_area_episodes(SMSGetApplication()->mCurrArea.getStage()) > 0
-+				    && SMSGetApplication()->mPrevArea.getStage() != SMSGetApplication()->mCurrArea.getStage())
++				    && (SMSGetApplication()->mPrevArea.getStage() != SMSGetApplication()->mCurrArea.getStage() || (SMSGetApplication()->mPrevArea.unk1 != SMSGetApplication()->mCurrArea.unk1 && SMSGetApplication()->mPrevArea.unk1 < port_ext_area_episodes(SMSGetApplication()->mCurrArea.getStage()))))
 +					onTransitionFlag(TRANSITION_FLAG_GO_BANNER_PENDING
 +					                 | TRANSITION_FLAG_SCENARIO_NAME_BANNER_PENDING);
 +				else

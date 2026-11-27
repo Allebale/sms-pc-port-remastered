@@ -376,12 +376,19 @@ void chooseNextStage()
 	const TGameSequence& cur = gpApplication.mCurrArea;
 	if (!s_open || s_level.episodes < 2 || cur.unk0 != s_area)
 		return;
-	// leaving after a Shine, with the next episode chosen: that episode (the last one's as before)
-	if (s_afterShineNext && s_shineHere && next.unk0 != s_area && cur.unk1 + 1 < s_level.episodes) {
-		next.unk0 = (u8)s_area;
-		next.unk1 = (u8)(cur.unk1 + 1);
-		port_log("[levels] after the Shine: episode %d of %s\n", cur.unk1 + 2, s_level.name.c_str());
-		return;
+	// leaving after a Shine, with the next episode chosen: the next one whose Shine Mario lacks (after
+	// this one, then from the first), else back as before
+	if (s_afterShineNext && s_shineHere && next.unk0 != s_area && cur.unk1 < s_level.episodes) {
+		for (int i = 1; i < s_level.episodes; i++) {
+			const int e = (cur.unk1 + i) % s_level.episodes;
+			if (s_level.episodeShine[e] >= 0 && s_shines.count(s_level.episodeShine[e]))
+				continue;
+			next.unk0 = (u8)s_area;
+			next.unk1 = (u8)e;
+			port_log("[levels] after the Shine: episode %d of %s\n", e + 1, s_level.name.c_str());
+			return;
+		}
+		port_log("[levels] after the Shine: every episode of %s got, back\n", s_level.name.c_str());
 	}
 	if (next.unk0 != s_area)
 		return;
@@ -404,6 +411,17 @@ const char* areaEpisodeName(int area, int episode)
 		return nullptr;
 	return s_level.episodeName[episode].empty() ? nullptr : s_level.episodeName[episode].c_str();
 }
+// Mario lost a life with lives left (port_ext.h's missNextArea): with the next episode chosen
+// (port_levels_set_after_shine) the stage he was on starts again, not Delfino Plaza
+void missNextArea()
+{
+	const TGameSequence& cur = gpApplication.mCurrArea;
+	if (!s_afterShineNext || !s_open || s_area < 0 || cur.unk0 != s_area || cur.unk1 == 0xFF)
+		return;
+	gpApplication.mNextArea.set(cur.unk0, cur.unk1, cur.unk2);
+	port_log("[levels] a life lost: stage %d of %s again\n", cur.unk1 + 1, s_level.name.c_str());
+}
+
 // The world whose music it plays (port_ext.h's areaMusic), its episode's as that world has it
 int areaMusic(int area)
 {
@@ -454,6 +472,7 @@ struct Register {
 		s_extension.areaEpisodeName = areaEpisodeName;
 		s_extension.areaEpisodeGot  = areaEpisodeGot;
 		s_extension.areaMusic       = areaMusic;
+		s_extension.missNextArea    = missNextArea;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -765,7 +784,8 @@ extern "C" int port_levels_current(void)
 	return -1;
 }
 
-// After a Shine in a level with episodes: 1 its next episode, 0 back where Mario came from (api->levels).
+// 1: after a Shine in a level with episodes the next one whose Shine Mario lacks, and a lost life starts the
+// stage again; 0: back where Mario came from for both, as from a world (api->levels).
 extern "C" void port_levels_set_after_shine(int next_episode) { s_afterShineNext = next_episode != 0; }
 extern "C" int port_levels_after_shine(void) { return s_afterShineNext ? 1 : 0; }
 
