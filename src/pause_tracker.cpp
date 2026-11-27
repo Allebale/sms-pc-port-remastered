@@ -492,7 +492,13 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 	if (s_mainSilver) {
 		s_mainSilver = false;
 		row[1]->mVisible = s_main[1].visible;
-		if (row[1]->mVisible && row[0]->isVisible() && row[0]->mColorAlpha) {
+		// only where the game drew its row this frame: every pane above the Shine shown (the HUD hides
+		// its counters by hiding a pane above them, whose place and alpha then stay as last drawn)
+		bool shown = row[1]->mVisible && row[0]->isVisible() && row[0]->mColorAlpha;
+		for (JSUTree<J2DPane>* t = row[1]->getPaneTree()->getParent(); shown && t; t = t->getParent())
+			if (J2DPane* up = t->getObject())
+				shown = up->mVisible;
+		if (shown) {
 			graph.setup2D();
 			drawSilverShine(row[1], 0, graph);
 		}
