@@ -343,6 +343,16 @@ extern "C" int port_ext_area_episode_got(int area, int episode)
 	return 0;
 }
 
+extern "C" int port_ext_area_music(int area)
+{
+	EACH(areaMusic) {
+		int music = s_ext[i]->areaMusic(area);
+		if (music >= 0)
+			return music;
+	}
+	return -1;
+}
+
 extern "C" void port_ext_episode_select(int area, int* offered, int* first, int maxOffered)
 {
 	EACH(episodeSelect) s_ext[i]->episodeSelect(area, offered, first, maxOffered);

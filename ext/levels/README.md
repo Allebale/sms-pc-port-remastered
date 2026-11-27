@@ -6,7 +6,7 @@ A level made in SMS Launcher's World editor plays in a stage slot the disc leave
 
 | File | What it is |
 | --- | --- |
-| `level.ini` | `id`, `name`, `author`, `description`, `shines` and `blue_coins` (how many it has) as `key = value` lines; for a level with episodes, `episodes` (2 to 8: its first stages), and `episode0`, `episode1`... (each one's name) with `episode0_shine`... (the Shine that is its own, -1 none) |
+| `level.ini` | `id`, `name`, `author`, `description`, `shines` and `blue_coins` (how many it has) as `key = value` lines; for a level with episodes, `episodes` (2 to 8: its first stages), and `episode0`, `episode1`... (each one's name) with `episode0_shine`... (the Shine that is its own, -1 none); `music`, the world whose music it plays (below) |
 | `stage0.szs` | the level: the slot's episode 0 |
 | `stage1.szs` ... | the levels its stage exits lead to: episodes 1, 2... |
 
@@ -29,3 +29,5 @@ What he gets there is kept at once in `<memory card folder>-mods/custom-levels/<
 ## Episodes
 
 A level with `episodes` has an episode select as the worlds do (port_ext.h's `areaEpisodes`, `areaEpisodeName`, `areaEpisodeGot`). Entered without an episode chosen (Map Teleport's Custom levels page, `port_levels_enter`), the game opens the select (TMarDirector::moveStage): it shows the level's name, its episodes' names, and offers each once the Shine of the one before is got (TSelectMenu::initData; no world's tables are read for it, and its coin record shows 0). The title card and the pause menu name the episode. Its stages after the episodes are its sublevels, shared by every episode: their way back to the first stage leads to the episode Mario came from.
+
+A level with `music` plays that world's music instead of the slot's (port_ext.h's `areaMusic`; `zzzzzzzzzzzz-ext-28-level-music.patch`, in MSMainProc::setMSoundEnterStage): `airstrip`, `plaza`, `bianco`, `ricco`, `gelato`, `pinna-beach`, `sirena`, `hotel`, `pianta`, `noki`, `pinna`, `casino`, `title`, `undersea`, `secret`, `corona` or `boss`. Each stage plays it as that world's episode of the same number has it (episode 1 of `bianco` its first episode's), so a stage taken from a world keeps its music; the world's distance and cube fades are left out.

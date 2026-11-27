@@ -320,6 +320,9 @@ typedef struct PortExtension {
 	int (*areaEpisodes)(int area);
 	const char* (*areaEpisodeName)(int area, int episode);
 	int (*areaEpisodeGot)(int area, int episode);
+	// The world whose music an area an extension has made its own plays (its area number, the
+	// episode kept), or -1 for the area's own (the first one not -1 wins).
+	int (*areaMusic)(int area);
 } PortExtension;
 
 // shineTouch's answers
@@ -459,6 +462,7 @@ const char* port_ext_stage_name(int area);
 int port_ext_area_episodes(int area);
 const char* port_ext_area_episode_name(int area, int episode);
 int port_ext_area_episode_got(int area, int episode);
+int port_ext_area_music(int area);
 // 1 while an extension keeps the chosen file from starting (fileStarting).
 int port_ext_file_starting(void);
 // Each step of the file select: the file whose menu takes the player's choice

@@ -55,13 +55,30 @@ struct Level {
 	int episodes;
 	Str episodeName[8];
 	int episodeShine[8];
-	Level() : shines(0), blues(0), episodes(0)
+	int music; // the world whose music it plays (level.ini's music: its area), -1 the slot's own
+	Level() : shines(0), blues(0), episodes(0), music(-1)
 	{
 		for (int i = 0; i < 8; i++)
 			episodeShine[i] = -1;
 	}
 };
 Level s_level;
+
+// level.ini's music: a world by name, as its area number (the game's music for each, MSoundMainSide)
+int musicArea(const Str& name)
+{
+	static const struct { const char* name; int area; } worlds[] = {
+		{"airstrip", 0}, {"plaza", 1}, {"bianco", 2}, {"ricco", 3}, {"gelato", 4}, {"pinna-beach", 5},
+		{"sirena", 6}, {"hotel", 7}, {"pianta", 8}, {"noki", 9}, {"pinna", 13}, {"casino", 14},
+		{"title", 15}, {"undersea", 16}, {"secret", 31}, {"corona", 52}, {"boss", 55},
+	};
+	for (size_t i = 0; i < sizeof worlds / sizeof worlds[0]; i++)
+		if (name == worlds[i].name)
+			return worlds[i].area;
+	if (!name.empty())
+		port_log("[levels] music: no world named %s (airstrip, plaza, bianco, ricco, gelato, pinna-beach, sirena, hotel, pianta, noki, pinna, casino, title, undersea, secret, corona, boss)\n", name.c_str());
+	return -1;
+}
 bool s_open, s_tried;
 int s_area = -2;                  // the slot's area (-1: none found), worked out once
 std::vector<Str, PortHostAlloc<Str> > s_scenes; // its episodes' scene files, "/data/scene/scale0.szs"
@@ -373,6 +390,12 @@ const char* areaEpisodeName(int area, int episode)
 		return nullptr;
 	return s_level.episodeName[episode].empty() ? nullptr : s_level.episodeName[episode].c_str();
 }
+// The world whose music it plays (port_ext.h's areaMusic), its episode's as that world has it
+int areaMusic(int area)
+{
+	return s_open && area == s_area ? s_level.music : -1;
+}
+
 int areaEpisodeGot(int area, int episode)
 {
 	if (!areaEpisodes(area) || episode < 0 || episode >= s_level.episodes || s_level.episodeShine[episode] < 0)
@@ -416,6 +439,7 @@ struct Register {
 		s_extension.areaEpisodes    = areaEpisodes;
 		s_extension.areaEpisodeName = areaEpisodeName;
 		s_extension.areaEpisodeGot  = areaEpisodeGot;
+		s_extension.areaMusic       = areaMusic;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -456,6 +480,8 @@ extern "C" int port_levels_open(const char* dir)
 				l.shines = atoi(v.c_str());
 			else if (k == "blue_coins")
 				l.blues = atoi(v.c_str());
+			else if (k == "music")
+				l.music = musicArea(v);
 			else if (k == "episodes")
 				l.episodes = atoi(v.c_str()) < 0 ? 0 : atoi(v.c_str()) > 8 ? 8 : atoi(v.c_str());
 			else if (k.size() >= 8 && k.compare(0, 7, "episode") == 0 && k[7] >= '0' && k[7] <= '7') {

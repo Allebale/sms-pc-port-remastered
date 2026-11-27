@@ -1,0 +1,34 @@
+Reason: an area an extension has made its own (port_ext.h's areaMusic: ext/levels' custom levels, level.ini's music) plays the music of the world it names, with that world's episode differences but none of its distance or cube fades (MSMainProc::setMSoundEnterStage)
+--- a/src/System/MSoundMainSide.cpp
++++ b/src/System/MSoundMainSide.cpp
+@@ -17,6 +17,7 @@
+ #include <MSound/MSoundBGM.hpp>
+ #include <algorithm>
+ #include <sms_modhook.h>
++#include "port_ext.h"
+ 
+ namespace MSMainProc {
+ 
+@@ -191,6 +192,12 @@
+ 
+ 	bool bVar2 = false;
+ 
++	// an area an extension has made its own plays the music of the world it names (ext/levels'
++	// level.ini music), its episode's as that world has it, with none of that world's fades
++	const int sms_ext_music = port_ext_area_music(param_1);
++	if (sms_ext_music >= 0)
++		param_1 = (u8)sms_ext_music;
++
+ 	switch (param_1) {
+ 	case 0:
+ 		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_AIRPORT);
+@@ -575,6 +582,9 @@
+ 		MSStageInfo::volOffCategory -= 0x104;
+ 	}
+ 
++	if (sms_ext_music >= 0)
++		MSStageInfo::fadeEvent = 0;
++
+ 	SMSGetMSound()->initSound();
+ 	if (MSStageInfo::msStg != MS_WAVE_INVALID) {
+ 		SMSGetMSound()->enterStage(MSStageInfo::msStg, param_1, param_2);
