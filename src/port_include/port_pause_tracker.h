@@ -28,6 +28,9 @@ void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha);
 // after one is got: `row` the Shine counter's bar, icon, cross and three digits (6), as they were
 // just drawn, drawn again lower; the blue coin and coin rows' bars say how much (TGCConsole2::perform;
 // patch zzzzzzzzzzz-ext-26).
+// In a custom level, before the HUD is drawn: its Shine row made the special Shines' (their count, a
+// silver Shine drawn by HudSpecialShinesDraw after), put back there.
+void HudSpecialShinesBefore(J2DPane* const* row, int count);
 void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, const J2DPane* blueBar, const J2DPane* coinBar);
 
 #endif

@@ -390,9 +390,115 @@ const u32 kSpecialBrush = 0x3C8CEBFF; // the brushstroke's blue
 
 } // namespace
 
+namespace {
+
+// The Shine row's pieces (bar, Shine, cross, three digits) as they were, while drawn as the special
+// Shines' row: the Shine silver, the count the special Shines'.
+struct RowWas {
+	bool visible;
+	u8 alpha;
+	const ResTIMG* tex0;
+	JUtility::TColor white, black;
+};
+
+void silverRow(J2DPane* const* row, int total, int fade, RowWas* was)
+{
+	char digits[4];
+	snprintf(digits, sizeof digits, total >= 100 ? "%03d" : "%02d", total > 999 ? 999 : total);
+	for (int i = 0; i < 6; i++) {
+		J2DPane* p = row[i];
+		if (!p)
+			continue;
+		was[i].visible = p->mVisible;
+		was[i].alpha   = p->mAlpha;
+		was[i].tex0    = 0;
+		p->mAlpha      = (u8)(p->mAlpha * fade / 255);
+		J2DPicture* pic = (J2DPicture*)p; // the Shine and the digits are pictures
+		if (i == 1) {
+			was[i].white = pic->mWhite;
+			was[i].black = pic->mBlack;
+			pic->mBlack = JUtility::TColor(40, 50, 80, 0); // a silver Shine (its grey, drawSilverShine)
+			pic->mWhite = JUtility::TColor(255, 255, 255, 255);
+		} else if (i >= 3) {
+			was[i].tex0 = pic->getTexture(0) ? pic->getTexture(0)->getTexInfo() : 0;
+			const int d = i - 3;
+			p->mVisible = digits[d] != 0 && d < 3;
+			if (p->mVisible)
+				pic->changeTexture(sDigitArt[digits[d] - '0'].getTexInfo(), 0);
+		}
+	}
+}
+
+void restoreRow(J2DPane* const* row, const RowWas* was)
+{
+	for (int i = 0; i < 6; i++) {
+		J2DPane* p = row[i];
+		if (!p)
+			continue;
+		J2DPicture* pic = (J2DPicture*)p;
+		p->mVisible = was[i].visible;
+		p->mAlpha   = was[i].alpha;
+		if (i == 1) {
+			pic->mWhite = was[i].white;
+			pic->mBlack = was[i].black;
+		} else if (i >= 3 && was[i].tex0) {
+			pic->changeTexture(was[i].tex0, 0);
+		}
+	}
+}
+
+// the Shine in grey: the picture's green in all three colours, with the silver black and white above
+void drawSilverShine(J2DPane* shine, int dy, J2DOrthoGraph& graph)
+{
+	GXSetTevSwapModeTable(GX_TEV_SWAP2, GX_CH_GREEN, GX_CH_GREEN, GX_CH_GREEN, GX_CH_ALPHA);
+	GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP2);
+	shine->draw(0, dy, &graph, false);
+	GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP0);
+}
+
+// In a custom level the HUD's own Shine row is the special Shines' (HudSpecialShinesBefore): its
+// count theirs and its Shine silver, the game's Shine hidden from its draw and drawn silver after.
+RowWas s_main[6];
+bool s_mainSilver;
+
+bool artReady()
+{
+	static int s_art = -1;
+	if (s_art < 0)
+		s_art = loadAllArt() ? 1 : 0;
+	return s_art != 0;
+}
+
+} // namespace
+
+void HudSpecialShinesBefore(J2DPane* const* row, int count)
+{
+	s_mainSilver = false;
+	if (!port_special_shines || !port_levels_special_total || count != 6 || !inLevel() || !row[0] || !row[1])
+		return;
+	// (the pause menu shows both rows: the save file's and, under them, the special Shines')
+	if (gpMarDirector && gpMarDirector->mState == TMarDirector::STATE_PAUSE_MENU)
+		return;
+	if (!artReady())
+		return;
+	silverRow(row, port_levels_special_total(), 255, s_main);
+	row[1]->mVisible = false;
+	s_mainSilver = true;
+}
+
 void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, const J2DPane* blueBar, const J2DPane* coinBar)
 {
 	// row: the Shine counter's bar, icon, cross and three digits
+	if (s_mainSilver) {
+		s_mainSilver = false;
+		row[1]->mVisible = s_main[1].visible;
+		if (row[1]->mVisible && row[0]->isVisible() && row[0]->mColorAlpha) {
+			graph.setup2D();
+			drawSilverShine(row[1], 0, graph);
+		}
+		restoreRow(row, s_main);
+		return; // the row is theirs already
+	}
 	if (!port_special_shines || !port_levels_special_total || !port_levels_special_got || count != 6 || !blueBar || !coinBar)
 		return;
 	J2DPane* bar = row[0];
@@ -414,10 +520,7 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 	if (ms >= kShowMs)
 		return;
 	const int age = (int)ms;
-	static int s_art = -1;
-	if (s_art < 0)
-		s_art = loadAllArt() ? 1 : 0;
-	if (!s_art)
+	if (!artReady())
 		return;
 	const int total = port_levels_special_total();
 	static bool s_logged;
@@ -439,35 +542,8 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 
 	// the game's own Shine row drawn again, lower: each piece as the game draws it (its picture, turn
 	// and colours), without the clipping to its own row a pane's draw has in the HUD
-	struct Was {
-		bool visible;
-		u8 alpha;
-		const ResTIMG* tex0;
-		JUtility::TColor white, black;
-	} was[6];
-	char digits[4];
-	snprintf(digits, sizeof digits, total >= 100 ? "%03d" : "%02d", total > 999 ? 999 : total);
-	for (int i = 0; i < 6; i++) {
-		J2DPane* p = row[i];
-		if (!p)
-			continue;
-		was[i].visible = p->mVisible;
-		was[i].alpha   = p->mAlpha;
-		p->mAlpha      = (u8)(p->mAlpha * fade / 255);
-		J2DPicture* pic = (J2DPicture*)p; // the Shine and the digits are pictures
-		if (i == 1) {
-			was[i].white = pic->mWhite;
-			was[i].black = pic->mBlack;
-			pic->mBlack = JUtility::TColor(40, 50, 80, 0); // a silver Shine (its grey, below)
-			pic->mWhite = JUtility::TColor(255, 255, 255, 255);
-		} else if (i >= 3) {
-			was[i].tex0 = pic->getTexture(0) ? pic->getTexture(0)->getTexInfo() : 0;
-			const int d = i - 3;
-			p->mVisible = digits[d] != 0 && d < 3;
-			if (p->mVisible)
-				pic->changeTexture(sDigitArt[digits[d] - '0'].getTexInfo(), 0);
-		}
-	}
+	RowWas was[6];
+	silverRow(row, total, fade, was);
 	graph.setup2D();
 	// the whole row (brushstroke, Shine, cross and count) a little lower than a row's step, clear of the
 	// row above, the brushstroke behind the cross and count as the other rows have it
@@ -482,26 +558,10 @@ void HudSpecialShinesDraw(J2DOrthoGraph& graph, J2DPane* const* row, int count, 
 					under = true;
 		if (under)
 			continue;
-		if (i == 1) { // its grey: the picture's green in all three colours
-			GXSetTevSwapModeTable(GX_TEV_SWAP2, GX_CH_GREEN, GX_CH_GREEN, GX_CH_GREEN, GX_CH_ALPHA);
-			GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP2);
-		}
-		row[i]->draw(0, dy + lower, &graph, false);
 		if (i == 1)
-			GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP0);
+			drawSilverShine(row[i], dy + lower, graph);
+		else
+			row[i]->draw(0, dy + lower, &graph, false);
 	}
-	for (int i = 0; i < 6; i++) {
-		J2DPane* p = row[i];
-		if (!p)
-			continue;
-		J2DPicture* pic = (J2DPicture*)p;
-		p->mVisible = was[i].visible;
-		p->mAlpha   = was[i].alpha;
-		if (i == 1) {
-			pic->mWhite = was[i].white;
-			pic->mBlack = was[i].black;
-		} else if (i >= 3 && was[i].tex0) {
-			pic->changeTexture(was[i].tex0, 0);
-		}
-	}
+	restoreRow(row, was);
 }

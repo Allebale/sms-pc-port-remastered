@@ -1,4 +1,4 @@
-Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/levels' custom levels) has episodes as the worlds do: entered without one chosen it opens the episode select (TMarDirector::moveStage), which shows its name and its episodes' names and offers each once the one before is collected (TSelectMenu::initData, no world's tables read for it); come into from elsewhere it shows the title card as a world does, and the title card and the pause menu name its episode
+Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/levels' custom levels) has episodes as the worlds do: entered without one chosen it opens the episode select (TMarDirector::moveStage), which shows its name and its episodes' names and offers each once the one before is collected (TSelectMenu::initData, no world's tables read for it); come into from elsewhere it shows the title card as a world does, and the title card and the pause menu name its episode; in a custom level the HUD's Shine row is the special Shines' (HudSpecialShinesBefore, GCConsole2)
 --- a/src/GC2D/ConsoleStr.cpp
 +++ b/src/GC2D/ConsoleStr.cpp
 @@ -215,6 +215,12 @@
@@ -14,6 +14,31 @@ Reason: an area an extension makes its own (port_ext.h's areaEpisodes: ext/level
  		if (pvVar10 == nullptr || uVar2 == -1
  #ifdef TARGET_PC
  		    || sms_ext_name
+--- a/src/GC2D/GCConsole2.cpp
++++ b/src/GC2D/GCConsole2.cpp
+@@ -4875,14 +4875,16 @@
+ 
+ 	graph.setup2D();
+ 
++#ifdef TARGET_PC
++	// custom levels' special Shines (ext/levels): in a custom level the Shine row is theirs (its count, a
++	// silver Shine); elsewhere a row of their own under the counters, as one is got
++	J2DPane* sms_ext_row[6] = { console->unk128->getPane(), console->unk12C->getPane(), console->unk130->getPane(),
++	                            console->unk134[0]->getPane(), console->unk134[1]->getPane(), console->unk134[2]->getPane() };
++	HudSpecialShinesBefore(sms_ext_row, 6);
++#endif
+ 	console->unkB0->draw(0, 0, &graph);
+ #ifdef TARGET_PC
+-	// custom levels' special Shines (ext/levels): a row of their own under the counters, as one is got
+-	{
+-		J2DPane* sms_ext_row[6] = { console->unk128->getPane(), console->unk12C->getPane(), console->unk130->getPane(),
+-		                            console->unk134[0]->getPane(), console->unk134[1]->getPane(), console->unk134[2]->getPane() };
+-		HudSpecialShinesDraw(graph, sms_ext_row, 6, console->unk148->getPane(), console->unkC8->getPane());
+-	}
++	HudSpecialShinesDraw(graph, sms_ext_row, 6, console->unk148->getPane(), console->unkC8->getPane());
+ #endif
+ 
+ 	if (console->unk44 && !console->unk43 && !console->unk42
 --- a/src/GC2D/PauseMenu2.cpp
 +++ b/src/GC2D/PauseMenu2.cpp
 @@ -569,6 +569,9 @@
