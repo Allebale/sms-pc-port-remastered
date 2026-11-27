@@ -422,6 +422,19 @@ void missNextArea()
 	port_log("[levels] a life lost: stage %d of %s again\n", cur.unk1 + 1, s_level.name.c_str());
 }
 
+// Mario lost his last life (port_ext.h's takeGameOver): with the stage again chosen, no game over
+// screen: three lives, as the game gives after one, and the stage again (missNextArea)
+int takeGameOver()
+{
+	const TGameSequence& cur = gpApplication.mCurrArea;
+	if (!s_afterShineNext || !s_open || s_area < 0 || cur.unk0 != s_area || cur.unk1 == 0xFF)
+		return 0;
+	if (TFlagManager* fm = TFlagManager::getInstance())
+		fm->setFlag(0x20001, 3);
+	port_log("[levels] game over in %s: three lives, the stage again\n", s_level.name.c_str());
+	return 1;
+}
+
 // The world whose music it plays (port_ext.h's areaMusic), its episode's as that world has it
 int areaMusic(int area)
 {
@@ -473,6 +486,7 @@ struct Register {
 		s_extension.areaEpisodeGot  = areaEpisodeGot;
 		s_extension.areaMusic       = areaMusic;
 		s_extension.missNextArea    = missNextArea;
+		s_extension.takeGameOver    = takeGameOver;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -784,8 +798,8 @@ extern "C" int port_levels_current(void)
 	return -1;
 }
 
-// 1: after a Shine in a level with episodes the next one whose Shine Mario lacks, and a lost life starts the
-// stage again; 0: back where Mario came from for both, as from a world (api->levels).
+// 1: after a Shine in a level with episodes the next one whose Shine Mario lacks, and a lost life (the last
+// one too: no game over) starts the stage again; 0: back where Mario came from for both, as from a world (api->levels).
 extern "C" void port_levels_set_after_shine(int next_episode) { s_afterShineNext = next_episode != 0; }
 extern "C" int port_levels_after_shine(void) { return s_afterShineNext ? 1 : 0; }
 
