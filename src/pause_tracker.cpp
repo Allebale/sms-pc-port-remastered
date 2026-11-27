@@ -461,12 +461,20 @@ void drawSilverShine(J2DPane* shine, int dy, J2DOrthoGraph& graph)
 RowWas s_main[6];
 bool s_mainSilver;
 
+// game_6 is loaded again with each stage, so the art is looked up again when it has moved: a picture
+// kept from the stage before points into memory the next stage has reused.
 bool artReady()
 {
-	static int s_art = -1;
-	if (s_art < 0)
-		s_art = loadAllArt() ? 1 : 0;
-	return s_art != 0;
+	static const void* s_from;
+	static bool s_ok;
+	const void* now = JKRGetResource("/game_6/timg/coin_number_0.bti");
+	if (!now)
+		return false;
+	if (now != s_from) {
+		s_from = now;
+		s_ok   = loadAllArt();
+	}
+	return s_ok;
 }
 
 } // namespace
